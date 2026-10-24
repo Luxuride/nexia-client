@@ -1,0 +1,81 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/nextcloud-desktop-core",
+    "crates/nextcloud-desktop-sync",
+    "crates/nextcloud-desktop-ui",
+    "."
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Luxuride/nextcloud-desktop-rs"
+authors = ["Luxuride"]
+
+[workspace.dependencies]
+# Nextcloud SDK (git-based)
+nextcloud-rust-sdk = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
+nextcloud-sdk-core = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
+nextcloud-sdk-vfs = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
+nextcloud-dav = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
+nextcloud-auth = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
+nextcloud-transport = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
+nextcloud-client-config = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
+
+# Workspace crates
+nextcloud-desktop-core = { path = "crates/nextcloud-desktop-core", version = "0.1.0" }
+nextcloud-desktop-sync = { path = "crates/nextcloud-desktop-sync", version = "0.1.0" }
+nextcloud-desktop-ui = { path = "crates/nextcloud-desktop-ui", version = "0.1.0", default-features = false }
+
+# External dependencies
+tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros", "time", "net", "io-util", "fs", "signal"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4.5", features = ["derive", "env"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6.0"
+uuid = { version = "1", features = ["v4", "serde"] }
+async-trait = "0.1"
+futures = "0.3"
+gtk4 = { version = "0.9" }
+libadwaita = { version = "0.7" }
+glib = { version = "0.20" }
+ksni = { version = "0.3", default-features = false, features = ["tokio"] }
+
+[patch."https://github.com/Luxuride/nextcloud-rust-sdk"]
+nextcloud-sdk-core = { path = "../nextcloud-rust-sdk/crates/core/nextcloud-sdk-core" }
+nextcloud-auth = { path = "../nextcloud-rust-sdk/crates/nextcloud/nextcloud-auth" }
+nextcloud-transport = { path = "../nextcloud-rust-sdk/crates/nextcloud/nextcloud-transport" }
+nextcloud-dav = { path = "../nextcloud-rust-sdk/crates/nextcloud/nextcloud-dav" }
+nextcloud-sdk-vfs = { path = "../nextcloud-rust-sdk/crates/core/nextcloud-sdk-vfs" }
+nextcloud-client-config = { path = "../nextcloud-rust-sdk/crates/nextcloud/nextcloud-client-config" }
+nextcloud-rust-sdk = { path = "../nextcloud-rust-sdk" }
+
+[package]
+name = "nextcloud-desktop-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Modern GTK desktop application for Nextcloud with virtual file sync"
+
+[features]
+default = ["gtk"]
+gtk = ["nextcloud-desktop-ui/gtk"]
+
+[dependencies]
+nextcloud-desktop-core.workspace = true
+nextcloud-desktop-sync.workspace = true
+nextcloud-desktop-ui.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+dirs.workspace = true
+

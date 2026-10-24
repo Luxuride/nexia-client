@@ -1,0 +1,24 @@
+[package]
+name = "nextcloud-desktop-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Virtual synchronization engine, full two-way local folder sync, and WebDAV file operations"
+
+[dependencies]
+nextcloud-desktop-core.workspace = true
+nextcloud-sdk-core.workspace = true
+nextcloud-sdk-vfs.workspace = true
+nextcloud-dav.workspace = true
+nextcloud-auth.workspace = true
+nextcloud-transport.workspace = true
+reqwest = "0.13"
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
