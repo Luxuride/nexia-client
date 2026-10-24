@@ -43,8 +43,11 @@ impl PathBar {
 
             if seg.is_root {
                 let inner = GtkBox::new(Orientation::Horizontal, 6);
+                inner.set_can_target(false);
                 let icon = Image::from_icon_name("folder-remote-symbolic");
+                icon.set_can_target(false);
                 let label = Label::new(Some(&seg.name));
+                label.set_can_target(false);
                 if is_current {
                     label.add_css_class("heading");
                 }
@@ -53,13 +56,18 @@ impl PathBar {
                 btn.set_child(Some(&inner));
             } else {
                 let label = Label::new(Some(&seg.name));
+                label.set_can_target(false);
                 if is_current {
                     label.add_css_class("heading");
                 }
                 btn.set_child(Some(&label));
             }
 
-            let target_path = seg.full_path;
+            let target_path = if seg.is_root {
+                "/".to_string()
+            } else {
+                seg.full_path
+            };
             let backend_clone = backend.clone();
             let nav_cb = on_navigate.clone();
             btn.connect_clicked(move |_| {

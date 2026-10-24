@@ -138,6 +138,9 @@ pub fn launch_gtk_application(
     Ok(())
 }
 
+type RefreshCallback = Rc<dyn Fn()>;
+type RefreshCell = Rc<RefCell<Option<RefreshCallback>>>;
+
 fn build_ui(
     app: &adw::Application,
     controller: DesktopUiController,
@@ -165,28 +168,23 @@ fn build_ui(
     let files_page_cell: Rc<RefCell<Option<CloudFilesPage<DesktopUiController>>>> =
         Rc::new(RefCell::new(None));
 
+    let refresh_cell: RefreshCell = Rc::new(RefCell::new(None));
+    let refresh_for_loop = refresh_cell.clone();
     let files_for_cb = files_page_cell.clone();
-    let refresh_cb: Rc<dyn Fn()> = Rc::new({
-        let files_cell = files_for_cb.clone();
-        move || {
-            if let Some(ref page) = *files_cell.borrow() {
-                let p = page.clone();
-                let files_again = files_cell.clone();
-                let inner_cb: Rc<dyn Fn()> = Rc::new(move || {
-                    if let Some(ref p2) = *files_again.borrow() {
-                        let p2_c = p2.clone();
-                        glib::MainContext::default().spawn_local(async move {
-                            let empty_cb: Rc<dyn Fn()> = Rc::new(|| {});
-                            p2_c.refresh(empty_cb).await;
-                        });
-                    }
-                });
-                glib::MainContext::default().spawn_local(async move {
-                    p.refresh(inner_cb).await;
-                });
-            }
+
+    let refresh_cb: RefreshCallback = Rc::new(move || {
+        if let Some(ref page) = *files_for_cb.borrow() {
+            let p = page.clone();
+            let cb_trigger = refresh_for_loop
+                .borrow()
+                .clone()
+                .unwrap_or_else(|| Rc::new(|| {}));
+            glib::MainContext::default().spawn_local(async move {
+                p.refresh(cb_trigger).await;
+            });
         }
     });
+    *refresh_cell.borrow_mut() = Some(refresh_cb.clone());
 
     // Top HeaderBar whose buttons/layout never change across pages
     let header_bar = MainHeaderBar::new(&controller, refresh_cb.clone());
