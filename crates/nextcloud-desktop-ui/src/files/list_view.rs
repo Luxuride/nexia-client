@@ -1,0 +1,328 @@
+//! Nautilus-style detailed list view with aligned columns and inline actions.
+
+#[cfg(feature = "gtk")]
+use gtk4::{
+    Align, Box as GtkBox, Button, Image, Label, ListBox, ListBoxRow, Orientation, PolicyType,
+    ScrolledWindow, SelectionMode, Separator, pango,
+};
+#[cfg(feature = "gtk")]
+use libadwaita as adw;
+#[cfg(feature = "gtk")]
+use libadwaita::prelude::*;
+#[cfg(feature = "gtk")]
+use std::cell::RefCell;
+#[cfg(feature = "gtk")]
+use std::rc::Rc;
+
+#[cfg(feature = "gtk")]
+use crate::files::context_menu::ItemContextMenu;
+#[cfg(feature = "gtk")]
+use crate::model::FileViewItem;
+#[cfg(feature = "gtk")]
+use crate::widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
+
+/// Detailed columnar list view representing the active virtual directory.
+#[cfg(feature = "gtk")]
+#[derive(Clone)]
+pub struct FileListView {
+    container: GtkBox,
+    list_box: ListBox,
+    items: Rc<RefCell<Vec<FileViewItem>>>,
+}
+
+#[cfg(feature = "gtk")]
+impl FileListView {
+    /// Creates a new columnar list view.
+    pub fn new(on_select: Rc<dyn Fn(Option<FileViewItem>)>) -> Self {
+        let container = GtkBox::new(Orientation::Vertical, 0);
+        container.set_vexpand(true);
+        container.set_hexpand(true);
+
+        // Column Header
+        let col_header = GtkBox::new(Orientation::Horizontal, 12);
+        col_header.set_margin_top(8);
+        col_header.set_margin_bottom(8);
+        col_header.set_margin_start(20);
+        col_header.set_margin_end(20);
+
+        let col_name = Label::new(Some("Name"));
+        col_name.set_hexpand(true);
+        col_name.set_halign(Align::Start);
+        col_name.add_css_class("caption-heading");
+        col_name.add_css_class("dim-label");
+
+        let col_type = Label::new(Some("Type"));
+        col_type.set_size_request(130, -1);
+        col_type.set_halign(Align::Start);
+        col_type.add_css_class("caption-heading");
+        col_type.add_css_class("dim-label");
+
+        let col_size = Label::new(Some("Size"));
+        col_size.set_size_request(85, -1);
+        col_size.set_halign(Align::End);
+        col_size.add_css_class("caption-heading");
+        col_size.add_css_class("dim-label");
+
+        let col_actions = Label::new(Some("Actions"));
+        col_actions.set_size_request(80, -1);
+        col_actions.set_halign(Align::End);
+        col_actions.add_css_class("caption-heading");
+        col_actions.add_css_class("dim-label");
+
+        col_header.append(&col_name);
+        col_header.append(&col_type);
+        col_header.append(&col_size);
+        col_header.append(&col_actions);
+
+        container.append(&col_header);
+        container.append(&Separator::new(Orientation::Horizontal));
+
+        let list_box = ListBox::new();
+        list_box.set_selection_mode(SelectionMode::Single);
+        list_box.set_activate_on_single_click(false);
+        list_box.add_css_class("navigation-sidebar");
+
+        let items = Rc::new(RefCell::new(Vec::new()));
+        let items_for_sel = items.clone();
+        list_box.connect_row_selected(move |_, row| {
+            if let Some(r) = row {
+                let idx = r.index() as usize;
+                let item = items_for_sel.borrow().get(idx).cloned();
+                on_select(item);
+            } else {
+                on_select(None);
+            }
+        });
+
+        let scroll = ScrolledWindow::new();
+        scroll.set_hscrollbar_policy(PolicyType::Never);
+        scroll.set_vexpand(true);
+        scroll.set_child(Some(&list_box));
+        container.append(&scroll);
+
+        Self {
+            container,
+            list_box,
+            items,
+        }
+    }
+
+    /// Removes all rendered children from the list.
+    pub fn clear(&self) {
+        while let Some(child) = self.list_box.first_child() {
+            self.list_box.remove(&child);
+        }
+        self.items.borrow_mut().clear();
+    }
+}
+
+#[cfg(feature = "gtk")]
+impl ViewComponent for FileListView {
+    type RootWidget = GtkBox;
+
+    fn root_widget(&self) -> &Self::RootWidget {
+        &self.container
+    }
+}
+
+#[cfg(feature = "gtk")]
+impl<B: FileExplorerBackend> ItemCollectionView<B> for FileListView {
+    fn clear(&self) {
+        while let Some(child) = self.list_box.first_child() {
+            self.list_box.remove(&child);
+        }
+        self.items.borrow_mut().clear();
+    }
+
+    fn populate(
+        &self,
+        items: &[FileViewItem],
+        backend: &B,
+        toast_overlay: &adw::ToastOverlay,
+        on_refresh: Rc<dyn Fn()>,
+    ) {
+        self.clear();
+        *self.items.borrow_mut() = items.to_vec();
+
+        for item in items {
+            let row = FileListRow::build(item, backend, toast_overlay, on_refresh.clone());
+            self.list_box.append(row.root_widget());
+        }
+
+        // Wire double-click activation
+        let b = backend.clone();
+        let toast = toast_overlay.clone();
+        let cb = on_refresh;
+        let items_clone = self.items.clone();
+        self.list_box.connect_row_activated(move |_, row| {
+            let idx = row.index() as usize;
+            let maybe_item = items_clone.borrow().get(idx).cloned();
+            if let Some(item) = maybe_item {
+                let b = b.clone();
+                let toast = toast.clone();
+                let cb = cb.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    if item.is_directory {
+                        b.navigate_into(&item.name).await;
+                        cb();
+                    } else {
+                        match b.open_file(&item.path).await {
+                            Ok(path) => {
+                                toast.add_toast(adw::Toast::new(&format!(
+                                    "Opened “{}” ({})",
+                                    item.name,
+                                    path.display()
+                                )));
+                            }
+                            Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
+                        }
+                    }
+                });
+            }
+        });
+    }
+}
+
+/// A single row within the [`FileListView`].
+#[cfg(feature = "gtk")]
+pub struct FileListRow {
+    row: ListBoxRow,
+}
+
+#[cfg(feature = "gtk")]
+impl FileListRow {
+    /// Builds a row widget for `item`.
+    pub fn build<B: FileExplorerBackend>(
+        item: &FileViewItem,
+        backend: &B,
+        toast_overlay: &adw::ToastOverlay,
+        on_refresh: Rc<dyn Fn()>,
+    ) -> Self {
+        let row = ListBoxRow::new();
+        let hbox = GtkBox::new(Orientation::Horizontal, 12);
+        hbox.set_margin_top(6);
+        hbox.set_margin_bottom(6);
+        hbox.set_margin_start(16);
+        hbox.set_margin_end(16);
+
+        let icon = Image::from_icon_name(item.nautilus_icon_name());
+        icon.set_pixel_size(32);
+
+        let name = Label::new(Some(&item.name));
+        name.set_hexpand(true);
+        name.set_halign(Align::Start);
+        name.set_ellipsize(pango::EllipsizeMode::End);
+
+        let type_lbl = Label::new(Some(item.type_label()));
+        type_lbl.set_size_request(130, -1);
+        type_lbl.set_halign(Align::Start);
+        type_lbl.add_css_class("caption");
+        type_lbl.add_css_class("dim-label");
+
+        let size_lbl = Label::new(Some(&item.size_formatted));
+        size_lbl.set_size_request(85, -1);
+        size_lbl.set_halign(Align::End);
+        size_lbl.add_css_class("caption");
+        size_lbl.add_css_class("dim-label");
+
+        let actions = GtkBox::new(Orientation::Horizontal, 2);
+        actions.set_size_request(80, -1);
+        actions.set_halign(Align::End);
+
+        // Open button
+        let open_icon = if item.is_directory {
+            "go-next-symbolic"
+        } else {
+            "document-open-symbolic"
+        };
+        let open_btn = Button::from_icon_name(open_icon);
+        open_btn.add_css_class("flat");
+        open_btn.set_tooltip_text(Some(if item.is_directory {
+            "Open Folder"
+        } else {
+            "Open File"
+        }));
+
+        {
+            let b = backend.clone();
+            let toast = toast_overlay.clone();
+            let cb = on_refresh.clone();
+            let item_clone = item.clone();
+            open_btn.connect_clicked(move |_| {
+                let b = b.clone();
+                let toast = toast.clone();
+                let cb = cb.clone();
+                let item = item_clone.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    if item.is_directory {
+                        b.navigate_into(&item.name).await;
+                        cb();
+                    } else {
+                        match b.open_file(&item.path).await {
+                            Ok(path) => {
+                                toast.add_toast(adw::Toast::new(&format!(
+                                    "Opened “{}” ({})",
+                                    item.name,
+                                    path.display()
+                                )));
+                            }
+                            Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
+                        }
+                    }
+                });
+            });
+        }
+
+        // Delete button
+        let del_btn = Button::from_icon_name("user-trash-symbolic");
+        del_btn.add_css_class("flat");
+        del_btn.set_tooltip_text(Some("Delete"));
+
+        {
+            let b = backend.clone();
+            let toast = toast_overlay.clone();
+            let cb = on_refresh.clone();
+            let path = item.path.clone();
+            let name = item.name.clone();
+            del_btn.connect_clicked(move |_| {
+                let b = b.clone();
+                let toast = toast.clone();
+                let cb = cb.clone();
+                let p = path.clone();
+                let n = name.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    match b.delete_item(&p).await {
+                        Ok(_) => {
+                            toast.add_toast(adw::Toast::new(&format!("Deleted “{n}”")));
+                            cb();
+                        }
+                        Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
+                    }
+                });
+            });
+        }
+
+        actions.append(&open_btn);
+        actions.append(&del_btn);
+
+        hbox.append(&icon);
+        hbox.append(&name);
+        hbox.append(&type_lbl);
+        hbox.append(&size_lbl);
+        hbox.append(&actions);
+
+        ItemContextMenu::attach(&hbox, item, backend, toast_overlay, on_refresh);
+
+        row.set_child(Some(&hbox));
+        Self { row }
+    }
+}
+
+#[cfg(feature = "gtk")]
+impl ViewComponent for FileListRow {
+    type RootWidget = ListBoxRow;
+
+    fn root_widget(&self) -> &Self::RootWidget {
+        &self.row
+    }
+}

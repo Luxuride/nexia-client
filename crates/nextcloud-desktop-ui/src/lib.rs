@@ -5,11 +5,13 @@
 
 pub mod controller;
 pub mod error;
+pub mod files;
 pub mod gtk_app;
+pub mod header;
 pub mod model;
-pub mod nautilus_view;
+pub mod pages;
 pub mod tray;
-pub mod views;
+pub mod widget;
 
 pub use controller::DesktopUiController;
 pub use error::UiError;
@@ -20,3 +22,4 @@ pub use model::{
     FileSyncStatus, FileViewItem, FileViewMode, NavigationPage, PathSegment, TransferItem,
 };
 pub use tray::{TrayAction, spawn_app_bar_tray};
+pub use widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};

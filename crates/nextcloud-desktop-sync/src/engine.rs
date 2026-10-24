@@ -136,6 +136,41 @@ impl DesktopSyncCoordinator {
         self.vfs_engine.create_directory(remote_path).await
     }
 
+    /// Renames a file or directory in the virtual tree and (if an account is configured) on the remote WebDAV server via MOVE.
+    pub async fn rename_resource(
+        &self,
+        old_remote_path: &str,
+        new_name: &str,
+    ) -> Result<String, SyncError> {
+        let maybe_account = {
+            let conf = self.config.read().await;
+            conf.accounts.first().cloned()
+        };
+
+        let clean_old = format!("/{}", old_remote_path.trim_matches('/'));
+        let parent = nextcloud_rust_sdk::parent_path(&clean_old).unwrap_or_else(|| "/".to_string());
+        let trimmed_name = new_name.trim().trim_matches('/');
+        let clean_new = if parent == "/" {
+            format!("/{trimmed_name}")
+        } else {
+            format!("{}/{}", parent.trim_end_matches('/'), trimmed_name)
+        };
+
+        if let Some(account) = maybe_account {
+            let server_url = ServerUrl::parse(&account.server.server_url)
+                .map_err(|err| SyncError::InvalidPath(err.to_string()))?;
+            let transport = TransportBuilder::with_server(server_url).build()?;
+            let secret = SecretString::new(account.credentials.secret());
+            let auth = BasicAuth::new(&account.credentials.username, secret);
+            let dav_client = DavClient::new(&transport, &auth);
+            let src_dav = crate::vfs::make_dav_path(&account.credentials.username, &clean_old)?;
+            let dst_dav = crate::vfs::make_dav_path(&account.credentials.username, &clean_new)?;
+            dav_client.move_(&src_dav, &dst_dav, false).await?;
+        }
+
+        self.vfs_engine.rename_entry(&clean_old, new_name).await
+    }
+
     /// Deletes a file or directory from the virtual tree and (if an account is configured) from the remote WebDAV server.
     pub async fn delete_resource(&self, remote_path: &str) -> Result<(), SyncError> {
         let maybe_account = {

@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 
 use crate::error::UiError;
 use crate::model::{FileSyncStatus, FileViewItem, FileViewMode};
+use crate::widget::FileExplorerBackend;
 use nextcloud_desktop_sync::DesktopSyncCoordinator;
 use nextcloud_rust_sdk::NavigationHistory;
 
@@ -156,6 +157,14 @@ impl DesktopUiController {
         Ok(full_path)
     }
 
+    /// Renames a file or folder in the virtual drive.
+    pub async fn rename_item(&self, remote_path: &str, new_name: &str) -> Result<String, UiError> {
+        self.coordinator
+            .rename_resource(remote_path, new_name)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
     /// Deletes a file or folder from the virtual drive (and remote server if connected).
     pub async fn delete_item(&self, remote_path: &str) -> Result<(), UiError> {
         self.coordinator
@@ -164,12 +173,17 @@ impl DesktopUiController {
             .map_err(|err| UiError::Controller(err.to_string()))
     }
 
-    /// Hydrates a virtual file on-demand.
-    pub async fn hydrate_file(&self, remote_path: &str) -> Result<PathBuf, UiError> {
+    /// Opens a virtual file by hydrating it to local cache.
+    pub async fn open_file(&self, remote_path: &str) -> Result<PathBuf, UiError> {
         self.coordinator
             .hydrate_file(remote_path)
             .await
             .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Hydrates a virtual file on-demand.
+    pub async fn hydrate_file(&self, remote_path: &str) -> Result<PathBuf, UiError> {
+        self.open_file(remote_path).await
     }
 
     /// Dehydrates a file back to a placeholder, freeing disk space.
@@ -194,5 +208,75 @@ impl DesktopUiController {
             .sync_all_pairs()
             .await
             .map_err(|err| UiError::Controller(err.to_string()))
+    }
+}
+
+impl FileExplorerBackend for DesktopUiController {
+    async fn current_path(&self) -> String {
+        self.current_path().await
+    }
+
+    async fn view_mode(&self) -> FileViewMode {
+        self.view_mode().await
+    }
+
+    async fn set_view_mode(&self, mode: FileViewMode) {
+        self.set_view_mode(mode).await;
+    }
+
+    async fn can_go_back(&self) -> bool {
+        self.can_go_back().await
+    }
+
+    async fn can_go_forward(&self) -> bool {
+        self.can_go_forward().await
+    }
+
+    async fn go_back(&self) -> bool {
+        self.go_back().await
+    }
+
+    async fn go_forward(&self) -> bool {
+        self.go_forward().await
+    }
+
+    async fn navigate_into(&self, folder_name: &str) {
+        self.navigate_into(folder_name).await;
+    }
+
+    async fn set_current_path(&self, path: &str) {
+        self.set_current_path(path).await;
+    }
+
+    async fn list_current_items(&self) -> Result<Vec<FileViewItem>, UiError> {
+        self.list_current_items().await
+    }
+
+    async fn create_folder(&self, folder_name: &str) -> Result<String, UiError> {
+        self.create_folder(folder_name).await
+    }
+
+    async fn rename_item(&self, remote_path: &str, new_name: &str) -> Result<String, UiError> {
+        self.rename_item(remote_path, new_name).await
+    }
+
+    async fn delete_item(&self, remote_path: &str) -> Result<(), UiError> {
+        self.delete_item(remote_path).await
+    }
+
+    async fn open_file(&self, remote_path: &str) -> Result<PathBuf, UiError> {
+        self.open_file(remote_path).await
+    }
+
+    async fn refresh_virtual_tree(&self) -> Result<usize, UiError> {
+        self.refresh_virtual_tree().await
+    }
+
+    async fn trigger_sync(&self) -> Result<(), UiError> {
+        self.trigger_sync().await
+    }
+
+    fn cache_dir_display(&self) -> String {
+        self.coordinator.vfs().cache_dir().display().to_string()
     }
 }

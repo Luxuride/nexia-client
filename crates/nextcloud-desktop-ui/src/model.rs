@@ -17,6 +17,59 @@ pub enum NavigationPage {
     Settings,
 }
 
+impl NavigationPage {
+    /// Returns all top-level navigation pages in display order.
+    pub const fn all() -> [Self; 4] {
+        [
+            Self::CloudFiles,
+            Self::SyncFolders,
+            Self::Transfers,
+            Self::Settings,
+        ]
+    }
+
+    /// Returns the human-readable title of this page.
+    pub const fn title(&self) -> &'static str {
+        match self {
+            Self::CloudFiles => "Cloud Files",
+            Self::SyncFolders => "Sync Folders",
+            Self::Transfers => "Activity",
+            Self::Settings => "Settings",
+        }
+    }
+
+    /// Returns the internal stack identifier for this page.
+    pub const fn stack_name(&self) -> &'static str {
+        match self {
+            Self::CloudFiles => "cloud_files",
+            Self::SyncFolders => "sync_folders",
+            Self::Transfers => "transfers",
+            Self::Settings => "settings",
+        }
+    }
+
+    /// Returns the symbolic icon name for the sidebar row.
+    pub const fn icon_name(&self) -> &'static str {
+        match self {
+            Self::CloudFiles => "folder-remote-symbolic",
+            Self::SyncFolders => "emblem-synchronizing-symbolic",
+            Self::Transfers => "network-transmit-receive-symbolic",
+            Self::Settings => "emblem-system-symbolic",
+        }
+    }
+
+    /// Maps a sidebar row index to its [`NavigationPage`].
+    pub const fn from_index(index: i32) -> Option<Self> {
+        match index {
+            0 => Some(Self::CloudFiles),
+            1 => Some(Self::SyncFolders),
+            2 => Some(Self::Transfers),
+            3 => Some(Self::Settings),
+            _ => None,
+        }
+    }
+}
+
 /// Layout mode for the Nautilus-style Cloud Files browser.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FileViewMode {
@@ -102,6 +155,28 @@ impl FileViewItem {
     /// Returns the symbolic icon name matching this item.
     pub const fn symbolic_icon_name(&self) -> &'static str {
         self.icon_category.symbolic_icon_name()
+    }
+
+    /// Returns a human-readable category type label (e.g. `"Folder"`, `"Document"`, `"Image"`).
+    pub const fn type_label(&self) -> &'static str {
+        match self.icon_category {
+            ResourceIconCategory::Folder
+            | ResourceIconCategory::DocumentsFolder
+            | ResourceIconCategory::PicturesFolder
+            | ResourceIconCategory::MusicFolder
+            | ResourceIconCategory::VideosFolder
+            | ResourceIconCategory::DownloadsFolder
+            | ResourceIconCategory::TemplatesFolder
+            | ResourceIconCategory::PublicShareFolder => "Folder",
+            ResourceIconCategory::Document => "Document",
+            ResourceIconCategory::Spreadsheet => "Spreadsheet",
+            ResourceIconCategory::Presentation => "Presentation",
+            ResourceIconCategory::Image => "Image",
+            ResourceIconCategory::Audio => "Audio",
+            ResourceIconCategory::Video => "Video",
+            ResourceIconCategory::Archive => "Archive",
+            ResourceIconCategory::Text => "Plain Text",
+        }
     }
 
     /// Splits a canonical virtual path into clickable Nautilus-style breadcrumb segments via `nextcloud-rust-sdk`.
