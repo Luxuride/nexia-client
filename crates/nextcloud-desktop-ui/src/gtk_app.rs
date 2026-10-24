@@ -72,10 +72,12 @@ pub fn launch_gtk_application(
             flowboxchild:selected:hover {
                 background-color: alpha(@accent_color, 0.24);
             }
+            flowbox > flowboxchild:focus,
+            flowbox > flowboxchild:focus-visible,
             flowboxchild:focus,
             flowboxchild:focus-visible {
-                outline: none;
-                box-shadow: none;
+                outline: none !important;
+                box-shadow: none !important;
             }
             .file-tile {
                 background: none;
@@ -103,9 +105,11 @@ pub fn launch_gtk_application(
                 background-color: alpha(@accent_color, 0.24);
             }
             .file-list-view list > row:focus,
-            .file-list-view list > row:focus-visible {
-                outline: none;
-                box-shadow: none;
+            .file-list-view list > row:focus-visible,
+            list > row:focus,
+            list > row:focus-visible {
+                outline: none !important;
+                box-shadow: none !important;
             }
             .drop-hover {
                 outline: 2px solid @accent_color !important;

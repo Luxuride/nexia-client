@@ -92,6 +92,8 @@ impl FileListView {
         container.append(&Separator::new(Orientation::Horizontal));
 
         let list_box = ListBox::new();
+        list_box.set_can_focus(false);
+        list_box.set_focus_on_click(false);
         list_box.set_selection_mode(SelectionMode::Multiple);
         list_box.set_activate_on_single_click(false);
         list_box.add_css_class("file-list-view");
@@ -257,6 +259,8 @@ impl FileListRow {
         on_refresh: Rc<dyn Fn()>,
     ) -> Self {
         let row = ListBoxRow::new();
+        row.set_focusable(false);
+        row.set_focus_on_click(false);
         let hbox = GtkBox::new(Orientation::Horizontal, 12);
         hbox.set_margin_top(6);
         hbox.set_margin_bottom(6);

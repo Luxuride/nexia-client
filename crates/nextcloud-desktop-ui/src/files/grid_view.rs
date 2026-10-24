@@ -49,6 +49,8 @@ impl FileGridView {
         on_refresh: Rc<dyn Fn()>,
     ) -> Self {
         let flow_box = FlowBox::new();
+        flow_box.set_can_focus(false);
+        flow_box.set_focus_on_click(false);
         flow_box.set_selection_mode(SelectionMode::Multiple);
         flow_box.set_activate_on_single_click(false);
         flow_box.set_homogeneous(true);
@@ -224,6 +226,8 @@ impl FileGridTile {
         on_refresh: Rc<dyn Fn()>,
     ) -> Self {
         let child = FlowBoxChild::new();
+        child.set_focusable(false);
+        child.set_focus_on_click(false);
         let card = GtkBox::new(Orientation::Vertical, 4);
         card.set_size_request(114, 108);
         card.set_halign(Align::Center);
