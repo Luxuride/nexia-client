@@ -49,8 +49,9 @@ authors.workspace = true
 description = "Modern GTK desktop application for Nextcloud with virtual file sync"
 
 [features]
-default = ["gtk"]
+default = ["gtk", "tray"]
 gtk = ["nextcloud-desktop-ui/gtk"]
+tray = ["nextcloud-desktop-ui/tray"]
 
 [dependencies]
 nextcloud-desktop-core.workspace = true

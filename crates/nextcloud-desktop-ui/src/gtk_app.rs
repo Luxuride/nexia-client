@@ -32,8 +32,23 @@ pub fn launch_gtk_application(
         .application_id("com.nextcloud.desktop.rs")
         .build();
 
+    let hold_guard = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let main_window: std::rc::Rc<std::cell::RefCell<Option<adw::ApplicationWindow>>> =
+        std::rc::Rc::new(std::cell::RefCell::new(None));
+
+    let hold_for_activate = hold_guard.clone();
+    let win_for_activate = main_window.clone();
+
     app.connect_activate(move |app| {
-        build_ui(app, controller.clone(), start_minimized);
+        if hold_for_activate.borrow().is_none() {
+            // Keep the GApplication alive when all windows are hidden to the background tray
+            *hold_for_activate.borrow_mut() = Some(app.hold());
+            let win = build_ui(app, controller.clone(), start_minimized);
+            *win_for_activate.borrow_mut() = Some(win);
+        } else if let Some(ref win) = *win_for_activate.borrow() {
+            win.set_visible(true);
+            win.present();
+        }
     });
 
     let empty_args: Vec<String> = Vec::new();
@@ -42,7 +57,11 @@ pub fn launch_gtk_application(
 }
 
 #[cfg(feature = "gtk")]
-fn build_ui(app: &adw::Application, controller: DesktopUiController, start_minimized: bool) {
+fn build_ui(
+    app: &adw::Application,
+    controller: DesktopUiController,
+    start_minimized: bool,
+) -> adw::ApplicationWindow {
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("Nextcloud")
@@ -70,7 +89,7 @@ fn build_ui(app: &adw::Application, controller: DesktopUiController, start_minim
     header_bar.pack_start(&refresh_btn);
     header_bar.pack_start(&sync_btn);
 
-    // Intercept window close to keep running in background / app bar
+    // Intercept window close (X button) to keep running in background / app bar
     window.connect_close_request(move |win| {
         tracing::info!("Minimizing Nextcloud Desktop to background app bar");
         win.set_visible(false);
@@ -242,6 +261,8 @@ fn build_ui(app: &adw::Application, controller: DesktopUiController, start_minim
     if !start_minimized {
         window.present();
     }
+
+    window
 }
 
 /// Fallback runner for headless or non-GUI execution environments.

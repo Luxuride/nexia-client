@@ -39,8 +39,13 @@
       "type": "bind"
     },
     {
-      "source": "${localEnv:XDG_RUNTIME_DIR}",
-      "target": "${localEnv:XDG_RUNTIME_DIR}",
+      "source": "${localEnv:XDG_RUNTIME_DIR}/${localEnv:WAYLAND_DISPLAY}",
+      "target": "${localEnv:XDG_RUNTIME_DIR}/${localEnv:WAYLAND_DISPLAY}",
+      "type": "bind"
+    },
+    {
+      "source": "${localEnv:XDG_RUNTIME_DIR}/bus",
+      "target": "${localEnv:XDG_RUNTIME_DIR}/bus",
       "type": "bind"
     }
   ],

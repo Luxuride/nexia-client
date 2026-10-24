@@ -3,7 +3,7 @@
 #[cfg(feature = "tray")]
 use ksni::menu::{MenuItem, StandardItem};
 #[cfg(feature = "tray")]
-use ksni::{Category, Status, ToolTip, Tray, TrayMethods};
+use ksni::{Category, Icon, Status, ToolTip, Tray, TrayMethods};
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Actions initiated by the user through the app bar tray menu.
@@ -48,6 +48,40 @@ impl DesktopTrayItem {
 }
 
 #[cfg(feature = "tray")]
+fn build_cloud_pixmap() -> Vec<Icon> {
+    let size = 22usize;
+    let mut data = vec![0u8; size * size * 4];
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - 11.0;
+            let dy = y as f32 - 11.0;
+            let dist = (dx * dx + dy * dy).sqrt();
+            let idx = (y * size + x) * 4;
+            if dist <= 9.5 {
+                // Nextcloud blue (#0082C9) with white inner ring
+                let inner_ring = (dist - 5.0).abs() <= 1.6;
+                if inner_ring {
+                    data[idx] = 255;
+                    data[idx + 1] = 255;
+                    data[idx + 2] = 255;
+                    data[idx + 3] = 255;
+                } else {
+                    data[idx] = 255;
+                    data[idx + 1] = 0x00;
+                    data[idx + 2] = 0x82;
+                    data[idx + 3] = 0xC9;
+                }
+            }
+        }
+    }
+    vec![Icon {
+        width: size as i32,
+        height: size as i32,
+        data,
+    }]
+}
+
+#[cfg(feature = "tray")]
 impl Tray for DesktopTrayItem {
     fn id(&self) -> String {
         "com.nextcloud.desktop.rs".into()
@@ -67,10 +101,14 @@ impl Tray for DesktopTrayItem {
 
     fn icon_name(&self) -> String {
         if self.syncing {
-            "view-refresh-symbolic".into()
+            "emblem-synchronizing-symbolic".into()
         } else {
-            "cloud-symbolic".into()
+            "folder-remote-symbolic".into()
         }
+    }
+
+    fn icon_pixmap(&self) -> Vec<Icon> {
+        build_cloud_pixmap()
     }
 
     fn tool_tip(&self) -> ToolTip {
@@ -87,6 +125,7 @@ impl Tray for DesktopTrayItem {
 
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let tx_open = self.sender.clone();
+        let tx_hide = self.sender.clone();
         let tx_sync = self.sender.clone();
         let tx_vfs = self.sender.clone();
         let tx_quit = self.sender.clone();
@@ -94,6 +133,7 @@ impl Tray for DesktopTrayItem {
         vec![
             StandardItem {
                 label: "Open Nextcloud".into(),
+                icon_name: "window-new-symbolic".into(),
                 enabled: true,
                 visible: true,
                 activate: Box::new(move |_| {
@@ -102,9 +142,21 @@ impl Tray for DesktopTrayItem {
                 ..Default::default()
             }
             .into(),
+            StandardItem {
+                label: "Hide to Background".into(),
+                icon_name: "window-minimize-symbolic".into(),
+                enabled: true,
+                visible: true,
+                activate: Box::new(move |_| {
+                    let _ = tx_hide.send(TrayAction::HideWindow);
+                }),
+                ..Default::default()
+            }
+            .into(),
             MenuItem::Separator,
             StandardItem {
                 label: "Sync All Folders Now".into(),
+                icon_name: "emblem-synchronizing-symbolic".into(),
                 enabled: true,
                 visible: true,
                 activate: Box::new(move |_| {
@@ -115,6 +167,7 @@ impl Tray for DesktopTrayItem {
             .into(),
             StandardItem {
                 label: "Refresh Virtual Drive".into(),
+                icon_name: "view-refresh-symbolic".into(),
                 enabled: true,
                 visible: true,
                 activate: Box::new(move |_| {
@@ -126,6 +179,7 @@ impl Tray for DesktopTrayItem {
             MenuItem::Separator,
             StandardItem {
                 label: "Quit Nextcloud".into(),
+                icon_name: "application-exit-symbolic".into(),
                 enabled: true,
                 visible: true,
                 activate: Box::new(move |_| {
@@ -143,8 +197,19 @@ impl Tray for DesktopTrayItem {
 pub fn spawn_app_bar_tray(sender: UnboundedSender<TrayAction>) {
     tokio::spawn(async move {
         let tray = DesktopTrayItem::new(sender);
-        if let Err(err) = tray.spawn().await {
-            tracing::warn!(error = %err, "StatusNotifierItem service could not register on D-Bus session bus");
+        match tray.spawn().await {
+            Ok(_handle) => {
+                tracing::info!(
+                    "Registered StatusNotifierItem in desktop app bar (com.nextcloud.desktop.rs)"
+                );
+                std::future::pending::<()>().await;
+            }
+            Err(err) => {
+                tracing::warn!(
+                    error = %err,
+                    "StatusNotifierItem service could not register on D-Bus session bus"
+                );
+            }
         }
     });
 }

@@ -72,16 +72,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let coordinator = DesktopSyncCoordinator::new(shared_config, cache_dir, event_bus);
     let controller = DesktopUiController::new(coordinator.clone());
 
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let _rt_guard = rt.enter();
+
     if args.headless
         || args.sync
         || args.refresh_vfs
         || args.hydrate.is_some()
         || args.dehydrate.is_some()
     {
-        let rt = tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()?;
-
         rt.block_on(async {
             if args.refresh_vfs {
                 tracing::info!("Refreshing virtual file hierarchy...");

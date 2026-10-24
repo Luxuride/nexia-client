@@ -45,6 +45,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
 
 All commands must pass before a change is considered done.
+Commit and push each completed feature or logical change to the remote repository.
 
 ## Code rules
 

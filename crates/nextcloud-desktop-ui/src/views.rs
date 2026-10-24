@@ -185,9 +185,11 @@ pub async fn populate_file_list(
             format!("{} · {}", item.size_formatted, item.status.display_label())
         };
 
+        let safe_title = glib::markup_escape_text(&item.name);
+        let safe_subtitle = glib::markup_escape_text(&subtitle);
         let row = adw::ActionRow::builder()
-            .title(&item.name)
-            .subtitle(&subtitle)
+            .title(safe_title.as_str())
+            .subtitle(safe_subtitle.as_str())
             .build();
 
         let item_icon_name = if item.is_directory {
@@ -320,7 +322,7 @@ pub fn build_transfers_page() -> adw::PreferencesPage {
     let page = adw::PreferencesPage::new();
 
     let group = adw::PreferencesGroup::builder()
-        .title("Transfers & Hydration Activity")
+        .title("Transfers and Hydration Activity")
         .description("Recent uploads, downloads, and on-demand virtual file hydration events.")
         .build();
 
