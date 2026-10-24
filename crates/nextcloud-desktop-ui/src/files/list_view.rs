@@ -90,7 +90,7 @@ impl FileListView {
         let list_box = ListBox::new();
         list_box.set_selection_mode(SelectionMode::Multiple);
         list_box.set_activate_on_single_click(false);
-        list_box.add_css_class("navigation-sidebar");
+        list_box.add_css_class("file-list-view");
 
         let items = Rc::new(RefCell::new(Vec::new()));
 

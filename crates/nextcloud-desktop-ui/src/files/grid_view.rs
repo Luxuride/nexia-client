@@ -215,11 +215,8 @@ impl FileGridTile {
         let child = FlowBoxChild::new();
         let card = GtkBox::new(Orientation::Vertical, 4);
         card.set_size_request(114, 108);
-        card.set_margin_top(6);
-        card.set_margin_bottom(6);
-        card.set_margin_start(4);
-        card.set_margin_end(4);
         card.set_halign(Align::Center);
+        card.set_valign(Align::Center);
         card.add_css_class("file-tile");
 
         // Hover suggestion tooltip displaying full item metadata

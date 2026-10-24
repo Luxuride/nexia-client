@@ -48,15 +48,49 @@ pub fn launch_gtk_application(
         let provider = gtk4::CssProvider::new();
         provider.load_from_data(
             "
-            .file-tile {
+            flowboxchild {
                 border-radius: 8px;
-                transition: background-color 150ms ease-in-out;
+                padding: 2px;
+                margin: 0;
+                transition: background-color 120ms ease-in-out;
+            }
+            flowboxchild:hover {
+                background-color: alpha(currentColor, 0.07);
+            }
+            flowboxchild:selected {
+                background-color: alpha(@accent_color, 0.18);
+                color: currentColor;
+            }
+            flowboxchild:selected:hover {
+                background-color: alpha(@accent_color, 0.24);
+            }
+            flowboxchild:focus {
+                outline: none;
+            }
+            .file-tile {
+                background: none;
+                background-color: transparent;
+                border: none;
             }
             .file-tile:hover {
-                background-color: alpha(currentColor, 0.08);
+                background: none;
+                background-color: transparent;
             }
-            flowboxchild:selected .file-tile {
-                background-color: alpha(@accent_color, 0.16);
+            .file-list-view list > row {
+                border-radius: 6px;
+                margin: 1px 8px;
+                padding: 0;
+                transition: background-color 120ms ease-in-out;
+            }
+            .file-list-view list > row:hover {
+                background-color: alpha(currentColor, 0.06);
+            }
+            .file-list-view list > row:selected {
+                background-color: alpha(@accent_color, 0.18);
+                color: currentColor;
+            }
+            .file-list-view list > row:selected:hover {
+                background-color: alpha(@accent_color, 0.24);
             }
             ",
         );
