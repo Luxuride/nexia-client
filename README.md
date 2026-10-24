@@ -8,7 +8,7 @@ A modern Nextcloud desktop application built with GTK 4 and the Nextcloud Rust S
 
 - **Virtual Sync Engine**:
   - Recursively fetches and monitors remote hierarchies via WebDAV `PROPFIND` without consuming local disk space.
-  - Maintains an in-memory `VirtualTree` of metadata-only placeholders backed by [`nextcloud-sdk-vfs`].
+  - Maintains an in-memory `VirtualTree` of metadata-only placeholders backed by [`nextcloud-rust-sdk`].
   - **On-Demand Hydration**: Downloads file content via WebDAV `GET` only when opened, previewed, or explicitly requested.
   - **Dehydration**: Safely releases cached payload bytes back to lightweight placeholders to conserve disk space.
 - **Two-Way Synchronization**:

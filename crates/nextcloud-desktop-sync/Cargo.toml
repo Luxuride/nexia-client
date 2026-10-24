@@ -9,16 +9,10 @@ description = "Virtual synchronization engine, full two-way local folder sync, a
 
 [dependencies]
 nextcloud-desktop-core.workspace = true
-nextcloud-sdk-core.workspace = true
-nextcloud-sdk-vfs.workspace = true
-nextcloud-dav.workspace = true
-nextcloud-auth.workspace = true
-nextcloud-transport.workspace = true
-reqwest = "0.13"
+nextcloud-rust-sdk.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-async-trait.workspace = true
 chrono.workspace = true

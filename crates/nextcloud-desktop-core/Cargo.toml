@@ -8,8 +8,6 @@ authors.workspace = true
 description = "Core types, models, account management, and events for Nextcloud Desktop"
 
 [dependencies]
-nextcloud-sdk-core.workspace = true
-nextcloud-auth.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -8,6 +8,7 @@ pub mod error;
 pub mod gtk_app;
 pub mod model;
 pub mod tray;
+pub mod views;
 
 pub use controller::DesktopUiController;
 pub use error::UiError;

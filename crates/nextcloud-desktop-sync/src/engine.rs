@@ -1,9 +1,8 @@
 //! Desktop synchronization coordinator unifying virtual and full sync engines.
 
-use nextcloud_auth::{BasicAuth, SecretString};
-use nextcloud_dav::{DavClient, DavPath, Depth, PropfindBody};
-use nextcloud_sdk_core::ServerUrl;
-use nextcloud_transport::ReqwestTransport;
+use nextcloud_rust_sdk::{
+    BasicAuth, DavClient, DavPath, Depth, PropfindBody, SecretString, ServerUrl, TransportBuilder,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -66,7 +65,7 @@ impl DesktopSyncCoordinator {
 
         let server_url = ServerUrl::parse(&account.server.server_url)
             .map_err(|err| SyncError::InvalidPath(err.to_string()))?;
-        let transport = ReqwestTransport::new(reqwest::Client::new(), server_url);
+        let transport = TransportBuilder::with_server(server_url).build()?;
         let secret = SecretString::new(account.credentials.secret());
         let auth = BasicAuth::new(&account.credentials.username, secret);
         let dav_client = DavClient::new(&transport, &auth);
@@ -97,7 +96,7 @@ impl DesktopSyncCoordinator {
 
         let server_url = ServerUrl::parse(&account.server.server_url)
             .map_err(|err| SyncError::InvalidPath(err.to_string()))?;
-        let transport = ReqwestTransport::new(reqwest::Client::new(), server_url);
+        let transport = TransportBuilder::with_server(server_url).build()?;
         let secret = SecretString::new(account.credentials.secret());
         let auth = BasicAuth::new(&account.credentials.username, secret);
         let dav_client = DavClient::new(&transport, &auth);
@@ -136,7 +135,7 @@ impl DesktopSyncCoordinator {
 
             let server_url = ServerUrl::parse(&account.server.server_url)
                 .map_err(|err| SyncError::InvalidPath(err.to_string()))?;
-            let transport = ReqwestTransport::new(reqwest::Client::new(), server_url);
+            let transport = TransportBuilder::with_server(server_url).build()?;
             let secret = SecretString::new(account.credentials.secret());
             let auth = BasicAuth::new(&account.credentials.username, secret);
             let dav_client = DavClient::new(&transport, &auth);

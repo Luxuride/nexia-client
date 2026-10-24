@@ -8,11 +8,15 @@ use thiserror::Error;
 pub enum SyncError {
     /// Error originating from WebDAV transport or SDK core.
     #[error("WebDAV operation error: {0}")]
-    WebDav(#[from] nextcloud_sdk_core::Error),
+    WebDav(#[from] nextcloud_rust_sdk::Error),
+
+    /// Error building HTTP transport.
+    #[error("transport build error: {0}")]
+    TransportBuild(#[from] nextcloud_rust_sdk::TransportBuildError),
 
     /// Error within the virtual file system tree or hydration tracking.
     #[error("VFS error: {0}")]
-    Vfs(#[from] nextcloud_sdk_vfs::VfsError),
+    Vfs(#[from] nextcloud_rust_sdk::VfsError),
 
     /// Local filesystem I/O failure.
     #[error("local I/O failure at {path} while {context}: {source}")]

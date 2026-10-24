@@ -17,12 +17,6 @@ authors = ["Luxuride"]
 [workspace.dependencies]
 # Nextcloud SDK (git-based)
 nextcloud-rust-sdk = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
-nextcloud-sdk-core = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
-nextcloud-sdk-vfs = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
-nextcloud-dav = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
-nextcloud-auth = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
-nextcloud-transport = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
-nextcloud-client-config = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
 
 # Workspace crates
 nextcloud-desktop-core = { path = "crates/nextcloud-desktop-core", version = "0.1.0" }
@@ -36,25 +30,14 @@ serde_json = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4.5", features = ["derive", "env"] }
+clap = { version = "4.6", features = ["derive", "env"] }
 chrono = { version = "0.4", features = ["serde"] }
-dirs = "6.0"
+dirs = "7.0"
 uuid = { version = "1", features = ["v4", "serde"] }
-async-trait = "0.1"
-futures = "0.3"
-gtk4 = { version = "0.9" }
-libadwaita = { version = "0.7" }
-glib = { version = "0.20" }
+gtk4 = { version = "0.11" }
+libadwaita = { version = "0.9" }
+glib = { version = "0.22" }
 ksni = { version = "0.3", default-features = false, features = ["tokio"] }
-
-[patch."https://github.com/Luxuride/nextcloud-rust-sdk"]
-nextcloud-sdk-core = { path = "../nextcloud-rust-sdk/crates/core/nextcloud-sdk-core" }
-nextcloud-auth = { path = "../nextcloud-rust-sdk/crates/nextcloud/nextcloud-auth" }
-nextcloud-transport = { path = "../nextcloud-rust-sdk/crates/nextcloud/nextcloud-transport" }
-nextcloud-dav = { path = "../nextcloud-rust-sdk/crates/nextcloud/nextcloud-dav" }
-nextcloud-sdk-vfs = { path = "../nextcloud-rust-sdk/crates/core/nextcloud-sdk-vfs" }
-nextcloud-client-config = { path = "../nextcloud-rust-sdk/crates/nextcloud/nextcloud-client-config" }
-nextcloud-rust-sdk = { path = "../nextcloud-rust-sdk" }
 
 [package]
 name = "nextcloud-desktop-rs"

@@ -25,12 +25,30 @@ pub enum FileSyncStatus {
 }
 
 impl FileSyncStatus {
-    /// Formats the status as a human-readable display string with icon indicator.
+    /// Formats the status as a human-readable display string.
     pub fn display_label(&self) -> &'static str {
         match self {
-            Self::CloudPlaceholder => "☁️ Virtual (Cloud Only)",
-            Self::HydratedOffline => "💾 Offline Ready",
-            Self::Syncing => "🔄 Syncing...",
+            Self::CloudPlaceholder => "Cloud Only",
+            Self::HydratedOffline => "Available Offline",
+            Self::Syncing => "Syncing…",
+        }
+    }
+
+    /// Returns the Freedesktop symbolic icon name representing this status.
+    pub fn icon_name(&self) -> &'static str {
+        match self {
+            Self::CloudPlaceholder => "weather-overcast-symbolic",
+            Self::HydratedOffline => "emblem-ok-symbolic",
+            Self::Syncing => "emblem-synchronizing-symbolic",
+        }
+    }
+
+    /// Returns the Libadwaita CSS style class associated with this status.
+    pub fn css_class(&self) -> &'static str {
+        match self {
+            Self::CloudPlaceholder => "dim-label",
+            Self::HydratedOffline => "success",
+            Self::Syncing => "accent",
         }
     }
 }
@@ -101,11 +119,19 @@ mod tests {
     fn status_labels() {
         assert_eq!(
             FileSyncStatus::CloudPlaceholder.display_label(),
-            "☁️ Virtual (Cloud Only)"
+            "Cloud Only"
         );
         assert_eq!(
             FileSyncStatus::HydratedOffline.display_label(),
-            "💾 Offline Ready"
+            "Available Offline"
+        );
+        assert_eq!(
+            FileSyncStatus::CloudPlaceholder.icon_name(),
+            "weather-overcast-symbolic"
+        );
+        assert_eq!(
+            FileSyncStatus::HydratedOffline.icon_name(),
+            "emblem-ok-symbolic"
         );
     }
 }

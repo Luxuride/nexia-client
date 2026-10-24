@@ -1,8 +1,6 @@
 //! Filesystem and WebDAV scanners for discovering local and remote items.
 
-use nextcloud_auth::BasicAuth;
-use nextcloud_dav::{DavClient, Depth, PropfindBody};
-use nextcloud_transport::ReqwestTransport;
+use nextcloud_rust_sdk::{BasicAuth, DavClient, Depth, PropfindBody, ReqwestTransport};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;

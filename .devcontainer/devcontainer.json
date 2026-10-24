@@ -21,15 +21,26 @@
       }
     }
   },
+  "initializeCommand": "xhost +SI:localuser:$(id -un) || true",
+  "runArgs": [
+    "--security-opt=label=disable",
+    "--device=/dev/dri"
+  ],
   "containerEnv": {
     "DISPLAY": "${localEnv:DISPLAY}",
     "WAYLAND_DISPLAY": "${localEnv:WAYLAND_DISPLAY}",
-    "XDG_RUNTIME_DIR": "${localEnv:XDG_RUNTIME_DIR}"
+    "XDG_RUNTIME_DIR": "${localEnv:XDG_RUNTIME_DIR}",
+    "DBUS_SESSION_BUS_ADDRESS": "${localEnv:DBUS_SESSION_BUS_ADDRESS}"
   },
   "mounts": [
     {
       "source": "/tmp/.X11-unix",
       "target": "/tmp/.X11-unix",
+      "type": "bind"
+    },
+    {
+      "source": "${localEnv:XDG_RUNTIME_DIR}",
+      "target": "${localEnv:XDG_RUNTIME_DIR}",
       "type": "bind"
     }
   ],

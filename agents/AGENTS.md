@@ -30,6 +30,8 @@ virtual sync / full two-way synchronization engines, and GTK 4 user interface co
 
 - Build, test, format and lint inside the devcontainer
   (`mcr.microsoft.com/devcontainers/rust:1-bookworm`), never directly relying on host-specific tools.
+- Interact with the devcontainer using the `devcontainer` CLI
+  (`devcontainer exec --docker-path podman --workspace-folder . <command>`).
 - Edition 2024, stable Rust. Do not bump the MSRV without being asked.
 
 ## Commands
@@ -65,7 +67,7 @@ All commands must pass before a change is considered done.
 
 - Prefer the standard library and already-present dependencies over adding
   new crates.
-- Utilize the Nextcloud Rust SDK (`nextcloud-rust-sdk`, `nextcloud-sdk-core`, `nextcloud-sdk-vfs`, `nextcloud-dav`, `nextcloud-auth`, `nextcloud-transport`).
+- Utilize the Nextcloud Rust SDK (`nextcloud-rust-sdk`) directly, never depending on its lower-level internal crates (`nextcloud-sdk-core`, `nextcloud-sdk-vfs`, `nextcloud-dav`, `nextcloud-auth`, `nextcloud-transport`, etc.).
 - Keep wire types and data models distinct from UI presentation state.
 - No `*` or floating version requirements; use caret versions.
 

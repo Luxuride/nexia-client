@@ -1,8 +1,6 @@
 //! Remote Nextcloud WebDAV file operations.
 
-use nextcloud_auth::BasicAuth;
-use nextcloud_dav::DavClient;
-use nextcloud_transport::ReqwestTransport;
+use nextcloud_rust_sdk::{BasicAuth, DavClient, ReqwestTransport};
 use std::fs;
 use std::path::Path;
 

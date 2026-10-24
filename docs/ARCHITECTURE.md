@@ -14,7 +14,7 @@ flowchart TD
     UI["crates/nextcloud-desktop-ui\n(GTK 4, Libadwaita & App Bar StatusNotifier)"]
     Sync["crates/nextcloud-desktop-sync\n(Virtual Sync, On-Demand Hydration & Reconciler)"]
     Core["crates/nextcloud-desktop-core\n(Account, Config, Credential Safety & Event Bus)"]
-    SDK["Nextcloud Rust SDK\n(nextcloud-sdk-vfs, nextcloud-dav, nextcloud-auth, nextcloud-transport)"]
+    SDK["Nextcloud Rust SDK\n(nextcloud-rust-sdk)"]
 
     Binary --> UI
     Binary --> Sync
@@ -23,7 +23,6 @@ flowchart TD
     UI --> Core
     Sync --> Core
     Sync --> SDK
-    Core --> SDK
 ```
 
 ---

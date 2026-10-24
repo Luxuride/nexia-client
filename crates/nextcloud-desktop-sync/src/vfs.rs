@@ -1,9 +1,9 @@
 //! Virtual synchronization engine for metadata trees and on-demand file hydration.
 
-use nextcloud_auth::BasicAuth;
-use nextcloud_dav::{DavClient, DavPath, DavResource};
-use nextcloud_sdk_vfs::{HydratedContent, HydrationState, NodeMetadata, VirtualNode, VirtualTree};
-use nextcloud_transport::ReqwestTransport;
+use nextcloud_rust_sdk::{
+    BasicAuth, DavClient, DavPath, DavResource, HydratedContent, HydrationState, NodeMetadata,
+    ReqwestTransport, VirtualNode, VirtualTree,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

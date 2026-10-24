@@ -37,7 +37,7 @@ sequenceDiagram
 
 ## 2. Hydration States
 
-Each virtual node in [`nextcloud-sdk-vfs`] has an explicit hydration state:
+Each virtual node in [`nextcloud-rust-sdk`] has an explicit hydration state:
 
 | State | Status Badge | Disk Footprint | Backing Storage |
 | :--- | :--- | :--- | :--- |
