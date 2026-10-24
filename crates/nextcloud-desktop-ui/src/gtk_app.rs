@@ -40,9 +40,17 @@ pub fn launch_gtk_application(
         if let Some(settings) = gtk4::Settings::default() {
             let cursor_size = std::env::var("XCURSOR_SIZE")
                 .ok()
-                .and_then(|s| s.parse::<i32>().ok())
+                .and_then(|s| s.trim_start_matches('-').parse::<i32>().ok())
+                .filter(|&sz| sz > 0)
                 .unwrap_or(24);
             settings.set_gtk_cursor_theme_size(cursor_size);
+
+            if let Ok(theme) = std::env::var("XCURSOR_THEME") {
+                let clean_theme = theme.trim_start_matches('-');
+                if !clean_theme.is_empty() {
+                    settings.set_gtk_cursor_theme_name(Some(clean_theme));
+                }
+            }
         }
 
         let provider = gtk4::CssProvider::new();

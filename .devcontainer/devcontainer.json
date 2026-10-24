@@ -31,8 +31,8 @@
     "WAYLAND_DISPLAY": "${localEnv:WAYLAND_DISPLAY}",
     "XDG_RUNTIME_DIR": "${localEnv:XDG_RUNTIME_DIR}",
     "DBUS_SESSION_BUS_ADDRESS": "${localEnv:DBUS_SESSION_BUS_ADDRESS}",
-    "XCURSOR_SIZE": "${localEnv:XCURSOR_SIZE:-24}",
-    "XCURSOR_THEME": "${localEnv:XCURSOR_THEME:-Adwaita}"
+    "XCURSOR_SIZE": "24",
+    "XCURSOR_THEME": "Adwaita"
   },
   "mounts": [
     {
