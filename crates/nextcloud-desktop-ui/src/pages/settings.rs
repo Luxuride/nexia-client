@@ -1,23 +1,17 @@
 //! Account and application settings page component.
 
-#[cfg(feature = "gtk")]
 use gtk4::Image;
-#[cfg(feature = "gtk")]
 use libadwaita as adw;
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
 
-#[cfg(feature = "gtk")]
 use crate::widget::{FileExplorerBackend, ViewComponent};
 
 /// Preferences page displaying Nextcloud account security and local VFS cache configuration.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct SettingsPage {
     page: adw::PreferencesPage,
 }
 
-#[cfg(feature = "gtk")]
 impl SettingsPage {
     /// Creates a new settings page bound to `backend`.
     pub fn new<B: FileExplorerBackend>(backend: &B) -> Self {
@@ -58,7 +52,6 @@ impl SettingsPage {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for SettingsPage {
     type RootWidget = adw::PreferencesPage;
 

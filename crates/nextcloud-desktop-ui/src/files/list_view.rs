@@ -1,36 +1,25 @@
 //! Nautilus-style detailed list view with multi-selection, hover suggestions, and inline actions.
 
-#[cfg(feature = "gtk")]
 use gtk4::{
     Align, Box as GtkBox, Button, EventControllerKey, Image, Label, ListBox, ListBoxRow,
     Orientation, PolicyType, ScrolledWindow, SelectionMode, Separator, gdk, pango,
 };
-#[cfg(feature = "gtk")]
 use libadwaita as adw;
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
-#[cfg(feature = "gtk")]
 use std::cell::RefCell;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
 
-#[cfg(feature = "gtk")]
+use crate::files::canvas_menu::CanvasContextMenu;
 use crate::files::context_menu::ItemContextMenu;
-#[cfg(feature = "gtk")]
 use crate::files::dnd::FileDragDrop;
-#[cfg(feature = "gtk")]
+use crate::files::launcher::launch_file_externally;
 use crate::files::rename_dialog::RenameDialog;
-#[cfg(feature = "gtk")]
 use crate::files::rubberband::RubberbandOverlay;
-#[cfg(feature = "gtk")]
 use crate::files::selection::SelectionTracker;
-#[cfg(feature = "gtk")]
 use crate::model::FileViewItem;
-#[cfg(feature = "gtk")]
 use crate::widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
 
 /// Detailed columnar list view representing the active virtual directory.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct FileListView {
     container: GtkBox,
@@ -39,7 +28,6 @@ pub struct FileListView {
     selection_tracker: SelectionTracker,
 }
 
-#[cfg(feature = "gtk")]
 impl FileListView {
     /// Creates a new columnar list view wired to `backend` and callbacks.
     pub fn new<B: FileExplorerBackend>(
@@ -52,12 +40,12 @@ impl FileListView {
         container.set_vexpand(true);
         container.set_hexpand(true);
 
-        // Column Header
+        // Column header bar matching Nautilus list view layout
         let col_header = GtkBox::new(Orientation::Horizontal, 12);
         col_header.set_margin_top(8);
-        col_header.set_margin_bottom(8);
-        col_header.set_margin_start(20);
-        col_header.set_margin_end(20);
+        col_header.set_margin_bottom(6);
+        col_header.set_margin_start(16);
+        col_header.set_margin_end(16);
 
         let col_name = Label::new(Some("Name"));
         col_name.set_hexpand(true);
@@ -66,13 +54,13 @@ impl FileListView {
         col_name.add_css_class("dim-label");
 
         let col_type = Label::new(Some("Type"));
-        col_type.set_size_request(130, -1);
+        col_type.set_size_request(120, -1);
         col_type.set_halign(Align::Start);
         col_type.add_css_class("caption-heading");
         col_type.add_css_class("dim-label");
 
         let col_size = Label::new(Some("Size"));
-        col_size.set_size_request(85, -1);
+        col_size.set_size_request(90, -1);
         col_size.set_halign(Align::End);
         col_size.add_css_class("caption-heading");
         col_size.add_css_class("dim-label");
@@ -100,7 +88,7 @@ impl FileListView {
 
         let items = Rc::new(RefCell::new(Vec::new()));
 
-        // Wire selection change
+        // Wire selection changes
         let items_for_sel = items.clone();
         let tracker_for_sel = selection_tracker.clone();
         list_box.connect_selected_rows_changed(move |lb| {
@@ -132,11 +120,11 @@ impl FileListView {
                     } else {
                         match b.open_file(&item.path).await {
                             Ok(path) => {
-                                toast.add_toast(adw::Toast::new(&format!(
-                                    "Opened “{}” ({})",
-                                    item.name,
-                                    path.display()
-                                )));
+                                launch_file_externally(&path);
+                                toast
+                                    .add_toast(adw::Toast::new(
+                                        &format!("Opened “{}”", item.name,),
+                                    ));
                             }
                             Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
                         }
@@ -153,6 +141,31 @@ impl FileListView {
         // Wire visual rubberband selection marquee and empty-space deselection
         let rubberband = RubberbandOverlay::new(&scroll);
         rubberband.attach_list_box(&list_box, items.clone(), selection_tracker.clone());
+
+        // Wire canvas context menu for right clicking empty space
+        let lb_for_hit = list_box.clone();
+        let overlay_for_hit = rubberband.clone();
+        let is_hit = Rc::new(move |x: f64, y: f64| {
+            let pt = gtk4::graphene::Point::new(x as f32, y as f32);
+            let mut idx = 0;
+            while let Some(row) = lb_for_hit.row_at_index(idx) {
+                if let Some(bounds) = row.compute_bounds(overlay_for_hit.root_widget())
+                    && bounds.contains_point(&pt)
+                {
+                    return true;
+                }
+                idx += 1;
+            }
+            false
+        });
+        CanvasContextMenu::attach(
+            rubberband.root_widget(),
+            backend,
+            toast_overlay,
+            on_refresh.clone(),
+            is_hit,
+        );
+
         container.append(rubberband.root_widget());
 
         // Wire F2 key shortcut to present Nautilus RenameDialog
@@ -204,7 +217,6 @@ impl FileListView {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for FileListView {
     type RootWidget = GtkBox;
 
@@ -213,7 +225,6 @@ impl ViewComponent for FileListView {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl<B: FileExplorerBackend> ItemCollectionView<B> for FileListView {
     fn clear(&self) {
         self.list_box.unselect_all();
@@ -244,12 +255,10 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileListView {
 }
 
 /// A single row within the [`FileListView`].
-#[cfg(feature = "gtk")]
 pub struct FileListRow {
     row: ListBoxRow,
 }
 
-#[cfg(feature = "gtk")]
 impl FileListRow {
     /// Builds a row widget for `item` with hover suggestions and action buttons.
     pub fn build<B: FileExplorerBackend>(
@@ -277,31 +286,32 @@ impl FileListRow {
         );
         hbox.set_tooltip_text(Some(&tooltip));
 
+        // 1. Icon & Name
         let icon = Image::from_icon_name(item.nautilus_icon_name());
-        icon.set_pixel_size(32);
+        icon.set_pixel_size(24);
 
         let name = Label::new(Some(&item.name));
         name.set_hexpand(true);
         name.set_halign(Align::Start);
         name.set_ellipsize(pango::EllipsizeMode::End);
 
+        // 2. Type column
         let type_lbl = Label::new(Some(item.type_label()));
-        type_lbl.set_size_request(130, -1);
+        type_lbl.set_size_request(120, -1);
         type_lbl.set_halign(Align::Start);
-        type_lbl.add_css_class("caption");
         type_lbl.add_css_class("dim-label");
 
+        // 3. Size column
         let size_lbl = Label::new(Some(&item.size_formatted));
-        size_lbl.set_size_request(85, -1);
+        size_lbl.set_size_request(90, -1);
         size_lbl.set_halign(Align::End);
-        size_lbl.add_css_class("caption");
         size_lbl.add_css_class("dim-label");
 
-        let actions = GtkBox::new(Orientation::Horizontal, 2);
+        // 4. Action buttons
+        let actions = GtkBox::new(Orientation::Horizontal, 4);
         actions.set_size_request(110, -1);
         actions.set_halign(Align::End);
 
-        // 1. Open button
         let open_icon = if item.is_directory {
             "go-next-symbolic"
         } else {
@@ -332,11 +342,11 @@ impl FileListRow {
                     } else {
                         match b.open_file(&item.path).await {
                             Ok(path) => {
-                                toast.add_toast(adw::Toast::new(&format!(
-                                    "Opened “{}” ({})",
-                                    item.name,
-                                    path.display()
-                                )));
+                                launch_file_externally(&path);
+                                toast
+                                    .add_toast(adw::Toast::new(
+                                        &format!("Opened “{}”", item.name,),
+                                    ));
                             }
                             Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
                         }
@@ -345,7 +355,7 @@ impl FileListRow {
             });
         }
 
-        // 2. Rename button (Nautilus RenameDialog)
+        // Rename button
         let rename_btn = Button::from_icon_name("edit-rename-symbolic");
         rename_btn.add_css_class("flat");
         rename_btn.set_tooltip_text(Some("Rename (F2)"));
@@ -360,7 +370,7 @@ impl FileListRow {
             });
         }
 
-        // 3. Delete button
+        // Delete button
         let del_btn = Button::from_icon_name("user-trash-symbolic");
         del_btn.add_css_class("flat");
         del_btn.set_tooltip_text(Some("Delete"));
@@ -408,7 +418,6 @@ impl FileListRow {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for FileListRow {
     type RootWidget = ListBoxRow;
 

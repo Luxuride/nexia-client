@@ -1,28 +1,19 @@
 //! In-page navigation and action toolbar for the Cloud Files view.
 
-#[cfg(feature = "gtk")]
 use gtk4::{Align, Box as GtkBox, Button, Orientation, ToggleButton};
-#[cfg(feature = "gtk")]
 use libadwaita as adw;
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
 
-#[cfg(feature = "gtk")]
 use crate::files::new_folder::NewFolderPopover;
-#[cfg(feature = "gtk")]
 use crate::files::path_bar::PathBar;
-#[cfg(feature = "gtk")]
 use crate::model::FileViewMode;
-#[cfg(feature = "gtk")]
 use crate::widget::{FileExplorerBackend, ViewComponent};
 
 /// Top toolbar panel embedded directly inside the Cloud Files page view.
 ///
 /// Houses Back/Forward navigation buttons, the interactive [`PathBar`],
 /// the [`NewFolderPopover`] button, and the Grid/List view mode toggle.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct PathToolbar {
     container: GtkBox,
@@ -31,7 +22,6 @@ pub struct PathToolbar {
     path_bar: PathBar,
 }
 
-#[cfg(feature = "gtk")]
 impl PathToolbar {
     /// Creates a new in-page toolbar wired to `backend` and `on_change`.
     pub fn new<B: FileExplorerBackend>(
@@ -156,7 +146,6 @@ impl PathToolbar {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for PathToolbar {
     type RootWidget = GtkBox;
 

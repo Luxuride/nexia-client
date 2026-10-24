@@ -1,17 +1,12 @@
 //! Bottom status bar for the Cloud Files view.
 
-#[cfg(feature = "gtk")]
 use gtk4::{Align, Box as GtkBox, Label, Orientation};
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
 
-#[cfg(feature = "gtk")]
 use crate::model::FileViewItem;
-#[cfg(feature = "gtk")]
 use crate::widget::ViewComponent;
 
 /// Bottom status bar displaying file/folder counts and active selection details.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct FileStatusBar {
     container: GtkBox,
@@ -19,7 +14,6 @@ pub struct FileStatusBar {
     selection_label: Label,
 }
 
-#[cfg(feature = "gtk")]
 impl FileStatusBar {
     /// Creates a new status bar.
     pub fn new() -> Self {
@@ -97,14 +91,12 @@ impl FileStatusBar {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl Default for FileStatusBar {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for FileStatusBar {
     type RootWidget = GtkBox;
 

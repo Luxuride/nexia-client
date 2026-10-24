@@ -1,25 +1,18 @@
 //! Popover menu button for creating a new directory inside the active Cloud Files folder.
 
-#[cfg(feature = "gtk")]
 use gtk4::{Align, Box as GtkBox, Button, Entry, Label, MenuButton, Orientation, Popover};
-#[cfg(feature = "gtk")]
 use libadwaita as adw;
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
 
-#[cfg(feature = "gtk")]
 use crate::widget::{FileExplorerBackend, ViewComponent};
 
 /// Menu button and popover dialog for creating a new folder in the current directory.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct NewFolderPopover {
     button: MenuButton,
 }
 
-#[cfg(feature = "gtk")]
 impl NewFolderPopover {
     /// Creates a new folder menu button wired to `backend` and `toast_overlay`.
     pub fn new<B: FileExplorerBackend>(
@@ -86,7 +79,6 @@ impl NewFolderPopover {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for NewFolderPopover {
     type RootWidget = MenuButton;
 

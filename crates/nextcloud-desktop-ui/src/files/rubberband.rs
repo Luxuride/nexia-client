@@ -1,31 +1,20 @@
 //! Visual rubberband selection overlay for icon grid and columnar list views.
 
-#[cfg(feature = "gtk")]
 use gtk4::gdk;
-#[cfg(feature = "gtk")]
 use gtk4::graphene::{Point, Rect};
-#[cfg(feature = "gtk")]
 use gtk4::{DrawingArea, FlowBox, GestureClick, GestureDrag, ListBox, Overlay, ScrolledWindow};
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
-#[cfg(feature = "gtk")]
 use std::cell::RefCell;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
 
-#[cfg(feature = "gtk")]
 use crate::files::selection::SelectionTracker;
-#[cfg(feature = "gtk")]
 use crate::model::FileViewItem;
-#[cfg(feature = "gtk")]
 use crate::widget::ViewComponent;
 
 /// Active rubberband rectangular region `(x, y, width, height)`.
-#[cfg(feature = "gtk")]
 pub type RubberbandBounds = Rc<RefCell<Option<(f64, f64, f64, f64)>>>;
 
 /// Overlay wrapper that visually paints a translucent selection marquee during rubberband drag.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct RubberbandOverlay {
     overlay: Overlay,
@@ -33,7 +22,6 @@ pub struct RubberbandOverlay {
     active_rect: RubberbandBounds,
 }
 
-#[cfg(feature = "gtk")]
 impl RubberbandOverlay {
     /// Creates a new rubberband overlay wrapping the given `child` scroll window.
     pub fn new(child: &ScrolledWindow) -> Self {
@@ -346,7 +334,6 @@ impl RubberbandOverlay {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for RubberbandOverlay {
     type RootWidget = Overlay;
 

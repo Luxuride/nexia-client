@@ -1,23 +1,17 @@
 //! Transfers and hydration activity page component.
 
-#[cfg(feature = "gtk")]
 use gtk4::Image;
-#[cfg(feature = "gtk")]
 use libadwaita as adw;
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
 
-#[cfg(feature = "gtk")]
 use crate::widget::ViewComponent;
 
 /// Preferences page displaying recent file transfers and virtual hydration status.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct ActivityPage {
     page: adw::PreferencesPage,
 }
 
-#[cfg(feature = "gtk")]
 impl ActivityPage {
     /// Creates a new activity and transfers page.
     pub fn new() -> Self {
@@ -45,14 +39,12 @@ impl ActivityPage {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl Default for ActivityPage {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for ActivityPage {
     type RootWidget = adw::PreferencesPage;
 

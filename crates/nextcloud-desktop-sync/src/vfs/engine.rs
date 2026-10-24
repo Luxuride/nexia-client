@@ -245,6 +245,35 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
         Ok(())
     }
 
+    /// Inserts a new virtual file node at `remote_path` with the specified byte content.
+    pub async fn create_file(
+        &self,
+        remote_path: &str,
+        content: &[u8],
+    ) -> Result<String, SyncError> {
+        let clean_path = format!("/{}", remote_path.trim_matches('/'));
+        if clean_path == "/" {
+            return Err(SyncError::InvalidPath(
+                "cannot create file at root directory".to_string(),
+            ));
+        }
+
+        let local_path = self.write_cache_bytes(&clean_path, content)?;
+        let meta = NodeMetadata::file(&clean_path).with_size(content.len() as u64);
+
+        let mut node = VirtualNode::new_file(meta);
+        node.hydration = HydrationState::Hydrated(HydratedContent::Path(local_path));
+        let count = {
+            let mut tree = self.tree.write().await;
+            tree.insert(node);
+            tree.len()
+        };
+
+        self.event_bus
+            .emit(DesktopEvent::VfsTreeUpdated { node_count: count });
+        Ok(clean_path)
+    }
+
     /// Renames a file or folder in the virtual tree, updating local cache paths if hydrated.
     pub async fn rename_entry(
         &self,
@@ -478,11 +507,22 @@ mod tests {
         }));
 
         vfs.create_directory("/Documents/NewFolder").await.unwrap();
+        let created_file = vfs
+            .create_file("/Documents/test.txt", b"hello world")
+            .await
+            .expect("create file");
+        assert_eq!(created_file, "/Documents/test.txt");
+
         let docs_children = vfs.list_children("/Documents").await.unwrap();
         assert!(
             docs_children
                 .iter()
                 .any(|c| c.name == "NewFolder" && c.is_directory)
+        );
+        assert!(
+            docs_children
+                .iter()
+                .any(|c| c.name == "test.txt" && !c.is_directory)
         );
 
         let cached = vfs

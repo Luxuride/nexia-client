@@ -1,26 +1,17 @@
 //! Context menu popover providing Open, Rename, and Delete actions for file items.
 
-#[cfg(feature = "gtk")]
 use gtk4::{Box as GtkBox, Button, GestureClick, Orientation, Popover, Separator};
-#[cfg(feature = "gtk")]
 use libadwaita as adw;
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
 
-#[cfg(feature = "gtk")]
 use crate::files::rename_dialog::RenameDialog;
-#[cfg(feature = "gtk")]
 use crate::model::FileViewItem;
-#[cfg(feature = "gtk")]
 use crate::widget::FileExplorerBackend;
 
 /// Right-click context menu offering Open, Rename, and Delete actions.
-#[cfg(feature = "gtk")]
 pub struct ItemContextMenu;
 
-#[cfg(feature = "gtk")]
 impl ItemContextMenu {
     /// Attaches a right-click secondary click gesture and popup to `target`.
     pub fn attach<B: FileExplorerBackend>(

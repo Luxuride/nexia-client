@@ -1,33 +1,21 @@
 //! GTK 4 and Libadwaita desktop user interface application runner and window builder.
 
-#[cfg(feature = "gtk")]
 use gtk4::{Box as GtkBox, Orientation, Paned, Stack, StackTransitionType};
-#[cfg(feature = "gtk")]
 use libadwaita as adw;
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
-#[cfg(feature = "gtk")]
 use std::cell::RefCell;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
-#[cfg(feature = "gtk")]
 use tokio::sync::mpsc;
 
 use crate::controller::DesktopUiController;
 use crate::error::UiError;
-#[cfg(feature = "gtk")]
 use crate::files::CloudFilesPage;
-#[cfg(feature = "gtk")]
 use crate::header::MainHeaderBar;
-#[cfg(feature = "gtk")]
 use crate::pages::{ActivityPage, NavigationSidebar, SettingsPage, SyncFoldersPage};
-#[cfg(feature = "gtk")]
 use crate::tray::{TrayAction, spawn_app_bar_tray};
-#[cfg(feature = "gtk")]
 use crate::widget::ViewComponent;
 
 /// Launches the Nextcloud Desktop GTK 4 / Libadwaita application.
-#[cfg(feature = "gtk")]
 pub fn launch_gtk_application(
     controller: DesktopUiController,
     start_minimized: bool,
@@ -150,7 +138,6 @@ pub fn launch_gtk_application(
     Ok(())
 }
 
-#[cfg(feature = "gtk")]
 fn build_ui(
     app: &adw::Application,
     controller: DesktopUiController,

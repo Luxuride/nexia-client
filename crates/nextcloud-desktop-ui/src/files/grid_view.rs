@@ -1,36 +1,25 @@
 //! Nautilus-style icon grid view using GTK 4 `FlowBox` with multi-selection, hover suggestions, and F2 renaming.
 
-#[cfg(feature = "gtk")]
 use gtk4::{
     Align, Box as GtkBox, EventControllerKey, FlowBox, FlowBoxChild, Image, Justification, Label,
     Orientation, Overlay, PolicyType, ScrolledWindow, SelectionMode, gdk, pango,
 };
-#[cfg(feature = "gtk")]
 use libadwaita as adw;
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
-#[cfg(feature = "gtk")]
 use std::cell::RefCell;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
 
-#[cfg(feature = "gtk")]
+use crate::files::canvas_menu::CanvasContextMenu;
 use crate::files::context_menu::ItemContextMenu;
-#[cfg(feature = "gtk")]
 use crate::files::dnd::FileDragDrop;
-#[cfg(feature = "gtk")]
+use crate::files::launcher::launch_file_externally;
 use crate::files::rename_dialog::RenameDialog;
-#[cfg(feature = "gtk")]
 use crate::files::rubberband::RubberbandOverlay;
-#[cfg(feature = "gtk")]
 use crate::files::selection::SelectionTracker;
-#[cfg(feature = "gtk")]
 use crate::model::FileViewItem;
-#[cfg(feature = "gtk")]
 use crate::widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
 
 /// Icon grid representation of the active virtual directory.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct FileGridView {
     overlay: RubberbandOverlay,
@@ -39,7 +28,6 @@ pub struct FileGridView {
     selection_tracker: SelectionTracker,
 }
 
-#[cfg(feature = "gtk")]
 impl FileGridView {
     /// Creates a new icon grid view wired to `backend` and callbacks.
     pub fn new<B: FileExplorerBackend>(
@@ -99,11 +87,11 @@ impl FileGridView {
                     } else {
                         match b.open_file(&item.path).await {
                             Ok(path) => {
-                                toast.add_toast(adw::Toast::new(&format!(
-                                    "Opened “{}” ({})",
-                                    item.name,
-                                    path.display()
-                                )));
+                                launch_file_externally(&path);
+                                toast
+                                    .add_toast(adw::Toast::new(
+                                        &format!("Opened “{}”", item.name,),
+                                    ));
                             }
                             Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
                         }
@@ -121,6 +109,30 @@ impl FileGridView {
         // Wire visual rubberband selection marquee and empty-space deselection
         let overlay = RubberbandOverlay::new(&scroll);
         overlay.attach_flow_box(&flow_box, items.clone(), selection_tracker.clone());
+
+        // Wire canvas context menu for right clicking empty space
+        let fb_for_hit = flow_box.clone();
+        let overlay_for_hit = overlay.clone();
+        let is_hit = Rc::new(move |x: f64, y: f64| {
+            let pt = gtk4::graphene::Point::new(x as f32, y as f32);
+            let mut idx = 0;
+            while let Some(child) = fb_for_hit.child_at_index(idx) {
+                if let Some(bounds) = child.compute_bounds(overlay_for_hit.root_widget())
+                    && bounds.contains_point(&pt)
+                {
+                    return true;
+                }
+                idx += 1;
+            }
+            false
+        });
+        CanvasContextMenu::attach(
+            overlay.root_widget(),
+            backend,
+            toast_overlay,
+            on_refresh.clone(),
+            is_hit,
+        );
 
         // Wire F2 key shortcut to present Nautilus RenameDialog
         let key_controller = EventControllerKey::new();
@@ -171,7 +183,6 @@ impl FileGridView {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for FileGridView {
     type RootWidget = Overlay;
 
@@ -180,7 +191,6 @@ impl ViewComponent for FileGridView {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl<B: FileExplorerBackend> ItemCollectionView<B> for FileGridView {
     fn clear(&self) {
         self.flow_box.unselect_all();
@@ -211,12 +221,10 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileGridView {
 }
 
 /// A single icon tile within the [`FileGridView`].
-#[cfg(feature = "gtk")]
 pub struct FileGridTile {
     child: FlowBoxChild,
 }
 
-#[cfg(feature = "gtk")]
 impl FileGridTile {
     /// Builds a tile widget for `item` with hover suggestions and context menu.
     pub fn build<B: FileExplorerBackend>(
@@ -273,7 +281,6 @@ impl FileGridTile {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for FileGridTile {
     type RootWidget = FlowBoxChild;
 

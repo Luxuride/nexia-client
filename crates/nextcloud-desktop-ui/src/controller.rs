@@ -157,6 +157,26 @@ impl DesktopUiController {
         Ok(full_path)
     }
 
+    /// Creates a new virtual file in the current directory with content.
+    pub async fn create_file(&self, file_name: &str, content: &[u8]) -> Result<String, UiError> {
+        let trimmed = file_name.trim();
+        if trimmed.is_empty() {
+            return Err(UiError::Controller("File name cannot be empty".to_string()));
+        }
+
+        let cur = self.current_path().await;
+        let full_path = if cur == "/" {
+            format!("/{trimmed}")
+        } else {
+            format!("{}/{trimmed}", cur.trim_end_matches('/'))
+        };
+
+        self.coordinator
+            .create_file(&full_path, content)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
     /// Renames a file or folder in the virtual drive.
     pub async fn rename_item(&self, remote_path: &str, new_name: &str) -> Result<String, UiError> {
         self.coordinator
@@ -266,6 +286,10 @@ impl FileExplorerBackend for DesktopUiController {
 
     async fn create_folder(&self, folder_name: &str) -> Result<String, UiError> {
         self.create_folder(folder_name).await
+    }
+
+    async fn create_file(&self, file_name: &str, content: &[u8]) -> Result<String, UiError> {
+        self.create_file(file_name, content).await
     }
 
     async fn rename_item(&self, remote_path: &str, new_name: &str) -> Result<String, UiError> {

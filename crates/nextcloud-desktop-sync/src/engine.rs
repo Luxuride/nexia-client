@@ -136,6 +136,32 @@ impl DesktopSyncCoordinator {
         self.vfs_engine.create_directory(remote_path).await
     }
 
+    /// Creates a new file in the virtual tree and uploads it if an account is configured.
+    pub async fn create_file(
+        &self,
+        remote_path: &str,
+        content: &[u8],
+    ) -> Result<String, SyncError> {
+        let clean_path = format!("/{}", remote_path.trim_matches('/'));
+        let maybe_account = {
+            let conf = self.config.read().await;
+            conf.accounts.first().cloned()
+        };
+
+        if let Some(account) = maybe_account {
+            let server_url = ServerUrl::parse(&account.server.server_url)
+                .map_err(|err| SyncError::InvalidPath(err.to_string()))?;
+            let transport = TransportBuilder::with_server(server_url).build()?;
+            let secret = SecretString::new(account.credentials.secret());
+            let auth = BasicAuth::new(&account.credentials.username, secret);
+            let dav_client = DavClient::new(&transport, &auth);
+            let dav_path = crate::vfs::make_dav_path(&account.credentials.username, &clean_path)?;
+            let _ = dav_client.put(&dav_path, content.to_vec(), None).await;
+        }
+
+        self.vfs_engine.create_file(&clean_path, content).await
+    }
+
     /// Renames a file or directory in the virtual tree and (if an account is configured) on the remote WebDAV server via MOVE.
     pub async fn rename_resource(
         &self,

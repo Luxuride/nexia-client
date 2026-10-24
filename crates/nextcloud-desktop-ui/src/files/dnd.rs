@@ -1,22 +1,15 @@
 //! Drag-and-drop support for file and folder items in the Cloud Files browser.
 
-#[cfg(feature = "gtk")]
 use gtk4::{gdk, glib, prelude::*};
-#[cfg(feature = "gtk")]
 use libadwaita as adw;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
 
-#[cfg(feature = "gtk")]
 use crate::model::FileViewItem;
-#[cfg(feature = "gtk")]
 use crate::widget::FileExplorerBackend;
 
 /// Coordinates file drag sources and directory drop targets.
-#[cfg(feature = "gtk")]
 pub struct FileDragDrop;
 
-#[cfg(feature = "gtk")]
 impl FileDragDrop {
     /// Attaches a drag source to `widget` carrying `item`'s virtual path and displaying its icon.
     pub fn attach_source(widget: &impl IsA<gtk4::Widget>, item: &FileViewItem) {

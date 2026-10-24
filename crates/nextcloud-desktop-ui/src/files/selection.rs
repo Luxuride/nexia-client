@@ -1,28 +1,20 @@
 //! Multi-selection tracking, empty-canvas deselection, and rubberband drag selection.
 
-#[cfg(feature = "gtk")]
 use gtk4::graphene::Rect;
-#[cfg(feature = "gtk")]
 use gtk4::{FlowBox, GestureClick, GestureDrag, ListBox, ScrolledWindow};
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
-#[cfg(feature = "gtk")]
 use std::cell::RefCell;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
 
-#[cfg(feature = "gtk")]
 use crate::model::FileViewItem;
 
 /// Manages multi-selection state, empty-canvas deselection, and drag selection for file collections.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct SelectionTracker {
     selected_items: Rc<RefCell<Vec<FileViewItem>>>,
     on_selection_changed: Rc<dyn Fn(Vec<FileViewItem>)>,
 }
 
-#[cfg(feature = "gtk")]
 impl SelectionTracker {
     /// Creates a new selection tracker notifying `on_selection_changed` on any change.
     pub fn new(on_selection_changed: Rc<dyn Fn(Vec<FileViewItem>)>) -> Self {

@@ -1,24 +1,17 @@
 //! Nautilus-style rename dialog using Libadwaita MessageDialog with extension preservation.
 
-#[cfg(feature = "gtk")]
 use gtk4::Entry;
-#[cfg(feature = "gtk")]
+use gtk4::prelude::*;
 use libadwaita as adw;
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
 
-#[cfg(feature = "gtk")]
 use crate::model::FileViewItem;
-#[cfg(feature = "gtk")]
 use crate::widget::FileExplorerBackend;
 
 /// Nautilus-compliant modal rename dialog.
-#[cfg(feature = "gtk")]
 pub struct RenameDialog;
 
-#[cfg(feature = "gtk")]
 impl RenameDialog {
     /// Presents the modal rename dialog for `item`, matching Nautilus selection and submission behavior.
     pub fn present<B: FileExplorerBackend>(
@@ -59,6 +52,17 @@ impl RenameDialog {
         };
         entry.select_region(0, sel_end);
 
+        entry.connect_map(move |e| {
+            e.grab_focus();
+            e.select_region(0, sel_end);
+        });
+
+        let entry_idle = entry.clone();
+        glib::idle_add_local_once(move || {
+            entry_idle.grab_focus();
+            entry_idle.select_region(0, sel_end);
+        });
+
         dialog.set_extra_child(Some(&entry));
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("rename", "Rename");
@@ -98,9 +102,7 @@ impl RenameDialog {
                             toast.add_toast(adw::Toast::new(&format!("Renamed to “{new_name}”")));
                             cb();
                         }
-                        Err(err) => {
-                            toast.add_toast(adw::Toast::new(&err.to_string()));
-                        }
+                        Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
                     }
                 });
             }

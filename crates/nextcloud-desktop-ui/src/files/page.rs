@@ -1,31 +1,19 @@
 //! Main Cloud Files page view embedding the in-page toolbar, view stack, and status bar.
 
-#[cfg(feature = "gtk")]
 use gtk4::{Box as GtkBox, Orientation, Separator, Stack};
-#[cfg(feature = "gtk")]
 use libadwaita as adw;
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
 
-#[cfg(feature = "gtk")]
 use crate::files::grid_view::FileGridView;
-#[cfg(feature = "gtk")]
 use crate::files::list_view::FileListView;
-#[cfg(feature = "gtk")]
 use crate::files::selection::SelectionTracker;
-#[cfg(feature = "gtk")]
 use crate::files::status_bar::FileStatusBar;
-#[cfg(feature = "gtk")]
 use crate::files::toolbar::PathToolbar;
-#[cfg(feature = "gtk")]
 use crate::model::{FileViewItem, FileViewMode};
-#[cfg(feature = "gtk")]
 use crate::widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
 
 /// Cloud Files explorer page view with an integrated in-page toolbar, icon grid, and list view.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct CloudFilesPage<B: FileExplorerBackend> {
     toast_overlay: adw::ToastOverlay,
@@ -37,7 +25,6 @@ pub struct CloudFilesPage<B: FileExplorerBackend> {
     backend: B,
 }
 
-#[cfg(feature = "gtk")]
 impl<B: FileExplorerBackend> CloudFilesPage<B> {
     /// Constructs the Cloud Files explorer page view.
     pub fn new(backend: &B, on_refresh_request: Rc<dyn Fn()>) -> Self {
@@ -146,7 +133,6 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl<B: FileExplorerBackend> ViewComponent for CloudFilesPage<B> {
     type RootWidget = adw::ToastOverlay;
 

@@ -52,6 +52,13 @@ pub trait FileExplorerBackend: Clone + 'static {
     /// Creates a new folder in the active directory.
     fn create_folder(&self, folder_name: &str) -> impl Future<Output = Result<String, UiError>>;
 
+    /// Creates a new file in the active directory with optional content bytes.
+    fn create_file(
+        &self,
+        file_name: &str,
+        content: &[u8],
+    ) -> impl Future<Output = Result<String, UiError>>;
+
     /// Renames a file or folder at `remote_path` to `new_name`.
     fn rename_item(
         &self,

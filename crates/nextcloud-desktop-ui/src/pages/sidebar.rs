@@ -1,29 +1,22 @@
 //! Navigation sidebar component for switching between top-level application pages.
 
-#[cfg(feature = "gtk")]
 use gtk4::{
     Align, Box as GtkBox, Image, Label, ListBox, ListBoxRow, Orientation, PolicyType,
     ScrolledWindow, SelectionMode,
 };
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
 
-#[cfg(feature = "gtk")]
 use crate::model::NavigationPage;
-#[cfg(feature = "gtk")]
 use crate::widget::ViewComponent;
 
 /// Left-hand navigation sidebar listing top-level application views.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct NavigationSidebar {
     scroll: ScrolledWindow,
     list_box: ListBox,
 }
 
-#[cfg(feature = "gtk")]
 impl NavigationSidebar {
     /// Creates the navigation sidebar populated with [`NavigationPage::all`].
     pub fn new(on_page_selected: Rc<dyn Fn(NavigationPage)>) -> Self {
@@ -75,7 +68,6 @@ impl NavigationSidebar {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for NavigationSidebar {
     type RootWidget = ScrolledWindow;
 
@@ -84,7 +76,6 @@ impl ViewComponent for NavigationSidebar {
     }
 }
 
-#[cfg(feature = "gtk")]
 fn build_sidebar_row(icon_name: &str, title: &str) -> ListBoxRow {
     let row = ListBoxRow::new();
     let hbox = GtkBox::new(Orientation::Horizontal, 12);

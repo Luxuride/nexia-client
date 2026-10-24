@@ -1,23 +1,17 @@
 //! Two-way local folder synchronization page component.
 
-#[cfg(feature = "gtk")]
 use gtk4::{Align, Button, Image};
-#[cfg(feature = "gtk")]
 use libadwaita as adw;
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
 
-#[cfg(feature = "gtk")]
 use crate::widget::{FileExplorerBackend, ViewComponent};
 
 /// Preferences page configuring local folder synchronization pairings.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct SyncFoldersPage {
     page: adw::PreferencesPage,
 }
 
-#[cfg(feature = "gtk")]
 impl SyncFoldersPage {
     /// Creates a new synchronization folders page bound to `backend`.
     pub fn new<B: FileExplorerBackend>(backend: &B) -> Self {
@@ -56,7 +50,6 @@ impl SyncFoldersPage {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for SyncFoldersPage {
     type RootWidget = adw::PreferencesPage;
 

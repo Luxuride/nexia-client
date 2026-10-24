@@ -1,26 +1,19 @@
 //! Static top-level window header bar component.
 
-#[cfg(feature = "gtk")]
 use gtk4::Button;
-#[cfg(feature = "gtk")]
 use libadwaita as adw;
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
 
-#[cfg(feature = "gtk")]
 use crate::widget::{FileExplorerBackend, ViewComponent};
 
 /// Top-level window header bar whose structure remains constant across all navigation pages.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct MainHeaderBar {
     header_bar: adw::HeaderBar,
     window_title: adw::WindowTitle,
 }
 
-#[cfg(feature = "gtk")]
 impl MainHeaderBar {
     /// Constructs the main application header bar wired to the backend and refresh callback.
     pub fn new<B: FileExplorerBackend>(backend: &B, on_refresh: Rc<dyn Fn()>) -> Self {
@@ -72,7 +65,6 @@ impl MainHeaderBar {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for MainHeaderBar {
     type RootWidget = adw::HeaderBar;
 

@@ -5,18 +5,24 @@
 
 pub mod controller;
 pub mod error;
-pub mod files;
-pub mod gtk_app;
-pub mod header;
 pub mod model;
-pub mod pages;
 pub mod tray;
 pub mod widget;
+
+#[cfg(feature = "gtk")]
+pub mod files;
+#[cfg(feature = "gtk")]
+pub mod gtk_app;
+#[cfg(feature = "gtk")]
+pub mod header;
+#[cfg(feature = "gtk")]
+pub mod pages;
 
 pub use controller::DesktopUiController;
 pub use error::UiError;
 #[cfg(feature = "gtk")]
 pub use gtk_app::launch_gtk_application;
+#[cfg(feature = "gtk")]
 pub use gtk_app::run_headless;
 pub use model::{
     FileSyncStatus, FileViewItem, FileViewMode, NavigationPage, PathSegment, TransferItem,

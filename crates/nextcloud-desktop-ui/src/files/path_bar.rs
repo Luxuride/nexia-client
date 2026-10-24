@@ -1,25 +1,18 @@
 //! Interactive Nautilus-style breadcrumb path bar rendered inside the Cloud Files page toolbar.
 
-#[cfg(feature = "gtk")]
 use gtk4::{Align, Box as GtkBox, Button, Image, Label, Orientation};
-#[cfg(feature = "gtk")]
 use libadwaita::prelude::*;
-#[cfg(feature = "gtk")]
 use std::rc::Rc;
 
-#[cfg(feature = "gtk")]
 use crate::model::FileViewItem;
-#[cfg(feature = "gtk")]
 use crate::widget::{FileExplorerBackend, ViewComponent};
 
 /// Clickable breadcrumb path bar displaying the active virtual directory hierarchy.
-#[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct PathBar {
     container: GtkBox,
 }
 
-#[cfg(feature = "gtk")]
 impl PathBar {
     /// Creates an empty interactive path bar.
     pub fn new() -> Self {
@@ -84,14 +77,12 @@ impl PathBar {
     }
 }
 
-#[cfg(feature = "gtk")]
 impl Default for PathBar {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[cfg(feature = "gtk")]
 impl ViewComponent for PathBar {
     type RootWidget = GtkBox;
 
