@@ -15,6 +15,7 @@ tray = ["dep:ksni"]
 [dependencies]
 nextcloud-desktop-core.workspace = true
 nextcloud-desktop-sync.workspace = true
+nextcloud-rust-sdk.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true

@@ -1,4 +1,8 @@
-//! Presentation models and UI state representations.
+//! Presentation models and UI state representations backed by `nextcloud-rust-sdk`.
+
+pub use nextcloud_rust_sdk::{
+    BreadcrumbSegment as PathSegment, ResourceIconCategory, breadcrumb_segments, format_bytes,
+};
 
 /// Available navigation views in the application sidebar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -11,6 +15,16 @@ pub enum NavigationPage {
     Transfers,
     /// Account and general application settings.
     Settings,
+}
+
+/// Layout mode for the Nautilus-style Cloud Files browser.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FileViewMode {
+    /// Icon grid view (Nautilus default).
+    #[default]
+    Grid,
+    /// Detailed list view with columns.
+    List,
 }
 
 /// Status of an individual file in the virtual browser view.
@@ -53,7 +67,7 @@ impl FileSyncStatus {
     }
 }
 
-/// Representation of an entry shown in the virtual file browser table.
+/// Representation of an entry shown in the virtual file browser.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileViewItem {
     /// Canonical relative path in the virtual mount (e.g. `/Documents/Report.pdf`).
@@ -62,7 +76,7 @@ pub struct FileViewItem {
     pub name: String,
     /// Whether this entry is a directory.
     pub is_directory: bool,
-    /// Formatted human-readable file size (e.g. `4.2 MB`, or `--` for dirs).
+    /// Formatted human-readable file size (e.g. `4.2 MB`, or `Folder` for dirs).
     pub size_formatted: String,
     /// Raw size in bytes.
     pub size_bytes: u64,
@@ -70,24 +84,29 @@ pub struct FileViewItem {
     pub status: FileSyncStatus,
     /// MIME type string if known.
     pub mime_type: Option<String>,
+    /// Semantic icon category computed by `nextcloud-rust-sdk`.
+    pub icon_category: ResourceIconCategory,
 }
 
 impl FileViewItem {
-    /// Formats a raw byte count into human-readable units.
+    /// Formats a raw byte count into human-readable units via `nextcloud-rust-sdk`.
     pub fn format_bytes(bytes: u64) -> String {
-        const KB: u64 = 1024;
-        const MB: u64 = KB * 1024;
-        const GB: u64 = MB * 1024;
+        format_bytes(bytes)
+    }
 
-        if bytes >= GB {
-            format!("{:.1} GB", bytes as f64 / GB as f64)
-        } else if bytes >= MB {
-            format!("{:.1} MB", bytes as f64 / MB as f64)
-        } else if bytes >= KB {
-            format!("{:.1} KB", bytes as f64 / KB as f64)
-        } else {
-            format!("{} B", bytes)
-        }
+    /// Returns the full-color Adwaita / Nautilus icon name matching this item.
+    pub const fn nautilus_icon_name(&self) -> &'static str {
+        self.icon_category.freedesktop_icon_name()
+    }
+
+    /// Returns the symbolic icon name matching this item.
+    pub const fn symbolic_icon_name(&self) -> &'static str {
+        self.icon_category.symbolic_icon_name()
+    }
+
+    /// Splits a canonical virtual path into clickable Nautilus-style breadcrumb segments via `nextcloud-rust-sdk`.
+    pub fn breadcrumb_segments(current_path: &str) -> Vec<PathSegment> {
+        breadcrumb_segments(current_path, "Nextcloud")
     }
 }
 
@@ -133,5 +152,20 @@ mod tests {
             FileSyncStatus::HydratedOffline.icon_name(),
             "emblem-ok-symbolic"
         );
+    }
+
+    #[test]
+    fn breadcrumb_segments_splitting() {
+        let root_segs = FileViewItem::breadcrumb_segments("/");
+        assert_eq!(root_segs.len(), 1);
+        assert_eq!(root_segs[0].name, "Nextcloud");
+        assert_eq!(root_segs[0].full_path, "/");
+
+        let nested = FileViewItem::breadcrumb_segments("/Documents/Projects");
+        assert_eq!(nested.len(), 3);
+        assert_eq!(nested[1].name, "Documents");
+        assert_eq!(nested[1].full_path, "/Documents");
+        assert_eq!(nested[2].name, "Projects");
+        assert_eq!(nested[2].full_path, "/Documents/Projects");
     }
 }

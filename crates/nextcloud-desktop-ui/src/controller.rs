@@ -5,14 +5,16 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::error::UiError;
-use crate::model::{FileSyncStatus, FileViewItem};
+use crate::model::{FileSyncStatus, FileViewItem, FileViewMode};
 use nextcloud_desktop_sync::DesktopSyncCoordinator;
+use nextcloud_rust_sdk::NavigationHistory;
 
 /// UI Controller bridging user actions to backend sync and VFS operations.
 #[derive(Clone)]
 pub struct DesktopUiController {
     coordinator: DesktopSyncCoordinator,
-    current_directory: Arc<RwLock<String>>,
+    navigation: Arc<RwLock<NavigationHistory>>,
+    view_mode: Arc<RwLock<FileViewMode>>,
 }
 
 impl DesktopUiController {
@@ -20,7 +22,8 @@ impl DesktopUiController {
     pub fn new(coordinator: DesktopSyncCoordinator) -> Self {
         Self {
             coordinator,
-            current_directory: Arc::new(RwLock::new("/".to_string())),
+            navigation: Arc::new(RwLock::new(NavigationHistory::new())),
+            view_mode: Arc::new(RwLock::new(FileViewMode::Grid)),
         }
     }
 
@@ -31,49 +34,52 @@ impl DesktopUiController {
 
     /// Gets the current virtual directory path.
     pub async fn current_path(&self) -> String {
-        self.current_directory.read().await.clone()
+        self.navigation.read().await.current_path().to_string()
     }
 
-    /// Navigates the file view into a child directory.
+    /// Gets the active Nautilus file view mode (Grid or List).
+    pub async fn view_mode(&self) -> FileViewMode {
+        *self.view_mode.read().await
+    }
+
+    /// Sets the active Nautilus file view mode (Grid or List).
+    pub async fn set_view_mode(&self, mode: FileViewMode) {
+        *self.view_mode.write().await = mode;
+    }
+
+    /// Returns `true` if there is a previous directory in the navigation history.
+    pub async fn can_go_back(&self) -> bool {
+        self.navigation.read().await.can_go_back()
+    }
+
+    /// Returns `true` if there is a forward directory in the navigation history.
+    pub async fn can_go_forward(&self) -> bool {
+        self.navigation.read().await.can_go_forward()
+    }
+
+    /// Navigates backward in the folder history stack.
+    pub async fn go_back(&self) -> bool {
+        self.navigation.write().await.go_back()
+    }
+
+    /// Navigates forward in the folder history stack.
+    pub async fn go_forward(&self) -> bool {
+        self.navigation.write().await.go_forward()
+    }
+
+    /// Navigates the file view into a child directory, recording history via `NavigationHistory`.
     pub async fn navigate_into(&self, folder_name: &str) {
-        let mut cur = self.current_directory.write().await;
-        if *cur == "/" {
-            *cur = format!("/{}", folder_name.trim_matches('/'));
-        } else {
-            *cur = format!(
-                "{}/{}",
-                cur.trim_end_matches('/'),
-                folder_name.trim_matches('/')
-            );
-        }
+        self.navigation.write().await.navigate_into(folder_name);
     }
 
-    /// Navigates up to the parent directory.
+    /// Navigates up to the parent directory, recording history via `NavigationHistory`.
     pub async fn navigate_up(&self) {
-        let mut cur = self.current_directory.write().await;
-        if *cur == "/" {
-            return;
-        }
-
-        if let Some(pos) = cur.rfind('/') {
-            if pos == 0 {
-                *cur = "/".to_string();
-            } else {
-                *cur = cur[..pos].to_string();
-            }
-        } else {
-            *cur = "/".to_string();
-        }
+        self.navigation.write().await.navigate_up();
     }
 
-    /// Sets the current virtual directory directly.
+    /// Sets the current virtual directory directly (e.g. from a breadcrumb click), recording history.
     pub async fn set_current_path(&self, path: &str) {
-        let clean = if path.is_empty() || path == "/" {
-            "/".to_string()
-        } else {
-            format!("/{}", path.trim_matches('/'))
-        };
-        *self.current_directory.write().await = clean;
+        self.navigation.write().await.navigate_to(path);
     }
 
     /// Lists items in the current virtual directory for display in the file view.
@@ -98,7 +104,7 @@ impl DesktopUiController {
                 };
 
                 let size_formatted = if e.is_directory {
-                    "--".to_string()
+                    "Folder".to_string()
                 } else {
                     FileViewItem::format_bytes(e.size)
                 };
@@ -111,6 +117,7 @@ impl DesktopUiController {
                     size_bytes: e.size,
                     status,
                     mime_type: e.mime_type,
+                    icon_category: e.icon_category,
                 }
             })
             .collect();
@@ -123,6 +130,38 @@ impl DesktopUiController {
         });
 
         Ok(items)
+    }
+
+    /// Creates a new folder inside the current virtual directory.
+    pub async fn create_folder(&self, folder_name: &str) -> Result<String, UiError> {
+        let trimmed = folder_name.trim().trim_matches('/');
+        if trimmed.is_empty() {
+            return Err(UiError::Controller(
+                "Folder name cannot be empty".to_string(),
+            ));
+        }
+
+        let cur = self.current_path().await;
+        let full_path = if cur == "/" {
+            format!("/{trimmed}")
+        } else {
+            format!("{}/{trimmed}", cur.trim_end_matches('/'))
+        };
+
+        self.coordinator
+            .create_directory(&full_path)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))?;
+
+        Ok(full_path)
+    }
+
+    /// Deletes a file or folder from the virtual drive (and remote server if connected).
+    pub async fn delete_item(&self, remote_path: &str) -> Result<(), UiError> {
+        self.coordinator
+            .delete_resource(remote_path)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
     }
 
     /// Hydrates a virtual file on-demand.

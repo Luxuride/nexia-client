@@ -7,6 +7,7 @@ pub mod controller;
 pub mod error;
 pub mod gtk_app;
 pub mod model;
+pub mod nautilus_view;
 pub mod tray;
 pub mod views;
 
@@ -15,5 +16,7 @@ pub use error::UiError;
 #[cfg(feature = "gtk")]
 pub use gtk_app::launch_gtk_application;
 pub use gtk_app::run_headless;
-pub use model::{FileSyncStatus, FileViewItem, NavigationPage, TransferItem};
+pub use model::{
+    FileSyncStatus, FileViewItem, FileViewMode, NavigationPage, PathSegment, TransferItem,
+};
 pub use tray::{TrayAction, spawn_app_bar_tray};

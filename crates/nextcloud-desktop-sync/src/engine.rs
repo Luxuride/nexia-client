@@ -54,13 +54,15 @@ impl DesktopSyncCoordinator {
         &self.event_bus
     }
 
-    /// Refreshes the virtual file tree for the first configured account.
+    /// Refreshes the virtual file tree for the first configured account, or resets the local virtual hierarchy if no account is configured.
     pub async fn refresh_virtual_tree(&self) -> Result<usize, SyncError> {
-        let account = {
+        let maybe_account = {
             let conf = self.config.read().await;
-            conf.accounts.first().cloned().ok_or_else(|| {
-                SyncError::NotFound("No configured Nextcloud accounts".to_string())
-            })?
+            conf.accounts.first().cloned()
+        };
+
+        let Some(account) = maybe_account else {
+            return Ok(self.vfs_engine.reset_default_hierarchy().await);
         };
 
         let server_url = ServerUrl::parse(&account.server.server_url)
@@ -87,11 +89,13 @@ impl DesktopSyncCoordinator {
 
     /// Performs on-demand hydration for a virtual file.
     pub async fn hydrate_file(&self, remote_path: &str) -> Result<PathBuf, SyncError> {
-        let account = {
+        let maybe_account = {
             let conf = self.config.read().await;
-            conf.accounts.first().cloned().ok_or_else(|| {
-                SyncError::NotFound("No configured Nextcloud accounts".to_string())
-            })?
+            conf.accounts.first().cloned()
+        };
+
+        let Some(account) = maybe_account else {
+            return self.vfs_engine.hydrate_local_placeholder(remote_path).await;
         };
 
         let server_url = ServerUrl::parse(&account.server.server_url)
@@ -109,6 +113,48 @@ impl DesktopSyncCoordinator {
     /// Dehydrates a file node, freeing local cache space.
     pub async fn dehydrate_file(&self, remote_path: &str) -> Result<(), SyncError> {
         self.vfs_engine.dehydrate_file(remote_path).await
+    }
+
+    /// Creates a new directory in the virtual tree and (if an account is configured) on the remote WebDAV server.
+    pub async fn create_directory(&self, remote_path: &str) -> Result<(), SyncError> {
+        let maybe_account = {
+            let conf = self.config.read().await;
+            conf.accounts.first().cloned()
+        };
+
+        if let Some(account) = maybe_account {
+            let server_url = ServerUrl::parse(&account.server.server_url)
+                .map_err(|err| SyncError::InvalidPath(err.to_string()))?;
+            let transport = TransportBuilder::with_server(server_url).build()?;
+            let secret = SecretString::new(account.credentials.secret());
+            let auth = BasicAuth::new(&account.credentials.username, secret);
+            let dav_client = DavClient::new(&transport, &auth);
+            let dav_path = crate::vfs::make_dav_path(&account.credentials.username, remote_path)?;
+            dav_client.mkcol(&dav_path).await?;
+        }
+
+        self.vfs_engine.create_directory(remote_path).await
+    }
+
+    /// Deletes a file or directory from the virtual tree and (if an account is configured) from the remote WebDAV server.
+    pub async fn delete_resource(&self, remote_path: &str) -> Result<(), SyncError> {
+        let maybe_account = {
+            let conf = self.config.read().await;
+            conf.accounts.first().cloned()
+        };
+
+        if let Some(account) = maybe_account {
+            let server_url = ServerUrl::parse(&account.server.server_url)
+                .map_err(|err| SyncError::InvalidPath(err.to_string()))?;
+            let transport = TransportBuilder::with_server(server_url).build()?;
+            let secret = SecretString::new(account.credentials.secret());
+            let auth = BasicAuth::new(&account.credentials.username, secret);
+            let dav_client = DavClient::new(&transport, &auth);
+            let dav_path = crate::vfs::make_dav_path(&account.credentials.username, remote_path)?;
+            dav_client.delete(&dav_path).await?;
+        }
+
+        self.vfs_engine.remove_entry(remote_path).await
     }
 
     /// Runs synchronization on all enabled two-way sync folder pairs.

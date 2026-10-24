@@ -15,11 +15,12 @@ use tokio::sync::mpsc;
 use crate::controller::DesktopUiController;
 use crate::error::UiError;
 #[cfg(feature = "gtk")]
+use crate::nautilus_view::{build_nautilus_browser, refresh_nautilus_view};
+#[cfg(feature = "gtk")]
 use crate::tray::{TrayAction, spawn_app_bar_tray};
 #[cfg(feature = "gtk")]
 use crate::views::{
-    build_cloud_files_view, build_settings_page, build_sidebar_row, build_sync_folders_page,
-    build_transfers_page, populate_file_list,
+    build_settings_page, build_sidebar_row, build_sync_folders_page, build_transfers_page,
 };
 
 /// Launches the Nextcloud Desktop GTK 4 / Libadwaita application.
@@ -65,29 +66,52 @@ fn build_ui(
     let window = adw::ApplicationWindow::builder()
         .application(app)
         .title("Nextcloud")
-        .default_width(960)
-        .default_height(640)
-        .width_request(640)
-        .height_request(420)
+        .default_width(1020)
+        .default_height(680)
+        .width_request(680)
+        .height_request(440)
         .build();
 
     // App bar tray communication channel
     let (tx_tray, mut rx_tray) = mpsc::unbounded_channel::<TrayAction>();
     spawn_app_bar_tray(tx_tray);
 
-    // Header bar following GNOME HIG with symbolic icon actions
-    let header_bar = adw::HeaderBar::new();
-    let window_title = adw::WindowTitle::new("Nextcloud", "Cloud Files");
-    header_bar.set_title_widget(Some(&window_title));
+    let nautilus = build_nautilus_browser(&controller);
 
+    // Header bar following Nautilus / GNOME Files layout
+    let header_bar = adw::HeaderBar::new();
+
+    // Left: Linked Back / Forward buttons + Refresh & Sync
+    let nav_box = GtkBox::new(Orientation::Horizontal, 0);
+    nav_box.add_css_class("linked");
+    nav_box.append(&nautilus.back_btn);
+    nav_box.append(&nautilus.forward_btn);
+    header_bar.pack_start(&nav_box);
+
+    // Center: Stack switching between Nautilus Breadcrumb Path Bar (on Cloud Files) and WindowTitle (on other pages)
+    let title_stack = Stack::new();
+    let window_title = adw::WindowTitle::new("Nextcloud", "Sync Folders");
+    title_stack.add_named(&nautilus.breadcrumb_box, Some("breadcrumbs"));
+    title_stack.add_named(&window_title, Some("title"));
+    title_stack.set_visible_child_name("breadcrumbs");
+    header_bar.set_title_widget(Some(&title_stack));
+
+    // Right: View Mode Switcher (Grid/List), New Folder, Refresh, Sync
     let refresh_btn = Button::from_icon_name("view-refresh-symbolic");
     refresh_btn.set_tooltip_text(Some("Refresh Virtual Drive"));
 
     let sync_btn = Button::from_icon_name("emblem-synchronizing-symbolic");
     sync_btn.set_tooltip_text(Some("Sync All Folders"));
 
-    header_bar.pack_start(&refresh_btn);
-    header_bar.pack_start(&sync_btn);
+    let view_mode_box = GtkBox::new(Orientation::Horizontal, 0);
+    view_mode_box.add_css_class("linked");
+    view_mode_box.append(&nautilus.grid_toggle);
+    view_mode_box.append(&nautilus.list_toggle);
+
+    header_bar.pack_end(&sync_btn);
+    header_bar.pack_end(&refresh_btn);
+    header_bar.pack_end(&nautilus.new_folder_btn);
+    header_bar.pack_end(&view_mode_box);
 
     // Intercept window close (X button) to keep running in background / app bar
     window.connect_close_request(move |win| {
@@ -98,7 +122,7 @@ fn build_ui(
 
     // Main split layout: Navigation Sidebar + Content Stack
     let paned = Paned::new(Orientation::Horizontal);
-    paned.set_position(220);
+    paned.set_position(210);
     paned.set_shrink_start_child(false);
     paned.set_shrink_end_child(false);
     paned.set_resize_start_child(false);
@@ -121,7 +145,7 @@ fn build_ui(
 
     let sidebar_scroll = ScrolledWindow::new();
     sidebar_scroll.set_hscrollbar_policy(PolicyType::Never);
-    sidebar_scroll.set_width_request(210);
+    sidebar_scroll.set_width_request(200);
     sidebar_scroll.set_vexpand(true);
     sidebar_scroll.set_child(Some(&sidebar_list));
     paned.set_start_child(Some(&sidebar_scroll));
@@ -132,12 +156,11 @@ fn build_ui(
     content_stack.set_hexpand(true);
     content_stack.set_vexpand(true);
 
-    let cloud_view = build_cloud_files_view(&controller);
     let sync_page = build_sync_folders_page(&controller);
     let transfers_page = build_transfers_page();
     let settings_page = build_settings_page(&controller);
 
-    content_stack.add_named(&cloud_view.root, Some("cloud_files"));
+    content_stack.add_named(&nautilus.toast_overlay, Some("cloud_files"));
     content_stack.add_named(&sync_page, Some("sync_folders"));
     content_stack.add_named(&transfers_page, Some("transfers"));
     content_stack.add_named(&settings_page, Some("settings"));
@@ -149,27 +172,39 @@ fn build_ui(
     root_box.append(&paned);
     window.set_content(Some(&root_box));
 
-    // Connect sidebar selection to stack pages and update window subtitle
+    // Connect sidebar selection to stack pages and toggle header bar controls
     let stack_clone = content_stack.clone();
+    let title_stack_clone = title_stack.clone();
     let title_clone = window_title.clone();
+    let nav_box_clone = nav_box.clone();
+    let view_mode_clone = view_mode_box.clone();
+    let new_folder_clone = nautilus.new_folder_btn.clone();
     sidebar_list.connect_row_selected(move |_, row| {
         if let Some(r) = row {
+            let is_files = r.index() == 0;
+            nav_box_clone.set_visible(is_files);
+            view_mode_clone.set_visible(is_files);
+            new_folder_clone.set_visible(is_files);
+
             match r.index() {
                 0 => {
                     stack_clone.set_visible_child_name("cloud_files");
-                    title_clone.set_subtitle("Cloud Files");
+                    title_stack_clone.set_visible_child_name("breadcrumbs");
                 }
                 1 => {
                     stack_clone.set_visible_child_name("sync_folders");
                     title_clone.set_subtitle("Sync Folders");
+                    title_stack_clone.set_visible_child_name("title");
                 }
                 2 => {
                     stack_clone.set_visible_child_name("transfers");
                     title_clone.set_subtitle("Activity");
+                    title_stack_clone.set_visible_child_name("title");
                 }
                 3 => {
                     stack_clone.set_visible_child_name("settings");
                     title_clone.set_subtitle("Settings");
+                    title_stack_clone.set_visible_child_name("title");
                 }
                 _ => {}
             }
@@ -178,13 +213,13 @@ fn build_ui(
 
     // Header bar refresh action
     let ctrl_for_refresh = controller.clone();
-    let cv_refresh = cloud_view.clone();
+    let nav_refresh = nautilus.clone();
     refresh_btn.connect_clicked(move |_| {
         let ctrl = ctrl_for_refresh.clone();
-        let cv = cv_refresh.clone();
+        let nav = nav_refresh.clone();
         glib::MainContext::default().spawn_local(async move {
             let _ = ctrl.refresh_virtual_tree().await;
-            populate_file_list(&ctrl, &cv.file_list, &cv.path_label, &cv.view_stack).await;
+            refresh_nautilus_view(&nav, &ctrl).await;
         });
     });
 
@@ -197,23 +232,11 @@ fn build_ui(
         });
     });
 
-    // Up folder button
-    let ctrl_for_up = controller.clone();
-    let cv_up = cloud_view.clone();
-    cloud_view.up_btn.connect_clicked(move |_| {
-        let ctrl = ctrl_for_up.clone();
-        let cv = cv_up.clone();
-        glib::MainContext::default().spawn_local(async move {
-            ctrl.navigate_up().await;
-            populate_file_list(&ctrl, &cv.file_list, &cv.path_label, &cv.view_stack).await;
-        });
-    });
-
     // Background tray action dispatcher loop
     let win_for_tray = window.clone();
     let app_for_tray = app.clone();
     let ctrl_for_tray = controller.clone();
-    let cv_tray = cloud_view.clone();
+    let nav_tray = nautilus.clone();
 
     glib::MainContext::default().spawn_local(async move {
         while let Some(action) = rx_tray.recv().await {
@@ -230,13 +253,7 @@ fn build_ui(
                 }
                 TrayAction::RefreshVfs => {
                     let _ = ctrl_for_tray.refresh_virtual_tree().await;
-                    populate_file_list(
-                        &ctrl_for_tray,
-                        &cv_tray.file_list,
-                        &cv_tray.path_label,
-                        &cv_tray.view_stack,
-                    )
-                    .await;
+                    refresh_nautilus_view(&nav_tray, &ctrl_for_tray).await;
                 }
                 TrayAction::Quit => {
                     app_for_tray.quit();
@@ -247,15 +264,9 @@ fn build_ui(
 
     // Initial render
     let ctrl_init = controller;
-    let cv_init = cloud_view;
+    let nav_init = nautilus;
     glib::MainContext::default().spawn_local(async move {
-        populate_file_list(
-            &ctrl_init,
-            &cv_init.file_list,
-            &cv_init.path_label,
-            &cv_init.view_stack,
-        )
-        .await;
+        refresh_nautilus_view(&nav_init, &ctrl_init).await;
     });
 
     if !start_minimized {
