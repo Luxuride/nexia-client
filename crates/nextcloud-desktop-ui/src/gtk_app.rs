@@ -64,8 +64,10 @@ pub fn launch_gtk_application(
             flowboxchild:selected:hover {
                 background-color: alpha(@accent_color, 0.24);
             }
-            flowboxchild:focus {
+            flowboxchild:focus,
+            flowboxchild:focus-visible {
                 outline: none;
+                box-shadow: none;
             }
             .file-tile {
                 background: none;
@@ -91,6 +93,16 @@ pub fn launch_gtk_application(
             }
             .file-list-view list > row:selected:hover {
                 background-color: alpha(@accent_color, 0.24);
+            }
+            .file-list-view list > row:focus,
+            .file-list-view list > row:focus-visible {
+                outline: none;
+                box-shadow: none;
+            }
+            .drop-hover {
+                outline: 2px solid @accent_color !important;
+                background-color: alpha(@accent_color, 0.18) !important;
+                border-radius: 8px;
             }
             ",
         );

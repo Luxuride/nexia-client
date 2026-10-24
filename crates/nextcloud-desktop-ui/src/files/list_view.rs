@@ -17,7 +17,11 @@ use std::rc::Rc;
 #[cfg(feature = "gtk")]
 use crate::files::context_menu::ItemContextMenu;
 #[cfg(feature = "gtk")]
+use crate::files::dnd::FileDragDrop;
+#[cfg(feature = "gtk")]
 use crate::files::rename_dialog::RenameDialog;
+#[cfg(feature = "gtk")]
+use crate::files::rubberband::RubberbandOverlay;
 #[cfg(feature = "gtk")]
 use crate::files::selection::SelectionTracker;
 #[cfg(feature = "gtk")]
@@ -143,10 +147,11 @@ impl FileListView {
         scroll.set_hscrollbar_policy(PolicyType::Never);
         scroll.set_vexpand(true);
         scroll.set_child(Some(&list_box));
-        container.append(&scroll);
 
-        // Wire empty space deselection
-        selection_tracker.attach_list_box_interactions(&scroll, &list_box);
+        // Wire visual rubberband selection marquee and empty-space deselection
+        let rubberband = RubberbandOverlay::new(&scroll);
+        rubberband.attach_list_box(&list_box, items.clone(), selection_tracker.clone());
+        container.append(rubberband.root_widget());
 
         // Wire F2 key shortcut to present Nautilus RenameDialog
         let key_controller = EventControllerKey::new();
@@ -154,13 +159,13 @@ impl FileListView {
         let b_key = backend.clone();
         let toast_key = toast_overlay.clone();
         let cb_key = on_refresh;
-        let scroll_for_key = scroll;
+        let container_for_key = container.clone();
         key_controller.connect_key_pressed(move |_, key, _, _| {
             if key == gdk::Key::F2 {
                 let selected = tracker_key.selected();
                 if let Some(first) = selected.first() {
                     RenameDialog::present(
-                        Some(&scroll_for_key),
+                        Some(&container_for_key),
                         first,
                         &b_key,
                         &toast_key,
@@ -186,12 +191,14 @@ impl FileListView {
         &self.selection_tracker
     }
 
-    /// Removes all rendered children from the list.
+    /// Removes all rendered children from the list and clears active selection.
     pub fn clear(&self) {
+        self.list_box.unselect_all();
         while let Some(child) = self.list_box.first_child() {
             self.list_box.remove(&child);
         }
         self.items.borrow_mut().clear();
+        self.selection_tracker.clear();
     }
 }
 
@@ -207,10 +214,12 @@ impl ViewComponent for FileListView {
 #[cfg(feature = "gtk")]
 impl<B: FileExplorerBackend> ItemCollectionView<B> for FileListView {
     fn clear(&self) {
+        self.list_box.unselect_all();
         while let Some(child) = self.list_box.first_child() {
             self.list_box.remove(&child);
         }
         self.items.borrow_mut().clear();
+        self.selection_tracker.clear();
     }
 
     fn populate(
@@ -227,6 +236,8 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileListView {
             let row = FileListRow::build(item, backend, toast_overlay, on_refresh.clone());
             self.list_box.append(row.root_widget());
         }
+        self.list_box.unselect_all();
+        self.selection_tracker.clear();
     }
 }
 
@@ -384,7 +395,9 @@ impl FileListRow {
         hbox.append(&size_lbl);
         hbox.append(&actions);
 
-        ItemContextMenu::attach(&hbox, item, backend, toast_overlay, on_refresh);
+        ItemContextMenu::attach(&hbox, item, backend, toast_overlay, on_refresh.clone());
+        FileDragDrop::attach_source(&hbox, item);
+        FileDragDrop::attach_target(&hbox, item, backend, toast_overlay, on_refresh);
 
         row.set_child(Some(&hbox));
         Self { row }

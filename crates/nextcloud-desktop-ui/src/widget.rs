@@ -59,6 +59,13 @@ pub trait FileExplorerBackend: Clone + 'static {
         new_name: &str,
     ) -> impl Future<Output = Result<String, UiError>>;
 
+    /// Moves a file or folder at `source_path` into directory `destination_dir`.
+    fn move_item(
+        &self,
+        source_path: &str,
+        destination_dir: &str,
+    ) -> impl Future<Output = Result<String, UiError>>;
+
     /// Deletes a file or folder at `remote_path`.
     fn delete_item(&self, remote_path: &str) -> impl Future<Output = Result<(), UiError>>;
 

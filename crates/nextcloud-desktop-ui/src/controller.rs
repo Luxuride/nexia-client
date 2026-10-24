@@ -165,6 +165,18 @@ impl DesktopUiController {
             .map_err(|err| UiError::Controller(err.to_string()))
     }
 
+    /// Moves a file or folder in the virtual drive to a target directory.
+    pub async fn move_item(
+        &self,
+        source_path: &str,
+        destination_dir: &str,
+    ) -> Result<String, UiError> {
+        self.coordinator
+            .move_resource(source_path, destination_dir)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
     /// Deletes a file or folder from the virtual drive (and remote server if connected).
     pub async fn delete_item(&self, remote_path: &str) -> Result<(), UiError> {
         self.coordinator
@@ -258,6 +270,10 @@ impl FileExplorerBackend for DesktopUiController {
 
     async fn rename_item(&self, remote_path: &str, new_name: &str) -> Result<String, UiError> {
         self.rename_item(remote_path, new_name).await
+    }
+
+    async fn move_item(&self, source_path: &str, destination_dir: &str) -> Result<String, UiError> {
+        self.move_item(source_path, destination_dir).await
     }
 
     async fn delete_item(&self, remote_path: &str) -> Result<(), UiError> {

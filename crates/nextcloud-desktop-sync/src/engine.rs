@@ -171,6 +171,48 @@ impl DesktopSyncCoordinator {
         self.vfs_engine.rename_entry(&clean_old, new_name).await
     }
 
+    /// Moves a file or directory into a target directory in the virtual tree and on the remote WebDAV server.
+    pub async fn move_resource(
+        &self,
+        source_path: &str,
+        destination_dir: &str,
+    ) -> Result<String, SyncError> {
+        let clean_src = format!("/{}", source_path.trim_matches('/'));
+        let clean_dest_dir = format!("/{}", destination_dir.trim_matches('/'));
+        let file_name = clean_src.rsplit('/').next().unwrap_or_default();
+        if file_name.is_empty() {
+            return Err(SyncError::InvalidPath(
+                "invalid source item name".to_string(),
+            ));
+        }
+        let clean_new = if clean_dest_dir == "/" {
+            format!("/{file_name}")
+        } else {
+            format!("{}/{}", clean_dest_dir.trim_end_matches('/'), file_name)
+        };
+
+        let maybe_account = {
+            let conf = self.config.read().await;
+            conf.accounts.first().cloned()
+        };
+
+        if let Some(account) = maybe_account {
+            let server_url = ServerUrl::parse(&account.server.server_url)
+                .map_err(|err| SyncError::InvalidPath(err.to_string()))?;
+            let transport = TransportBuilder::with_server(server_url).build()?;
+            let secret = SecretString::new(account.credentials.secret());
+            let auth = BasicAuth::new(&account.credentials.username, secret);
+            let dav_client = DavClient::new(&transport, &auth);
+            let src_dav = crate::vfs::make_dav_path(&account.credentials.username, &clean_src)?;
+            let dst_dav = crate::vfs::make_dav_path(&account.credentials.username, &clean_new)?;
+            dav_client.move_(&src_dav, &dst_dav, false).await?;
+        }
+
+        self.vfs_engine
+            .move_entry(&clean_src, &clean_dest_dir)
+            .await
+    }
+
     /// Deletes a file or directory from the virtual tree and (if an account is configured) from the remote WebDAV server.
     pub async fn delete_resource(&self, remote_path: &str) -> Result<(), SyncError> {
         let maybe_account = {

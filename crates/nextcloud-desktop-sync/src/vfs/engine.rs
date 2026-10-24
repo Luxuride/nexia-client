@@ -308,6 +308,73 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
         Ok(clean_new)
     }
 
+    /// Moves a file or directory in the virtual tree into `target_dir_path`.
+    pub async fn move_entry(
+        &self,
+        source_path: &str,
+        target_dir_path: &str,
+    ) -> Result<String, SyncError> {
+        let clean_src = format!("/{}", source_path.trim_matches('/'));
+        if clean_src == "/" {
+            return Err(SyncError::InvalidPath(
+                "cannot move root directory".to_string(),
+            ));
+        }
+
+        let clean_target_dir = format!("/{}", target_dir_path.trim_matches('/'));
+        let file_name = clean_src.rsplit('/').next().unwrap_or_default();
+        if file_name.is_empty() {
+            return Err(SyncError::InvalidPath(
+                "invalid source item name".to_string(),
+            ));
+        }
+
+        let clean_dest = if clean_target_dir == "/" {
+            format!("/{file_name}")
+        } else {
+            format!("{clean_target_dir}/{file_name}")
+        };
+
+        if clean_src == clean_dest {
+            return Ok(clean_dest);
+        }
+
+        let mut old_cached = None;
+        let mut new_cached = None;
+        let count = {
+            let mut tree = self.tree.write().await;
+            let Some(mut node) = tree.remove(&clean_src) else {
+                return Err(SyncError::NotFound(clean_src));
+            };
+
+            if let Some(cached) = node.hydration.cached_path() {
+                old_cached = Some(cached.to_path_buf());
+                let rel_dest = clean_dest.trim_start_matches('/');
+                let target = self.cache_dir.join(rel_dest);
+                new_cached = Some(target.clone());
+                node.hydration = HydrationState::Hydrated(HydratedContent::Path(target));
+            }
+
+            node.metadata.path = clean_dest.clone();
+            node.metadata.name = file_name.to_string();
+            tree.insert(node);
+            tree.len()
+        };
+
+        if let (Some(from), Some(to)) = (old_cached, new_cached)
+            && from.exists()
+        {
+            if let Some(to_parent) = to.parent() {
+                let _ = fs::create_dir_all(to_parent);
+            }
+            let _ = fs::rename(from, to);
+        }
+
+        self.event_bus
+            .emit(DesktopEvent::VfsTreeUpdated { node_count: count });
+        Ok(clean_dest)
+    }
+
     /// Removes a file or directory subtree from the virtual tree and deletes any cached file.
     pub async fn remove_entry(&self, remote_path: &str) -> Result<(), SyncError> {
         let clean_path = format!("/{}", remote_path.trim_matches('/'));
@@ -445,12 +512,21 @@ mod tests {
         let docs_renamed = vfs.list_children("/Documents").await.unwrap();
         assert!(docs_renamed.iter().any(|c| c.name == "RenamedFolder"));
 
+        // Move resource
+        let moved = vfs
+            .move_entry("/Documents/RenamedFolder", "/")
+            .await
+            .expect("move folder to root");
+        assert_eq!(moved, "/RenamedFolder");
+        let root_after_move = vfs.list_children("/").await.unwrap();
+        assert!(root_after_move.iter().any(|c| c.name == "RenamedFolder"));
+
         // Delete resource
-        vfs.remove_entry("/Documents/RenamedFolder")
+        vfs.remove_entry("/RenamedFolder")
             .await
             .expect("delete folder");
-        let docs_after = vfs.list_children("/Documents").await.unwrap();
-        assert!(!docs_after.iter().any(|c| c.name == "RenamedFolder"));
+        let root_after_delete = vfs.list_children("/").await.unwrap();
+        assert!(!root_after_delete.iter().any(|c| c.name == "RenamedFolder"));
 
         let _ = fs::remove_dir_all(&temp_cache);
     }

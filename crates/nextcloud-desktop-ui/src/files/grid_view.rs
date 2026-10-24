@@ -3,7 +3,7 @@
 #[cfg(feature = "gtk")]
 use gtk4::{
     Align, Box as GtkBox, EventControllerKey, FlowBox, FlowBoxChild, Image, Justification, Label,
-    Orientation, PolicyType, ScrolledWindow, SelectionMode, gdk, pango,
+    Orientation, Overlay, PolicyType, ScrolledWindow, SelectionMode, gdk, pango,
 };
 #[cfg(feature = "gtk")]
 use libadwaita as adw;
@@ -17,7 +17,11 @@ use std::rc::Rc;
 #[cfg(feature = "gtk")]
 use crate::files::context_menu::ItemContextMenu;
 #[cfg(feature = "gtk")]
+use crate::files::dnd::FileDragDrop;
+#[cfg(feature = "gtk")]
 use crate::files::rename_dialog::RenameDialog;
+#[cfg(feature = "gtk")]
+use crate::files::rubberband::RubberbandOverlay;
 #[cfg(feature = "gtk")]
 use crate::files::selection::SelectionTracker;
 #[cfg(feature = "gtk")]
@@ -29,7 +33,7 @@ use crate::widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
 #[cfg(feature = "gtk")]
 #[derive(Clone)]
 pub struct FileGridView {
-    scroll: ScrolledWindow,
+    overlay: RubberbandOverlay,
     flow_box: FlowBox,
     items: Rc<RefCell<Vec<FileViewItem>>>,
     selection_tracker: SelectionTracker,
@@ -112,8 +116,9 @@ impl FileGridView {
         scroll.set_hexpand(true);
         scroll.set_child(Some(&flow_box));
 
-        // Wire empty canvas deselection and drag selection
-        selection_tracker.attach_flow_box_interactions(&scroll, &flow_box, items.clone());
+        // Wire visual rubberband selection marquee and empty-space deselection
+        let overlay = RubberbandOverlay::new(&scroll);
+        overlay.attach_flow_box(&flow_box, items.clone(), selection_tracker.clone());
 
         // Wire F2 key shortcut to present Nautilus RenameDialog
         let key_controller = EventControllerKey::new();
@@ -121,13 +126,13 @@ impl FileGridView {
         let b_key = backend.clone();
         let toast_key = toast_overlay.clone();
         let cb_key = on_refresh;
-        let scroll_for_key = scroll.clone();
+        let overlay_for_key = overlay.clone();
         key_controller.connect_key_pressed(move |_, key, _, _| {
             if key == gdk::Key::F2 {
                 let selected = tracker_key.selected();
                 if let Some(first) = selected.first() {
                     RenameDialog::present(
-                        Some(&scroll_for_key),
+                        Some(overlay_for_key.root_widget()),
                         first,
                         &b_key,
                         &toast_key,
@@ -138,10 +143,10 @@ impl FileGridView {
             }
             glib::Propagation::Proceed
         });
-        scroll.add_controller(key_controller);
+        overlay.root_widget().add_controller(key_controller);
 
         Self {
-            scroll,
+            overlay,
             flow_box,
             items,
             selection_tracker,
@@ -153,31 +158,35 @@ impl FileGridView {
         &self.selection_tracker
     }
 
-    /// Removes all rendered children from the grid.
+    /// Removes all rendered children from the grid and resets selection.
     pub fn clear(&self) {
+        self.flow_box.unselect_all();
         while let Some(child) = self.flow_box.first_child() {
             self.flow_box.remove(&child);
         }
         self.items.borrow_mut().clear();
+        self.selection_tracker.clear();
     }
 }
 
 #[cfg(feature = "gtk")]
 impl ViewComponent for FileGridView {
-    type RootWidget = ScrolledWindow;
+    type RootWidget = Overlay;
 
     fn root_widget(&self) -> &Self::RootWidget {
-        &self.scroll
+        self.overlay.root_widget()
     }
 }
 
 #[cfg(feature = "gtk")]
 impl<B: FileExplorerBackend> ItemCollectionView<B> for FileGridView {
     fn clear(&self) {
+        self.flow_box.unselect_all();
         while let Some(child) = self.flow_box.first_child() {
             self.flow_box.remove(&child);
         }
         self.items.borrow_mut().clear();
+        self.selection_tracker.clear();
     }
 
     fn populate(
@@ -194,6 +203,8 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileGridView {
             let tile = FileGridTile::build(item, backend, toast_overlay, on_refresh.clone());
             self.flow_box.insert(tile.root_widget(), -1);
         }
+        self.flow_box.unselect_all();
+        self.selection_tracker.clear();
     }
 }
 
@@ -249,7 +260,9 @@ impl FileGridTile {
         card.append(&name);
         card.append(&sub);
 
-        ItemContextMenu::attach(&card, item, backend, toast_overlay, on_refresh);
+        ItemContextMenu::attach(&card, item, backend, toast_overlay, on_refresh.clone());
+        FileDragDrop::attach_source(&card, item);
+        FileDragDrop::attach_target(&card, item, backend, toast_overlay, on_refresh);
 
         child.set_child(Some(&card));
         Self { child }
