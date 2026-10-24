@@ -1,9 +1,9 @@
-//! Nautilus-style icon grid view using GTK 4 `FlowBox`.
+//! Nautilus-style icon grid view using GTK 4 `FlowBox` with multi-selection, hover suggestions, and F2 renaming.
 
 #[cfg(feature = "gtk")]
 use gtk4::{
-    Align, Box as GtkBox, FlowBox, FlowBoxChild, Image, Justification, Label, Orientation,
-    PolicyType, ScrolledWindow, SelectionMode, pango,
+    Align, Box as GtkBox, EventControllerKey, FlowBox, FlowBoxChild, Image, Justification, Label,
+    Orientation, PolicyType, ScrolledWindow, SelectionMode, gdk, pango,
 };
 #[cfg(feature = "gtk")]
 use libadwaita as adw;
@@ -17,6 +17,10 @@ use std::rc::Rc;
 #[cfg(feature = "gtk")]
 use crate::files::context_menu::ItemContextMenu;
 #[cfg(feature = "gtk")]
+use crate::files::rename_dialog::RenameDialog;
+#[cfg(feature = "gtk")]
+use crate::files::selection::SelectionTracker;
+#[cfg(feature = "gtk")]
 use crate::model::FileViewItem;
 #[cfg(feature = "gtk")]
 use crate::widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
@@ -28,14 +32,20 @@ pub struct FileGridView {
     scroll: ScrolledWindow,
     flow_box: FlowBox,
     items: Rc<RefCell<Vec<FileViewItem>>>,
+    selection_tracker: SelectionTracker,
 }
 
 #[cfg(feature = "gtk")]
 impl FileGridView {
-    /// Creates a new empty icon grid view.
-    pub fn new(on_select: Rc<dyn Fn(Option<FileViewItem>)>) -> Self {
+    /// Creates a new icon grid view wired to `backend` and callbacks.
+    pub fn new<B: FileExplorerBackend>(
+        backend: &B,
+        toast_overlay: &adw::ToastOverlay,
+        selection_tracker: SelectionTracker,
+        on_refresh: Rc<dyn Fn()>,
+    ) -> Self {
         let flow_box = FlowBox::new();
-        flow_box.set_selection_mode(SelectionMode::Single);
+        flow_box.set_selection_mode(SelectionMode::Multiple);
         flow_box.set_activate_on_single_click(false);
         flow_box.set_homogeneous(true);
         flow_box.set_max_children_per_line(8);
@@ -50,14 +60,49 @@ impl FileGridView {
         flow_box.set_valign(Align::Start);
 
         let items = Rc::new(RefCell::new(Vec::new()));
+
+        // Wire selection change (Ctrl+click, Shift+click, drag-select)
         let items_for_sel = items.clone();
+        let tracker_for_sel = selection_tracker.clone();
         flow_box.connect_selected_children_changed(move |fb| {
-            if let Some(child) = fb.selected_children().first() {
-                let idx = child.index() as usize;
-                let item = items_for_sel.borrow().get(idx).cloned();
-                on_select(item);
-            } else {
-                on_select(None);
+            let selected_children = fb.selected_children();
+            let all = items_for_sel.borrow();
+            let selected: Vec<FileViewItem> = selected_children
+                .into_iter()
+                .filter_map(|c| all.get(c.index() as usize).cloned())
+                .collect();
+            tracker_for_sel.set_selected(selected);
+        });
+
+        // Wire double-click activation EXACTLY ONCE here in constructor
+        let b_act = backend.clone();
+        let toast_act = toast_overlay.clone();
+        let cb_act = on_refresh.clone();
+        let items_for_act = items.clone();
+        flow_box.connect_child_activated(move |_, child| {
+            let idx = child.index() as usize;
+            if let Some(item) = items_for_act.borrow().get(idx).cloned() {
+                let b = b_act.clone();
+                let toast = toast_act.clone();
+                let cb = cb_act.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    if item.is_directory {
+                        // Use canonical absolute path to guarantee idempotent navigation
+                        b.set_current_path(&item.path).await;
+                        cb();
+                    } else {
+                        match b.open_file(&item.path).await {
+                            Ok(path) => {
+                                toast.add_toast(adw::Toast::new(&format!(
+                                    "Opened “{}” ({})",
+                                    item.name,
+                                    path.display()
+                                )));
+                            }
+                            Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
+                        }
+                    }
+                });
             }
         });
 
@@ -67,11 +112,45 @@ impl FileGridView {
         scroll.set_hexpand(true);
         scroll.set_child(Some(&flow_box));
 
+        // Wire empty canvas deselection and drag selection
+        selection_tracker.attach_flow_box_interactions(&scroll, &flow_box, items.clone());
+
+        // Wire F2 key shortcut to present Nautilus RenameDialog
+        let key_controller = EventControllerKey::new();
+        let tracker_key = selection_tracker.clone();
+        let b_key = backend.clone();
+        let toast_key = toast_overlay.clone();
+        let cb_key = on_refresh;
+        let scroll_for_key = scroll.clone();
+        key_controller.connect_key_pressed(move |_, key, _, _| {
+            if key == gdk::Key::F2 {
+                let selected = tracker_key.selected();
+                if let Some(first) = selected.first() {
+                    RenameDialog::present(
+                        Some(&scroll_for_key),
+                        first,
+                        &b_key,
+                        &toast_key,
+                        cb_key.clone(),
+                    );
+                    return glib::Propagation::Stop;
+                }
+            }
+            glib::Propagation::Proceed
+        });
+        scroll.add_controller(key_controller);
+
         Self {
             scroll,
             flow_box,
             items,
+            selection_tracker,
         }
+    }
+
+    /// Returns a reference to the active selection tracker.
+    pub fn selection_tracker(&self) -> &SelectionTracker {
+        &self.selection_tracker
     }
 
     /// Removes all rendered children from the grid.
@@ -115,38 +194,6 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileGridView {
             let tile = FileGridTile::build(item, backend, toast_overlay, on_refresh.clone());
             self.flow_box.insert(tile.root_widget(), -1);
         }
-
-        // Wire double-click activation
-        let b = backend.clone();
-        let toast = toast_overlay.clone();
-        let cb = on_refresh;
-        let items_clone = self.items.clone();
-        self.flow_box.connect_child_activated(move |_, child| {
-            let idx = child.index() as usize;
-            let maybe_item = items_clone.borrow().get(idx).cloned();
-            if let Some(item) = maybe_item {
-                let b = b.clone();
-                let toast = toast.clone();
-                let cb = cb.clone();
-                glib::MainContext::default().spawn_local(async move {
-                    if item.is_directory {
-                        b.navigate_into(&item.name).await;
-                        cb();
-                    } else {
-                        match b.open_file(&item.path).await {
-                            Ok(path) => {
-                                toast.add_toast(adw::Toast::new(&format!(
-                                    "Opened “{}” ({})",
-                                    item.name,
-                                    path.display()
-                                )));
-                            }
-                            Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
-                        }
-                    }
-                });
-            }
-        });
     }
 }
 
@@ -158,7 +205,7 @@ pub struct FileGridTile {
 
 #[cfg(feature = "gtk")]
 impl FileGridTile {
-    /// Builds a tile widget for `item`.
+    /// Builds a tile widget for `item` with hover suggestions and context menu.
     pub fn build<B: FileExplorerBackend>(
         item: &FileViewItem,
         backend: &B,
@@ -173,6 +220,17 @@ impl FileGridTile {
         card.set_margin_start(4);
         card.set_margin_end(4);
         card.set_halign(Align::Center);
+        card.add_css_class("file-tile");
+
+        // Hover suggestion tooltip displaying full item metadata
+        let tooltip = format!(
+            "{}\nType: {}\nSize: {}\nPath: {}",
+            item.name,
+            item.type_label(),
+            item.size_formatted,
+            item.path,
+        );
+        card.set_tooltip_text(Some(&tooltip));
 
         let icon = Image::from_icon_name(item.nautilus_icon_name());
         icon.set_pixel_size(48);

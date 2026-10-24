@@ -1,9 +1,9 @@
-//! Nautilus-style detailed list view with aligned columns and inline actions.
+//! Nautilus-style detailed list view with multi-selection, hover suggestions, and inline actions.
 
 #[cfg(feature = "gtk")]
 use gtk4::{
-    Align, Box as GtkBox, Button, Image, Label, ListBox, ListBoxRow, Orientation, PolicyType,
-    ScrolledWindow, SelectionMode, Separator, pango,
+    Align, Box as GtkBox, Button, EventControllerKey, Image, Label, ListBox, ListBoxRow,
+    Orientation, PolicyType, ScrolledWindow, SelectionMode, Separator, gdk, pango,
 };
 #[cfg(feature = "gtk")]
 use libadwaita as adw;
@@ -17,6 +17,10 @@ use std::rc::Rc;
 #[cfg(feature = "gtk")]
 use crate::files::context_menu::ItemContextMenu;
 #[cfg(feature = "gtk")]
+use crate::files::rename_dialog::RenameDialog;
+#[cfg(feature = "gtk")]
+use crate::files::selection::SelectionTracker;
+#[cfg(feature = "gtk")]
 use crate::model::FileViewItem;
 #[cfg(feature = "gtk")]
 use crate::widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
@@ -28,12 +32,18 @@ pub struct FileListView {
     container: GtkBox,
     list_box: ListBox,
     items: Rc<RefCell<Vec<FileViewItem>>>,
+    selection_tracker: SelectionTracker,
 }
 
 #[cfg(feature = "gtk")]
 impl FileListView {
-    /// Creates a new columnar list view.
-    pub fn new(on_select: Rc<dyn Fn(Option<FileViewItem>)>) -> Self {
+    /// Creates a new columnar list view wired to `backend` and callbacks.
+    pub fn new<B: FileExplorerBackend>(
+        backend: &B,
+        toast_overlay: &adw::ToastOverlay,
+        selection_tracker: SelectionTracker,
+        on_refresh: Rc<dyn Fn()>,
+    ) -> Self {
         let container = GtkBox::new(Orientation::Vertical, 0);
         container.set_vexpand(true);
         container.set_hexpand(true);
@@ -64,7 +74,7 @@ impl FileListView {
         col_size.add_css_class("dim-label");
 
         let col_actions = Label::new(Some("Actions"));
-        col_actions.set_size_request(80, -1);
+        col_actions.set_size_request(110, -1);
         col_actions.set_halign(Align::End);
         col_actions.add_css_class("caption-heading");
         col_actions.add_css_class("dim-label");
@@ -78,19 +88,54 @@ impl FileListView {
         container.append(&Separator::new(Orientation::Horizontal));
 
         let list_box = ListBox::new();
-        list_box.set_selection_mode(SelectionMode::Single);
+        list_box.set_selection_mode(SelectionMode::Multiple);
         list_box.set_activate_on_single_click(false);
         list_box.add_css_class("navigation-sidebar");
 
         let items = Rc::new(RefCell::new(Vec::new()));
+
+        // Wire selection change
         let items_for_sel = items.clone();
-        list_box.connect_row_selected(move |_, row| {
-            if let Some(r) = row {
-                let idx = r.index() as usize;
-                let item = items_for_sel.borrow().get(idx).cloned();
-                on_select(item);
-            } else {
-                on_select(None);
+        let tracker_for_sel = selection_tracker.clone();
+        list_box.connect_selected_rows_changed(move |lb| {
+            let selected_rows = lb.selected_rows();
+            let all = items_for_sel.borrow();
+            let selected: Vec<FileViewItem> = selected_rows
+                .into_iter()
+                .filter_map(|r| all.get(r.index() as usize).cloned())
+                .collect();
+            tracker_for_sel.set_selected(selected);
+        });
+
+        // Wire double-click activation EXACTLY ONCE here in constructor
+        let b_act = backend.clone();
+        let toast_act = toast_overlay.clone();
+        let cb_act = on_refresh.clone();
+        let items_for_act = items.clone();
+        list_box.connect_row_activated(move |_, row| {
+            let idx = row.index() as usize;
+            if let Some(item) = items_for_act.borrow().get(idx).cloned() {
+                let b = b_act.clone();
+                let toast = toast_act.clone();
+                let cb = cb_act.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    if item.is_directory {
+                        // Use canonical absolute path to guarantee idempotent navigation
+                        b.set_current_path(&item.path).await;
+                        cb();
+                    } else {
+                        match b.open_file(&item.path).await {
+                            Ok(path) => {
+                                toast.add_toast(adw::Toast::new(&format!(
+                                    "Opened “{}” ({})",
+                                    item.name,
+                                    path.display()
+                                )));
+                            }
+                            Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
+                        }
+                    }
+                });
             }
         });
 
@@ -100,11 +145,45 @@ impl FileListView {
         scroll.set_child(Some(&list_box));
         container.append(&scroll);
 
+        // Wire empty space deselection
+        selection_tracker.attach_list_box_interactions(&scroll, &list_box);
+
+        // Wire F2 key shortcut to present Nautilus RenameDialog
+        let key_controller = EventControllerKey::new();
+        let tracker_key = selection_tracker.clone();
+        let b_key = backend.clone();
+        let toast_key = toast_overlay.clone();
+        let cb_key = on_refresh;
+        let scroll_for_key = scroll;
+        key_controller.connect_key_pressed(move |_, key, _, _| {
+            if key == gdk::Key::F2 {
+                let selected = tracker_key.selected();
+                if let Some(first) = selected.first() {
+                    RenameDialog::present(
+                        Some(&scroll_for_key),
+                        first,
+                        &b_key,
+                        &toast_key,
+                        cb_key.clone(),
+                    );
+                    return glib::Propagation::Stop;
+                }
+            }
+            glib::Propagation::Proceed
+        });
+        container.add_controller(key_controller);
+
         Self {
             container,
             list_box,
             items,
+            selection_tracker,
         }
+    }
+
+    /// Returns a reference to the active selection tracker.
+    pub fn selection_tracker(&self) -> &SelectionTracker {
+        &self.selection_tracker
     }
 
     /// Removes all rendered children from the list.
@@ -148,38 +227,6 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileListView {
             let row = FileListRow::build(item, backend, toast_overlay, on_refresh.clone());
             self.list_box.append(row.root_widget());
         }
-
-        // Wire double-click activation
-        let b = backend.clone();
-        let toast = toast_overlay.clone();
-        let cb = on_refresh;
-        let items_clone = self.items.clone();
-        self.list_box.connect_row_activated(move |_, row| {
-            let idx = row.index() as usize;
-            let maybe_item = items_clone.borrow().get(idx).cloned();
-            if let Some(item) = maybe_item {
-                let b = b.clone();
-                let toast = toast.clone();
-                let cb = cb.clone();
-                glib::MainContext::default().spawn_local(async move {
-                    if item.is_directory {
-                        b.navigate_into(&item.name).await;
-                        cb();
-                    } else {
-                        match b.open_file(&item.path).await {
-                            Ok(path) => {
-                                toast.add_toast(adw::Toast::new(&format!(
-                                    "Opened “{}” ({})",
-                                    item.name,
-                                    path.display()
-                                )));
-                            }
-                            Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
-                        }
-                    }
-                });
-            }
-        });
     }
 }
 
@@ -191,7 +238,7 @@ pub struct FileListRow {
 
 #[cfg(feature = "gtk")]
 impl FileListRow {
-    /// Builds a row widget for `item`.
+    /// Builds a row widget for `item` with hover suggestions and action buttons.
     pub fn build<B: FileExplorerBackend>(
         item: &FileViewItem,
         backend: &B,
@@ -204,6 +251,16 @@ impl FileListRow {
         hbox.set_margin_bottom(6);
         hbox.set_margin_start(16);
         hbox.set_margin_end(16);
+
+        // Hover suggestion tooltip displaying full item metadata
+        let tooltip = format!(
+            "{}\nType: {}\nSize: {}\nPath: {}",
+            item.name,
+            item.type_label(),
+            item.size_formatted,
+            item.path,
+        );
+        hbox.set_tooltip_text(Some(&tooltip));
 
         let icon = Image::from_icon_name(item.nautilus_icon_name());
         icon.set_pixel_size(32);
@@ -226,10 +283,10 @@ impl FileListRow {
         size_lbl.add_css_class("dim-label");
 
         let actions = GtkBox::new(Orientation::Horizontal, 2);
-        actions.set_size_request(80, -1);
+        actions.set_size_request(110, -1);
         actions.set_halign(Align::End);
 
-        // Open button
+        // 1. Open button
         let open_icon = if item.is_directory {
             "go-next-symbolic"
         } else {
@@ -255,7 +312,7 @@ impl FileListRow {
                 let item = item_clone.clone();
                 glib::MainContext::default().spawn_local(async move {
                     if item.is_directory {
-                        b.navigate_into(&item.name).await;
+                        b.set_current_path(&item.path).await;
                         cb();
                     } else {
                         match b.open_file(&item.path).await {
@@ -273,7 +330,22 @@ impl FileListRow {
             });
         }
 
-        // Delete button
+        // 2. Rename button (Nautilus RenameDialog)
+        let rename_btn = Button::from_icon_name("edit-rename-symbolic");
+        rename_btn.add_css_class("flat");
+        rename_btn.set_tooltip_text(Some("Rename (F2)"));
+
+        {
+            let b = backend.clone();
+            let toast = toast_overlay.clone();
+            let cb = on_refresh.clone();
+            let item_clone = item.clone();
+            rename_btn.connect_clicked(move |btn| {
+                RenameDialog::present(Some(btn), &item_clone, &b, &toast, cb.clone());
+            });
+        }
+
+        // 3. Delete button
         let del_btn = Button::from_icon_name("user-trash-symbolic");
         del_btn.add_css_class("flat");
         del_btn.set_tooltip_text(Some("Delete"));
@@ -303,6 +375,7 @@ impl FileListRow {
         }
 
         actions.append(&open_btn);
+        actions.append(&rename_btn);
         actions.append(&del_btn);
 
         hbox.append(&icon);

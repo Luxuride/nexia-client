@@ -1,9 +1,7 @@
 //! Context menu popover providing Open, Rename, and Delete actions for file items.
 
 #[cfg(feature = "gtk")]
-use gtk4::{
-    Align, Box as GtkBox, Button, Entry, GestureClick, Label, Orientation, Popover, Separator,
-};
+use gtk4::{Box as GtkBox, Button, GestureClick, Orientation, Popover, Separator};
 #[cfg(feature = "gtk")]
 use libadwaita as adw;
 #[cfg(feature = "gtk")]
@@ -11,6 +9,8 @@ use libadwaita::prelude::*;
 #[cfg(feature = "gtk")]
 use std::rc::Rc;
 
+#[cfg(feature = "gtk")]
+use crate::files::rename_dialog::RenameDialog;
 #[cfg(feature = "gtk")]
 use crate::model::FileViewItem;
 #[cfg(feature = "gtk")]
@@ -80,43 +80,19 @@ impl ItemContextMenu {
             });
         }
 
-        // 2. Rename action (inline rename input row)
-        let rename_box = GtkBox::new(Orientation::Horizontal, 6);
-        let rename_entry = Entry::new();
-        rename_entry.set_text(&item.name);
-        rename_entry.set_width_chars(14);
-
-        let rename_btn = Button::from_icon_name("edit-rename-symbolic");
+        // 2. Rename action (opens Nautilus modal Rename dialog)
+        let rename_btn = Button::with_label("Rename…");
         rename_btn.add_css_class("flat");
-        rename_btn.set_tooltip_text(Some("Confirm Rename"));
-
-        rename_box.append(&rename_entry);
-        rename_box.append(&rename_btn);
 
         {
             let pop = popover.clone();
             let b = backend.clone();
             let toast = toast_overlay.clone();
             let cb = on_refresh.clone();
-            let path = item.path.clone();
-            let entry = rename_entry;
-            rename_btn.connect_clicked(move |_| {
-                let new_name = entry.text().to_string();
+            let item_clone = item.clone();
+            rename_btn.connect_clicked(move |btn| {
                 pop.popdown();
-                let b = b.clone();
-                let toast = toast.clone();
-                let cb = cb.clone();
-                let p = path.clone();
-                glib::MainContext::default().spawn_local(async move {
-                    match b.rename_item(&p, &new_name).await {
-                        Ok(new_path) => {
-                            toast.add_toast(adw::Toast::new(&format!("Renamed to “{new_name}”")));
-                            cb();
-                            tracing::info!(renamed_path = %new_path, "Item renamed successfully");
-                        }
-                        Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
-                    }
-                });
+                RenameDialog::present(Some(btn), &item_clone, &b, &toast, cb.clone());
             });
         }
 
@@ -151,16 +127,9 @@ impl ItemContextMenu {
             });
         }
 
-        let rename_label = Label::new(Some("Rename"));
-        rename_label.set_halign(Align::Start);
-        rename_label.add_css_class("caption");
-        rename_label.add_css_class("dim-label");
-
         menu_box.append(&open_btn);
         menu_box.append(&Separator::new(Orientation::Horizontal));
-        menu_box.append(&rename_label);
-        menu_box.append(&rename_box);
-        menu_box.append(&Separator::new(Orientation::Horizontal));
+        menu_box.append(&rename_btn);
         menu_box.append(&delete_btn);
         popover.set_child(Some(&menu_box));
         popover.set_parent(target);

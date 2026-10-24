@@ -72,6 +72,29 @@ impl FileStatusBar {
                 .set_text("Double-click to open · Right-click for actions");
         }
     }
+
+    /// Updates the selection label with multi-selection counts and total size.
+    pub fn update_multi_selection(&self, items: &[FileViewItem]) {
+        match items.len() {
+            0 => {
+                self.selection_label
+                    .set_text("Double-click to open · Right-click for actions");
+            }
+            1 => {
+                let i = &items[0];
+                self.selection_label
+                    .set_text(&format!("“{}” ({})", i.name, i.size_formatted));
+            }
+            n => {
+                let total_bytes: u64 = items.iter().map(|i| i.size_bytes).sum();
+                self.selection_label.set_text(&format!(
+                    "{} items selected ({})",
+                    n,
+                    FileViewItem::format_bytes(total_bytes)
+                ));
+            }
+        }
+    }
 }
 
 #[cfg(feature = "gtk")]

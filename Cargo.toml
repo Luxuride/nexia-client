@@ -35,7 +35,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "7.0"
 uuid = { version = "1", features = ["v4", "serde"] }
 gtk4 = { version = "0.11" }
-libadwaita = { version = "0.9" }
+libadwaita = { version = "0.9", features = ["v1_2"] }
 glib = { version = "0.22" }
 ksni = { version = "0.3", default-features = false, features = ["tokio"] }
 

@@ -36,6 +36,39 @@ pub fn launch_gtk_application(
         .application_id("com.nextcloud.desktop.rs")
         .build();
 
+    app.connect_startup(|_| {
+        if let Some(settings) = gtk4::Settings::default() {
+            let cursor_size = std::env::var("XCURSOR_SIZE")
+                .ok()
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(24);
+            settings.set_gtk_cursor_theme_size(cursor_size);
+        }
+
+        let provider = gtk4::CssProvider::new();
+        provider.load_from_data(
+            "
+            .file-tile {
+                border-radius: 8px;
+                transition: background-color 150ms ease-in-out;
+            }
+            .file-tile:hover {
+                background-color: alpha(currentColor, 0.08);
+            }
+            flowboxchild:selected .file-tile {
+                background-color: alpha(@accent_color, 0.16);
+            }
+            ",
+        );
+        if let Some(display) = gtk4::gdk::Display::default() {
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &provider,
+                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        }
+    });
+
     let hold_guard = Rc::new(RefCell::new(None));
     let main_window: Rc<RefCell<Option<adw::ApplicationWindow>>> = Rc::new(RefCell::new(None));
 

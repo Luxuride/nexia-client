@@ -14,11 +14,13 @@ use crate::files::grid_view::FileGridView;
 #[cfg(feature = "gtk")]
 use crate::files::list_view::FileListView;
 #[cfg(feature = "gtk")]
+use crate::files::selection::SelectionTracker;
+#[cfg(feature = "gtk")]
 use crate::files::status_bar::FileStatusBar;
 #[cfg(feature = "gtk")]
 use crate::files::toolbar::PathToolbar;
 #[cfg(feature = "gtk")]
-use crate::model::FileViewMode;
+use crate::model::{FileViewItem, FileViewMode};
 #[cfg(feature = "gtk")]
 use crate::widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
 
@@ -44,15 +46,24 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
         let toolbar = PathToolbar::new(backend, &toast_overlay, on_refresh_request.clone());
         let status_bar = FileStatusBar::new();
 
-        let status_bar_for_grid = status_bar.clone();
-        let grid_view = FileGridView::new(Rc::new(move |item| {
-            status_bar_for_grid.update_selection(item.as_ref());
+        let status_bar_for_sel = status_bar.clone();
+        let selection_tracker = SelectionTracker::new(Rc::new(move |items: Vec<FileViewItem>| {
+            status_bar_for_sel.update_multi_selection(&items);
         }));
 
-        let status_bar_for_list = status_bar.clone();
-        let list_view = FileListView::new(Rc::new(move |item| {
-            status_bar_for_list.update_selection(item.as_ref());
-        }));
+        let grid_view = FileGridView::new(
+            backend,
+            &toast_overlay,
+            selection_tracker.clone(),
+            on_refresh_request.clone(),
+        );
+
+        let list_view = FileListView::new(
+            backend,
+            &toast_overlay,
+            selection_tracker,
+            on_refresh_request.clone(),
+        );
 
         let empty_page = adw::StatusPage::builder()
             .icon_name("folder-open-symbolic")

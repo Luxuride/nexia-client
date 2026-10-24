@@ -6,6 +6,8 @@ pub mod list_view;
 pub mod new_folder;
 pub mod page;
 pub mod path_bar;
+pub mod rename_dialog;
+pub mod selection;
 pub mod status_bar;
 pub mod toolbar;
 
@@ -21,6 +23,10 @@ pub use new_folder::NewFolderPopover;
 pub use page::CloudFilesPage;
 #[cfg(feature = "gtk")]
 pub use path_bar::PathBar;
+#[cfg(feature = "gtk")]
+pub use rename_dialog::RenameDialog;
+#[cfg(feature = "gtk")]
+pub use selection::SelectionTracker;
 #[cfg(feature = "gtk")]
 pub use status_bar::FileStatusBar;
 #[cfg(feature = "gtk")]
