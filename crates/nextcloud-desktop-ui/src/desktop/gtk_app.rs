@@ -416,6 +416,10 @@ fn build_ui(
                     ctrl_for_events.mark_hydration_finished(path).await;
                     refresh_for_events();
                 }
+                nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. } => {
+                    ctrl_for_events.set_current_path("/").await;
+                    refresh_for_events();
+                }
                 nextcloud_desktop_core::events::DesktopEvent::VfsTreeUpdated { .. }
                 | nextcloud_desktop_core::events::DesktopEvent::SyncCompleted { .. } => {
                     refresh_for_events();

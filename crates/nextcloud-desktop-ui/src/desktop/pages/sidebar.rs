@@ -167,6 +167,12 @@ impl NavigationSidebar {
         glib::MainContext::default().spawn_local(async move {
             while let Ok(event) = event_rx.recv().await {
                 match event {
+                    nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. } => {
+                        dot_rx.remove_css_class("status-dot-syncing");
+                        dot_rx.remove_css_class("status-dot-offline");
+                        dot_rx.add_css_class("status-dot-connected");
+                        lbl_rx.set_text("Online");
+                    }
                     nextcloud_desktop_core::events::DesktopEvent::SyncStarted { .. } => {
                         dot_rx.remove_css_class("status-dot-connected");
                         dot_rx.remove_css_class("status-dot-offline");

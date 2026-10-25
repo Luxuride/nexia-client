@@ -215,10 +215,15 @@ impl DesktopSyncCoordinator {
 
     /// Access the virtual filesystem handle for the active account mount.
     pub async fn active_vfs(&self) -> VfsHandle {
-        let active_user = self
-            .active_client()
-            .await
-            .and_then(|c| c.current_user_id().map(|s| s.to_string()))
+        let active_account = self.active_account().await;
+        let active_user = active_account
+            .as_ref()
+            .map(|a| a.credentials.username.clone())
+            .unwrap_or_else(|| "default".to_string());
+
+        let account_key = active_account
+            .as_ref()
+            .map(|a| a.id.0.replace([':', '/', ' '], "_"))
             .unwrap_or_else(|| "default".to_string());
 
         let handle = self
@@ -232,7 +237,7 @@ impl DesktopSyncCoordinator {
         let mount_id = if let Some(ref id) = *mount_lock {
             id.clone()
         } else {
-            let initial_id = MountId::from("app-default-vfs".to_string());
+            let initial_id = MountId::from(format!("app-vfs-{account_key}"));
             let vfs_dir = self
                 .cache_dir()
                 .join("mounts")
@@ -296,9 +301,16 @@ impl DesktopSyncCoordinator {
     /// Returns the currently active Nextcloud [`Client`].
     pub async fn active_client(&self) -> Option<Client> {
         if let Some(active_acc) = self.active_account().await {
+            let target_authority =
+                nextcloud_rust_sdk::ServerUrl::parse(&active_acc.server.server_url)
+                    .map(|u| u.authority().to_string())
+                    .unwrap_or_default();
             let clients = self.clients.read().await;
             for c in clients.iter() {
-                if c.server_url().as_str() == active_acc.server.server_url
+                let c_auth = c.server_url().authority().to_string();
+                if (c.server_url().as_str().trim_end_matches('/')
+                    == active_acc.server.server_url.trim_end_matches('/')
+                    || (!target_authority.is_empty() && c_auth == target_authority))
                     && c.current_user_id().as_deref() == Some(&active_acc.credentials.username)
                 {
                     return Some(c.clone());

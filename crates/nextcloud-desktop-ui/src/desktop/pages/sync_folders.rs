@@ -281,6 +281,22 @@ impl SyncFoldersPage {
 
         refresh_list();
 
+        // Subscribe to account switches and sync events to update the sync folder pairings list
+        let mut event_rx = backend.subscribe_events();
+        let ref_for_events = refresh_list.clone();
+        glib::MainContext::default().spawn_local(async move {
+            while let Ok(event) = event_rx.recv().await {
+                match event {
+                    nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. }
+                    | nextcloud_desktop_core::events::DesktopEvent::AccountSignedOut { .. }
+                    | nextcloud_desktop_core::events::DesktopEvent::SyncCompleted { .. } => {
+                        ref_for_events();
+                    }
+                    _ => {}
+                }
+            }
+        });
+
         // Wire Add Sync Folder button
         let b_add = backend.clone();
         let toast_add = toast_overlay.clone();

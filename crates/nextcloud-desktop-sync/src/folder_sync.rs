@@ -72,6 +72,15 @@ impl FolderSyncEngine {
                     &decoded_href[idx + dav_prefix.len()..]
                 } else if let Some(p) = decoded_href.strip_prefix(&dav_prefix) {
                     p
+                } else if let Some(idx) = decoded_href.find("/remote.php/dav/files/") {
+                    let after_files = &decoded_href[idx + "/remote.php/dav/files/".len()..];
+                    if let Some(slash) = after_files.find('/') {
+                        &after_files[slash..]
+                    } else {
+                        ""
+                    }
+                } else if let Some(idx) = decoded_href.find("/remote.php/webdav") {
+                    &decoded_href[idx + "/remote.php/webdav".len()..]
                 } else {
                     continue;
                 };
@@ -174,8 +183,29 @@ impl FolderSyncEngine {
             "Starting folder synchronization cycle"
         );
 
-        let remote_files = Self::discover_remote(&dav_client, &user, &mount.remote_path).await?;
-        let local_files = scan_local_directory(&local_target).map_err(SyncError::SdkSync)?;
+        let remote_files = match Self::discover_remote(&dav_client, &user, &mount.remote_path).await
+        {
+            Ok(rf) => rf,
+            Err(e) => {
+                progress.status = MountStatus::Idle;
+                self.coordinator.set_mount_progress(progress.clone());
+                self.coordinator
+                    .event_bus
+                    .emit(DesktopEvent::MountProgress(progress));
+                return Err(e);
+            }
+        };
+        let local_files = match scan_local_directory(&local_target) {
+            Ok(lf) => lf,
+            Err(e) => {
+                progress.status = MountStatus::Idle;
+                self.coordinator.set_mount_progress(progress.clone());
+                self.coordinator
+                    .event_bus
+                    .emit(DesktopEvent::MountProgress(progress));
+                return Err(SyncError::SdkSync(e));
+            }
+        };
 
         let cache_dir = self.coordinator.config.read().await.resolved_cache_dir();
         let mount_cache_dir = cache_dir.join("mounts").join(mount_id);
@@ -186,8 +216,33 @@ impl FolderSyncEngine {
         let mut journal =
             SyncJournal::load_from_file(&journal_path).unwrap_or_else(|_| SyncJournal::new());
 
-        let actions = reconcile(&local_files, &remote_files, &journal);
+        let mut actions = reconcile(&local_files, &remote_files, &journal);
         let is_vfs = mount.mode == "VirtualVfs";
+
+        // Normal sync is VFS that eagerly hydrates everything:
+        // Convert any InSync placeholders (0 bytes locally but > 0 bytes remotely) to Download actions
+        if !is_vfs {
+            for action in &mut actions {
+                if let SyncAction::InSync { relative_path } = action
+                    && let Some(rem) = remote_files
+                        .iter()
+                        .find(|r| &r.relative_path == relative_path)
+                {
+                    let local_p = local_target.join(relative_path.trim_start_matches('/'));
+                    let local_len = std::fs::metadata(&local_p).map(|m| m.len()).unwrap_or(0);
+                    if rem.size > 0 && local_len == 0 {
+                        let rel = relative_path.clone();
+                        let sz = rem.size;
+                        let et = rem.etag.clone();
+                        *action = SyncAction::Download {
+                            relative_path: rel,
+                            size: sz,
+                            etag: et,
+                        };
+                    }
+                }
+            }
+        }
         let total_actions = actions.len();
         progress.total_items = total_actions;
         self.coordinator.set_mount_progress(progress.clone());
@@ -327,6 +382,17 @@ impl FolderSyncEngine {
                                                 relative_path: relative_path.clone(),
                                                 kind: nextcloud_desktop_core::events::TransferKind::Download,
                                             });
+
+                                        let bytes_len = bytes.len() as u64;
+                                        // Keep VFS state in sync: mark hydrated in virtual drive
+                                        let vfs = self.coordinator.active_vfs().await;
+                                        let _ = vfs.hydrate_local(&full_remote, bytes).await;
+                                        self.coordinator.event_bus.emit(
+                                            DesktopEvent::NodeHydrated {
+                                                path: full_remote.clone(),
+                                                size: bytes_len,
+                                            },
+                                        );
                                     }
                                 }
                                 Err(e) => {
@@ -502,7 +568,7 @@ impl FolderSyncEngine {
     }
 }
 
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     let mut bytes = Vec::with_capacity(s.len());
     let mut chars = s.bytes();
     while let Some(b) = chars.next() {
@@ -522,6 +588,42 @@ fn percent_decode(s: &str) -> String {
         bytes.push(b);
     }
     String::from_utf8(bytes).unwrap_or_else(|_| s.to_string())
+}
+
+pub(crate) fn extract_clean_dav_path(href: &str, base_dav_prefix: &str) -> String {
+    let decoded = percent_decode(href);
+    let prefix = base_dav_prefix.trim_end_matches('/');
+
+    let path_after_prefix = if let Some(idx) = decoded.find(prefix) {
+        &decoded[idx + prefix.len()..]
+    } else if let Some(idx) = decoded.find("/remote.php/dav/files/") {
+        let after_files = &decoded[idx + "/remote.php/dav/files/".len()..];
+        if let Some(slash) = after_files.find('/') {
+            &after_files[slash..]
+        } else {
+            ""
+        }
+    } else if let Some(idx) = decoded.find("/remote.php/webdav") {
+        &decoded[idx + "/remote.php/webdav".len()..]
+    } else if let Some(p) = decoded.strip_prefix(prefix) {
+        p
+    } else if let Some(idx) = decoded.find("://") {
+        let after_scheme = &decoded[idx + 3..];
+        if let Some(first_slash) = after_scheme.find('/') {
+            &after_scheme[first_slash..]
+        } else {
+            &decoded
+        }
+    } else {
+        &decoded
+    };
+
+    let trimmed = path_after_prefix.trim_matches('/');
+    if trimmed.is_empty() {
+        "/".to_string()
+    } else {
+        format!("/{}", trimmed)
+    }
 }
 
 fn is_thumbnail_candidate(path: &str) -> bool {

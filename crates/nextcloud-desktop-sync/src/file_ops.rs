@@ -96,12 +96,7 @@ impl DesktopSyncCoordinator {
                                 .as_deref()
                                 .is_some_and(|m| m.starts_with("image/")))
                 })
-                .map(|s| {
-                    s.href
-                        .strip_prefix(&dav_prefix)
-                        .unwrap_or(&s.href)
-                        .to_string()
-                })
+                .map(|s| crate::folder_sync::extract_clean_dav_path(&s.href, &dav_prefix))
                 .collect();
 
             if !media_paths.is_empty() {
@@ -187,12 +182,7 @@ impl DesktopSyncCoordinator {
                                 .as_deref()
                                 .is_some_and(|m| m.starts_with("image/")))
                 })
-                .map(|s| {
-                    s.href
-                        .strip_prefix(&dav_prefix)
-                        .unwrap_or(&s.href)
-                        .to_string()
-                })
+                .map(|s| crate::folder_sync::extract_clean_dav_path(&s.href, &dav_prefix))
                 .collect();
 
             if !media_paths.is_empty() {

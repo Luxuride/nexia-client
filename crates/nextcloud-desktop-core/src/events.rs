@@ -119,6 +119,11 @@ pub enum DesktopEvent {
     },
     /// Live synchronization progress update for a mount point.
     MountProgress(nextcloud_rust_sdk::MountProgressSnapshot),
+    /// Active account was switched to another configured profile.
+    AccountSwitched {
+        /// Identifier of the newly activated account.
+        account_id: String,
+    },
     /// An account profile was signed out and removed.
     AccountSignedOut {
         /// Identifier of the signed out account.

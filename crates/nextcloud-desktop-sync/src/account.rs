@@ -537,6 +537,9 @@ impl DesktopSyncCoordinator {
         // Reset default mount id so a new mount is opened for the switched account
         *self.default_mount_id.write().await = None;
         let _ = self.refresh_virtual_tree().await;
+        self.event_bus.emit(DesktopEvent::AccountSwitched {
+            account_id: account_id.0.clone(),
+        });
         Ok(())
     }
 
