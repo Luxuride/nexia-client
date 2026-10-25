@@ -122,18 +122,77 @@ pub struct Account {
     /// Whether this is the built-in system account (immutable).
     #[serde(default)]
     pub is_system: bool,
+    /// Path to local avatar image if available.
+    #[serde(default)]
+    pub avatar_path: Option<std::path::PathBuf>,
 }
 
 impl Account {
-    /// Returns the built-in, immutable system account profile.
+    /// Detects the host desktop username, display name, and avatar picture path.
+    pub fn detect_host_user_info() -> (String, String, Option<std::path::PathBuf>) {
+        let user = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_else(|_| "system".to_string());
+
+        let home = dirs::home_dir();
+        let display_name = match std::env::var("NAME") {
+            Ok(n) if !n.trim().is_empty() => n,
+            _ => {
+                let capitalized = if let Some(first) = user.chars().next() {
+                    format!("{}{}", first.to_uppercase(), &user[first.len_utf8()..])
+                } else {
+                    user.clone()
+                };
+                format!("{capitalized} (System)")
+            }
+        };
+
+        let avatar_candidates = [
+            home.as_ref().map(|h| h.join(".face")),
+            home.as_ref().map(|h| h.join(".face.icon")),
+            Some(std::path::PathBuf::from(format!(
+                "/var/lib/AccountsService/icons/{user}"
+            ))),
+        ];
+
+        let avatar_path = avatar_candidates
+            .into_iter()
+            .flatten()
+            .find(|p| p.is_file());
+
+        (user, display_name, avatar_path)
+    }
+
+    /// Returns the built-in, immutable host system account profile with discovered user details.
     pub fn system_account() -> Self {
+        let (username, display_name, avatar_path) = Self::detect_host_user_info();
         Self {
             id: AccountId("system-account".to_string()),
-            name: "System Account".to_string(),
+            name: display_name,
             server: ServerConfig::new("https://cloud.nextcloud.com"),
-            credentials: AccountCredentials::new("system", ""),
+            credentials: AccountCredentials::new(username, ""),
             status: AccountStatus::Connected,
             is_system: true,
+            avatar_path,
+        }
+    }
+
+    /// Creates a system-managed account profile (e.g. discovered from GNOME Online Accounts or KDE).
+    pub fn system_sso_account(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        server: ServerConfig,
+        credentials: AccountCredentials,
+        avatar_path: Option<std::path::PathBuf>,
+    ) -> Self {
+        Self {
+            id: AccountId(id.into()),
+            name: name.into(),
+            server,
+            credentials,
+            status: AccountStatus::Connected,
+            is_system: true,
+            avatar_path,
         }
     }
 
@@ -150,6 +209,7 @@ impl Account {
             credentials,
             status: AccountStatus::Disconnected,
             is_system: false,
+            avatar_path: None,
         }
     }
 }

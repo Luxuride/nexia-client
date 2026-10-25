@@ -34,7 +34,7 @@ impl MainHeaderBar {
 
         let account_switcher = AccountSwitcher::new(backend, toast_overlay, on_refresh.clone());
 
-        header_bar.pack_end(account_switcher.widget());
+        header_bar.pack_start(account_switcher.widget());
         header_bar.pack_end(&sync_btn);
         header_bar.pack_end(&refresh_btn);
 

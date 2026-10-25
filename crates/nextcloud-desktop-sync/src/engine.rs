@@ -113,9 +113,37 @@ impl DesktopSyncCoordinator {
         Some((account, client, auth))
     }
 
-    /// Returns a list of all configured accounts.
+    /// Returns a list of all configured and discovered desktop system accounts.
     pub async fn accounts(&self) -> Vec<Account> {
-        self.config.read().await.accounts.clone()
+        let mut accounts = self.config.read().await.accounts.clone();
+
+        // Discover external desktop system accounts from GNOME Online Accounts, KDE, and Nextcloud configs
+        let sso = nextcloud_rust_sdk::DesktopSso::new();
+        for disc in sso.discover_accounts().await {
+            let host = disc.server_url.as_str().trim_end_matches('/');
+            let id = format!("sso-{}-{}", host, disc.username);
+            let already_present = accounts.iter().any(|a| {
+                a.id.0 == id
+                    || (a.server.server_url == host && a.credentials.username == disc.username)
+            });
+            if !already_present {
+                let label = disc.display_name.unwrap_or_else(|| {
+                    let domain = host
+                        .trim_start_matches("https://")
+                        .trim_start_matches("http://");
+                    format!("{} ({domain})", disc.username)
+                });
+                accounts.push(Account::system_sso_account(
+                    id,
+                    label,
+                    nextcloud_desktop_core::account::ServerConfig::new(host),
+                    nextcloud_desktop_core::account::AccountCredentials::new(&disc.username, ""),
+                    None,
+                ));
+            }
+        }
+
+        accounts
     }
 
     /// Returns the currently active account if configured.
@@ -368,12 +396,12 @@ mod tests {
             DesktopSyncCoordinator::new(config_lock, temp_dir.clone(), EventBus::new(100));
 
         let accounts = coordinator.accounts().await;
-        assert_eq!(accounts.len(), 1);
-        assert_eq!(accounts[0].name, "System Account");
+        assert!(!accounts.is_empty());
         assert!(accounts[0].is_system);
+        let initial_count = accounts.len();
 
         let active = coordinator.active_account().await.expect("has active");
-        assert_eq!(active.name, "System Account");
+        assert!(active.is_system);
 
         let new_acc = Account::new(
             "Alice Nextcloud",
@@ -387,7 +415,7 @@ mod tests {
             .expect("add succeeds");
 
         let accounts2 = coordinator.accounts().await;
-        assert_eq!(accounts2.len(), 2);
+        assert_eq!(accounts2.len(), initial_count + 1);
 
         let active2 = coordinator.active_account().await.expect("has active");
         assert_eq!(active2.id, alice_id);
