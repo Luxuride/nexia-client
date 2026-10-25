@@ -56,6 +56,23 @@ pub struct DesktopSyncCoordinator {
         Arc<tokio::sync::RwLock<Option<Arc<std::sync::RwLock<nextcloud_rust_sdk::VirtualTree>>>>>,
     pub(crate) fuse_mountpoint: Arc<tokio::sync::RwLock<Option<PathBuf>>>,
     pub(crate) last_root_etags: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
+    pub(crate) priority_ops_counter: Arc<std::sync::atomic::AtomicUsize>,
+    pub(crate) priority_ops_notify: Arc<tokio::sync::Notify>,
+}
+
+/// RAII guard representing an active high-priority operation (hydration, sync, directory listing).
+/// While any `PriorityPermit` is held, background thumbnail workers yield and pause.
+pub struct PriorityPermit {
+    counter: Arc<std::sync::atomic::AtomicUsize>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl Drop for PriorityPermit {
+    fn drop(&mut self) {
+        if self.counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+            self.notify.notify_waiters();
+        }
+    }
 }
 
 impl DesktopSyncCoordinator {
@@ -65,6 +82,27 @@ impl DesktopSyncCoordinator {
             .read()
             .map(|s| s.clone())
             .unwrap_or_default()
+    }
+
+    /// Acquires a priority permit for user-initiated or critical operations (sync, hydration, mutations).
+    /// Thumbnail workers will pause and yield until this permit is dropped.
+    pub fn priority_permit(&self) -> PriorityPermit {
+        self.priority_ops_counter
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        PriorityPermit {
+            counter: self.priority_ops_counter.clone(),
+            notify: self.priority_ops_notify.clone(),
+        }
+    }
+
+    /// Asynchronously waits until all active high-priority operations have completed.
+    pub async fn wait_for_priority_ops(&self) {
+        while self.priority_ops_counter.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            let notified = self.priority_ops_notify.notified();
+            if self.priority_ops_counter.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+                notified.await;
+            }
+        }
     }
 
     /// Creates a new synchronization coordinator launching the background orchestrator actor.
@@ -101,6 +139,8 @@ impl DesktopSyncCoordinator {
             fuse_tree: Arc::new(tokio::sync::RwLock::new(None)),
             fuse_mountpoint: Arc::new(tokio::sync::RwLock::new(None)),
             last_root_etags: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            priority_ops_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            priority_ops_notify: Arc::new(tokio::sync::Notify::new()),
         };
 
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {

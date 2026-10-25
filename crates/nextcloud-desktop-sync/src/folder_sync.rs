@@ -130,6 +130,7 @@ impl FolderSyncEngine {
 
     /// Synchronizes a single sync mount by ID.
     pub async fn sync_mount(&self, mount_id: &str) -> Result<usize, SyncError> {
+        let _priority = self.coordinator.priority_permit();
         if mount_id.starts_with("app-") {
             return Ok(0);
         }
@@ -551,6 +552,7 @@ impl FolderSyncEngine {
 
     /// Synchronizes all configured active folder mounts across the account.
     pub async fn sync_all_mounts(&self) {
+        let _priority = self.coordinator.priority_permit();
         let mounts = self.coordinator.sync_mounts().await;
         for mount in mounts {
             if mount.id.starts_with("app-") || !mount.enabled {

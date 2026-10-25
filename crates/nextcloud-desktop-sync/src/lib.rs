@@ -14,7 +14,7 @@ pub mod fuse_mount;
 pub(crate) mod mounts;
 pub mod watcher;
 
-pub use coordinator::{DesktopSyncCoordinator, ThumbnailQueueSnapshot};
+pub use coordinator::{DesktopSyncCoordinator, PriorityPermit, ThumbnailQueueSnapshot};
 pub use error::SyncError;
 pub use file_ops::make_dav_path;
 pub use folder_sync::FolderSyncEngine;

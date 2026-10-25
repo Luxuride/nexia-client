@@ -34,6 +34,7 @@ impl AsyncHydrator for DesktopHydrator {
         let coord = self.coordinator.clone();
 
         Box::pin(async move {
+            let _priority = coord.priority_permit();
             let Some((user, client, auth)) = coord.active_dav_context().await else {
                 return Err(VfsError::NotFound(path));
             };

@@ -21,6 +21,7 @@ pub fn make_dav_path(user: &str, relative: &str) -> Result<DavPath, SyncError> {
 impl DesktopSyncCoordinator {
     /// Refreshes the virtual file tree for the active configured account, or resets to local virtual hierarchy.
     pub async fn refresh_virtual_tree(&self) -> Result<usize, SyncError> {
+        let _priority = self.priority_permit();
         let vfs = self.active_vfs().await;
 
         let Some((user, client, auth)) = self.active_dav_context().await else {
@@ -138,6 +139,7 @@ impl DesktopSyncCoordinator {
 
     /// Refreshes the virtual file entries for a specific relative directory path.
     pub async fn refresh_path(&self, relative_path: &str) -> Result<usize, SyncError> {
+        let _priority = self.priority_permit();
         let vfs = self.active_vfs().await;
 
         let Some((user, client, auth)) = self.active_dav_context().await else {
@@ -286,82 +288,72 @@ impl DesktopSyncCoordinator {
 
     /// Performs on-demand hydration for a virtual file, downloading via SDK or using local cache.
     pub async fn hydrate_file(&self, remote_path: &str) -> Result<PathBuf, SyncError> {
+        let _priority = self.priority_permit();
         let clean = format!("/{}", remote_path.trim_matches('/'));
         self.event_bus.emit(DesktopEvent::NodeHydrationStarted {
             path: clean.clone(),
         });
         let vfs = self.active_vfs().await;
 
-        if let Some((user, client, auth)) = self.active_dav_context().await {
-            let dav_client = client.dav(&auth);
-            let clean_sub = remote_path.trim_matches('/');
-            let dav_path = DavPath::new(&user, clean_sub)
-                .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
-            if let Ok(bytes) = dav_client.get(&dav_path).await {
-                let byte_len = bytes.len() as u64;
-                let local_path = vfs
-                    .hydrate_local(remote_path, bytes.clone())
-                    .await
-                    .map_err(SyncError::Orchestrator)?;
+        let Some((user, client, auth)) = self.active_dav_context().await else {
+            return Err(SyncError::NotFound("No active account session".to_string()));
+        };
 
-                // If this file matches a local folder sync mount, hydrate the local file directly
-                for mount in self.sync_mounts().await {
-                    if Self::is_internal_vfs(&mount.id) || !mount.enabled {
-                        continue;
-                    }
-                    let m_remote = mount.remote_path.trim_end_matches('/');
-                    let rel = if m_remote.is_empty() || m_remote == "/" {
-                        Some(clean_sub)
-                    } else {
-                        clean_sub.strip_prefix(m_remote.trim_start_matches('/'))
-                    };
-                    if let Some(rel_path) = rel {
-                        let rel_clean = rel_path.trim_start_matches('/');
-                        let target_file = PathBuf::from(&mount.local_target).join(rel_clean);
-                        if let Some(parent) = target_file.parent() {
-                            let _ = std::fs::create_dir_all(parent);
-                        }
-                        if std::fs::write(&target_file, &bytes).is_ok() {
-                            let journal_dir = PathBuf::from(&mount.local_target).join(".nextcloud");
-                            let _ = std::fs::create_dir_all(&journal_dir);
-                            let journal_path = journal_dir.join("journal.json");
-                            let mut journal =
-                                nextcloud_rust_sdk::SyncJournal::load_from_file(&journal_path)
-                                    .unwrap_or_else(|_| nextcloud_rust_sdk::SyncJournal::new());
-                            let mtime = std::fs::metadata(&target_file)
-                                .and_then(|m| m.modified())
-                                .unwrap_or_else(|_| std::time::SystemTime::now());
-                            journal.record(nextcloud_rust_sdk::JournalEntry::new(
-                                rel_clean, byte_len, mtime, false,
-                            ));
-                            let _ = journal.save_to_file(&journal_path);
-                            self.event_bus.emit(DesktopEvent::FileTransferCompleted {
-                                relative_path: rel_clean.to_string(),
-                                kind: nextcloud_desktop_core::events::TransferKind::Hydration,
-                            });
-                            self.event_bus.emit(DesktopEvent::NodeHydrated {
-                                path: clean,
-                                size: byte_len,
-                            });
-                            return Ok(target_file);
-                        }
-                    }
+        let dav_client = client.dav(&auth);
+        let clean_sub = remote_path.trim_matches('/');
+        let dav_path = make_dav_path(&user, clean_sub)?;
+
+        let bytes = dav_client.get(&dav_path).await.map_err(SyncError::WebDav)?;
+        let byte_len = bytes.len() as u64;
+        let local_path = vfs
+            .hydrate_local(remote_path, bytes.clone())
+            .await
+            .map_err(SyncError::Orchestrator)?;
+
+        // If this file matches a local folder sync mount, hydrate the local file directly
+        for mount in self.sync_mounts().await {
+            if Self::is_internal_vfs(&mount.id) || !mount.enabled {
+                continue;
+            }
+            let m_remote = mount.remote_path.trim_end_matches('/');
+            let rel = if m_remote.is_empty() || m_remote == "/" {
+                Some(clean_sub)
+            } else {
+                clean_sub.strip_prefix(m_remote.trim_start_matches('/'))
+            };
+            if let Some(rel_path) = rel {
+                let rel_clean = rel_path.trim_start_matches('/');
+                let target_file = PathBuf::from(&mount.local_target).join(rel_clean);
+                if let Some(parent) = target_file.parent() {
+                    let _ = std::fs::create_dir_all(parent);
                 }
-
-                self.event_bus.emit(DesktopEvent::NodeHydrated {
-                    path: clean,
-                    size: byte_len,
-                });
-                return Ok(local_path);
+                if std::fs::write(&target_file, &bytes).is_ok() {
+                    let journal_dir = PathBuf::from(&mount.local_target).join(".nextcloud");
+                    let _ = std::fs::create_dir_all(&journal_dir);
+                    let journal_path = journal_dir.join("journal.json");
+                    let mut journal =
+                        nextcloud_rust_sdk::SyncJournal::load_from_file(&journal_path)
+                            .unwrap_or_else(|_| nextcloud_rust_sdk::SyncJournal::new());
+                    let mtime = std::fs::metadata(&target_file)
+                        .and_then(|m| m.modified())
+                        .unwrap_or_else(|_| std::time::SystemTime::now());
+                    journal.record(nextcloud_rust_sdk::JournalEntry::new(
+                        rel_clean, byte_len, mtime, false,
+                    ));
+                    let _ = journal.save_to_file(&journal_path);
+                    self.event_bus.emit(DesktopEvent::FileTransferCompleted {
+                        relative_path: rel_clean.to_string(),
+                        kind: nextcloud_desktop_core::events::TransferKind::Hydration,
+                    });
+                    self.event_bus.emit(DesktopEvent::NodeHydrated {
+                        path: clean,
+                        size: byte_len,
+                    });
+                    return Ok(target_file);
+                }
             }
         }
 
-        let placeholder = format!("Offline placeholder content for {remote_path}\n");
-        let byte_len = placeholder.len() as u64;
-        let local_path = vfs
-            .hydrate_local(remote_path, placeholder.into_bytes())
-            .await
-            .map_err(SyncError::Orchestrator)?;
         self.event_bus.emit(DesktopEvent::NodeHydrated {
             path: clean,
             size: byte_len,
@@ -374,6 +366,7 @@ impl DesktopSyncCoordinator {
         &self,
         local_path: &std::path::Path,
     ) -> Result<PathBuf, SyncError> {
+        let _priority = self.priority_permit();
         let mounts = self.sync_mounts().await;
         let canonical = local_path
             .canonicalize()
@@ -1245,6 +1238,7 @@ impl DesktopSyncCoordinator {
             },
         );
 
+        self.wait_for_priority_ops().await;
         let _permit = self.preview_semaphore.acquire().await.ok();
 
         if thumb_path.exists() {
@@ -1358,16 +1352,18 @@ impl DesktopSyncCoordinator {
                 return;
             }
 
-            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(2));
             let mut tasks = Vec::with_capacity(missing_paths.len());
             for path in missing_paths {
                 let c = coord.clone();
                 let sem = semaphore.clone();
                 tasks.push(tokio::spawn(async move {
+                    c.wait_for_priority_ops().await;
                     let _permit = match sem.acquire().await {
                         Ok(p) => p,
                         Err(_) => return,
                     };
+                    c.wait_for_priority_ops().await;
                     let _ = c.fetch_thumbnail(&path, effective_size).await;
                 }));
             }
