@@ -245,7 +245,6 @@ pub fn freedesktop_thumbnail_dirs() -> (PathBuf, PathBuf) {
 
 /// Installs a Nextcloud-provided preview into the FreeDesktop thumbnail cache for `target_file`.
 pub fn install_freedesktop_thumbnail(target_file: &Path, png_bytes: &[u8]) {
-    let uri = path_to_file_uri(target_file);
     let mtime_sec = target_file
         .metadata()
         .and_then(|m| m.modified())
@@ -253,7 +252,16 @@ pub fn install_freedesktop_thumbnail(target_file: &Path, png_bytes: &[u8]) {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    install_freedesktop_thumbnail_with_mtime(target_file, png_bytes, mtime_sec);
+}
 
+/// Installs a Nextcloud-provided preview into the FreeDesktop thumbnail cache for `target_file` with explicit modification time.
+pub fn install_freedesktop_thumbnail_with_mtime(
+    target_file: &Path,
+    png_bytes: &[u8],
+    mtime_sec: u64,
+) {
+    let uri = path_to_file_uri(target_file);
     let tagged_bytes = embed_freedesktop_metadata(png_bytes, &uri, mtime_sec);
     let hash = md5_hex(uri.as_bytes());
     let filename = format!("{hash}.png");
@@ -262,8 +270,15 @@ pub fn install_freedesktop_thumbnail(target_file: &Path, png_bytes: &[u8]) {
     let _ = fs::create_dir_all(&normal_dir);
     let _ = fs::create_dir_all(&large_dir);
 
+    let xlarge_dir = normal_dir
+        .parent()
+        .map(|p| p.join("x-large"))
+        .unwrap_or_else(|| large_dir.clone());
+    let _ = fs::create_dir_all(&xlarge_dir);
+
     let large_dest = large_dir.join(&filename);
     let normal_dest = normal_dir.join(&filename);
+    let xlarge_dest = xlarge_dir.join(&filename);
 
     if let Err(e) = fs::write(&large_dest, &tagged_bytes) {
         warn!(target = %large_dest.display(), error = %e, "Failed to write FreeDesktop large thumbnail");
@@ -272,6 +287,7 @@ pub fn install_freedesktop_thumbnail(target_file: &Path, png_bytes: &[u8]) {
     }
 
     let _ = fs::write(&normal_dest, &tagged_bytes);
+    let _ = fs::write(&xlarge_dest, &tagged_bytes);
 }
 
 #[cfg(test)]

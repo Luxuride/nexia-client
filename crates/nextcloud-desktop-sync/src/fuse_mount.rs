@@ -58,6 +58,14 @@ impl AsyncHydrator for DesktopHydrator {
             }
         })
     }
+
+    fn on_readdir(&self, paths: &[String]) {
+        let coord = self.coordinator.clone();
+        let paths = paths.to_vec();
+        tokio::spawn(async move {
+            coord.batch_prefetch_thumbnails(paths, 256);
+        });
+    }
 }
 
 impl DesktopSyncCoordinator {

@@ -937,6 +937,71 @@ impl DesktopSyncCoordinator {
         None
     }
 
+    /// Installs FreeDesktop system thumbnails for a remote file across all active mounts (FUSE, internal VFS, folder pairs).
+    pub async fn install_freedesktop_previews_for_remote_path(
+        &self,
+        remote_path: &str,
+        png_bytes: &[u8],
+    ) {
+        let clean_path = remote_path.trim_matches('/');
+
+        // 1. Resolve mtime from active VFS or fallback to now
+        let vfs = self.active_vfs().await;
+        let mtime_sec = vfs
+            .entry(remote_path)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|e| e.modified_at)
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+            });
+
+        // 2. FUSE mountpoint (if mounted)
+        if let Some(fuse_mp) = self.fuse_mountpoint().await {
+            let target = fuse_mp.join(clean_path);
+            crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
+                &target, png_bytes, mtime_sec,
+            );
+        }
+
+        // 3. Account internal VFS directory
+        if let Some(account) = self.active_account().await {
+            let vfs_target = self.account_vfs_dir(&account.id.0).join(clean_path);
+            crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
+                &vfs_target,
+                png_bytes,
+                mtime_sec,
+            );
+        }
+
+        // 4. Any user sync folders matching remote_path
+        for mount in self.sync_mounts().await {
+            if Self::is_internal_vfs(&mount.id) || !mount.enabled {
+                continue;
+            }
+            let m_remote = mount.remote_path.trim_end_matches('/');
+            let rel = if m_remote.is_empty() || m_remote == "/" {
+                Some(clean_path)
+            } else {
+                clean_path.strip_prefix(m_remote.trim_start_matches('/'))
+            };
+            if let Some(rel_path) = rel {
+                let rel_clean = rel_path.trim_start_matches('/');
+                let local_target = PathBuf::from(&mount.local_target).join(rel_clean);
+                crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
+                    &local_target,
+                    png_bytes,
+                    mtime_sec,
+                );
+            }
+        }
+    }
+
     /// Fetches or retrieves a cached thumbnail for `remote_path`.
     pub async fn fetch_thumbnail(
         &self,
@@ -1054,6 +1119,8 @@ impl DesktopSyncCoordinator {
                         .await
                     && tokio::fs::write(&low_path, &bytes).await.is_ok()
                 {
+                    self.install_freedesktop_previews_for_remote_path(remote_path, &bytes)
+                        .await;
                     self.event_bus.emit(
                         nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
                             path: remote_path.to_string(),
@@ -1071,6 +1138,8 @@ impl DesktopSyncCoordinator {
                 fetch_preview_bytes(&preview, file_id, clean_no_slash, &with_slash, &opts).await
                 && tokio::fs::write(&thumb_path, &bytes).await.is_ok()
             {
+                self.install_freedesktop_previews_for_remote_path(remote_path, &bytes)
+                    .await;
                 if let Ok(mut stats) = self.thumbnail_stats.write() {
                     stats.in_progress = stats.in_progress.saturating_sub(1);
                     stats.completed += 1;
@@ -1118,6 +1187,8 @@ impl DesktopSyncCoordinator {
                         .await
                     && tokio::fs::write(&low_path, &bytes).await.is_ok()
                 {
+                    self.install_freedesktop_previews_for_remote_path(remote_path, &bytes)
+                        .await;
                     if let Ok(mut stats) = self.thumbnail_stats.write() {
                         stats.in_progress = stats.in_progress.saturating_sub(1);
                         stats.completed += 1;
