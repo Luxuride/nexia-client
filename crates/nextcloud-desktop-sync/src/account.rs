@@ -4,7 +4,7 @@ use nextcloud_rust_sdk::{BasicAuth, Client, SecretString, ServerUrl};
 
 use crate::coordinator::DesktopSyncCoordinator;
 use crate::error::SyncError;
-use nextcloud_desktop_core::account::{Account, AccountId};
+use nextcloud_desktop_core::account::{Account, AccountId, ServerConfig};
 
 impl DesktopSyncCoordinator {
     /// Returns an SDK [`Client`] instance for the specified account.
@@ -41,6 +41,8 @@ impl DesktopSyncCoordinator {
         let keyring = nextcloud_rust_sdk::PlatformKeyring::new();
         let discovered = sso.discover_accounts().await;
 
+        let mut discovered_accounts = Vec::new();
+
         for disc in discovered {
             let Ok(server_url) = ServerUrl::parse(disc.server_url.as_str()) else {
                 continue;
@@ -54,7 +56,7 @@ impl DesktopSyncCoordinator {
                 .map(|p| p.into_inner())
                 .unwrap_or_default();
 
-            let secret = SecretString::new(password);
+            let secret = SecretString::new(&password);
             if let Ok(client) = Client::builder()
                 .server_url(server_url)
                 .initial_credentials(&disc.username, secret)
@@ -62,6 +64,30 @@ impl DesktopSyncCoordinator {
                 .await
             {
                 self.add_client(client).await;
+            }
+
+            let display_name = disc
+                .display_name
+                .unwrap_or_else(|| format!("{} ({})", disc.username, disc.server_url));
+            let sso_acc = Account::system_sso_account(
+                format!(
+                    "sso-{}-{}",
+                    disc.server_url.as_str().replace([':', '/'], "_"),
+                    disc.username
+                ),
+                display_name,
+                ServerConfig::new(disc.server_url.as_str()),
+                nextcloud_desktop_core::account::AccountCredentials::new(&disc.username, password),
+                None,
+            );
+            discovered_accounts.push(sso_acc);
+        }
+
+        if !discovered_accounts.is_empty() {
+            let mut conf = self.config.write().await;
+            conf.sync_system_accounts(discovered_accounts);
+            if let Some(ref path) = self.config_path {
+                let _ = conf.save_to_path(path);
             }
         }
     }
@@ -83,25 +109,32 @@ impl DesktopSyncCoordinator {
 
     /// Switches the active account profile to `account_id` and resets the virtual drive.
     pub async fn switch_account(&self, account_id: &AccountId) -> Result<(), SyncError> {
-        {
+        let target_account = {
             let mut conf = self.config.write().await;
-            if !conf.accounts.iter().any(|a| &a.id == account_id) {
+            let Some(acc) = conf.accounts.iter().find(|a| &a.id == account_id).cloned() else {
                 return Err(SyncError::NotFound(format!(
                     "Account {} not found",
                     account_id.0
                 )));
-            }
+            };
             conf.active_account_id = Some(account_id.clone());
             if let Some(ref path) = self.config_path {
                 let _ = conf.save_to_path(path);
             }
-        }
+            acc
+        };
 
-        let accounts = self.accounts().await;
-        if let Some(pos) = accounts.iter().position(|a| &a.id == account_id) {
+        // Match client by server URL and username
+        let clients = self.clients.read().await;
+        if let Some(pos) = clients.iter().position(|c| {
+            c.server_url().as_str() == target_account.server.server_url
+                && c.current_user_id().as_deref() == Some(&target_account.credentials.username)
+        }) {
+            drop(clients);
             let _ = self.switch_client(pos).await;
         }
 
+        // Reset default mount id so a new mount is opened for the switched account
         *self.default_mount_id.write().await = None;
         let _ = self.refresh_virtual_tree().await;
         Ok(())

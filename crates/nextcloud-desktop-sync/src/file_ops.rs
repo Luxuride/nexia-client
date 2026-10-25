@@ -58,17 +58,18 @@ impl DesktopSyncCoordinator {
             })
             .collect();
 
-        let mut tree = nextcloud_rust_sdk::VirtualTree::new("Nextcloud");
-        let inserted = tree.populate_from_resources(&dav_prefix, &summaries);
-        let mount_id = vfs.mount_id();
-        let vfs_dir = self
-            .cache_dir()
-            .join("mounts")
-            .join(mount_id.as_str())
-            .join("vfs");
-        if let Ok(json) = serde_json::to_string_pretty(&tree) {
-            let _ = std::fs::write(vfs_dir.join("tree.json"), json);
-        }
+        // Repopulate directly inside the orchestrator actor thread
+        let inserted = vfs
+            .populate_from_resources(&dav_prefix, summaries)
+            .await
+            .unwrap_or(0);
+
+        self.event_bus.emit(
+            nextcloud_desktop_core::events::DesktopEvent::VfsTreeUpdated {
+                node_count: inserted,
+            },
+        );
+
         Ok(inserted)
     }
 

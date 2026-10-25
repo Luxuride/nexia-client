@@ -12,45 +12,45 @@ mod tests {
     use std::sync::Arc;
 
     #[tokio::test]
-    async fn account_management_and_system_account() {
-        let mut config = AppConfig::default();
-        config.ensure_system_account();
+    async fn account_management_and_switching() {
+        let config = AppConfig::default();
         let config_lock = Arc::new(tokio::sync::RwLock::new(config));
         let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
 
-        coordinator.sync_discovered_accounts().await;
-
-        let accounts = coordinator.accounts().await;
-        assert!(!accounts.is_empty());
-        let initial_count = accounts.len();
-
-        let active = coordinator.active_account().await.expect("has active");
-        assert!(active.is_system);
-
-        let new_acc = Account::new(
+        let acc_alice = Account::new(
             "Alice Nextcloud",
             ServerConfig::new("https://cloud.alice.org"),
             AccountCredentials::new("alice", "token123"),
         );
-        let alice_id = new_acc.id.clone();
+        let alice_id = acc_alice.id.clone();
         coordinator
-            .add_account(new_acc)
+            .add_account(acc_alice)
             .await
-            .expect("add succeeds");
+            .expect("add alice succeeds");
 
-        let accounts2 = coordinator.accounts().await;
-        assert_eq!(accounts2.len(), initial_count + 1);
+        let accounts = coordinator.accounts().await;
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(coordinator.active_account().await.unwrap().id, alice_id);
 
-        let active2 = coordinator.active_account().await.expect("has active");
-        assert_eq!(active2.id, alice_id);
-
-        let first_id = accounts[0].id.clone();
+        let acc_bob = Account::new(
+            "Bob Nextcloud",
+            ServerConfig::new("https://cloud.bob.org"),
+            AccountCredentials::new("bob", "token456"),
+        );
+        let bob_id = acc_bob.id.clone();
         coordinator
-            .switch_account(&first_id)
+            .add_account(acc_bob)
             .await
-            .expect("switch succeeds");
-        let active3 = coordinator.active_account().await.expect("has active");
-        assert_eq!(active3.id, first_id);
+            .expect("add bob succeeds");
+
+        assert_eq!(coordinator.accounts().await.len(), 2);
+        assert_eq!(coordinator.active_account().await.unwrap().id, bob_id);
+
+        coordinator
+            .switch_account(&alice_id)
+            .await
+            .expect("switch to alice succeeds");
+        assert_eq!(coordinator.active_account().await.unwrap().id, alice_id);
     }
 
     #[tokio::test]
