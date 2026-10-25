@@ -4,6 +4,7 @@ use gtk4::prelude::*;
 use gtk4::{Align, Image, Label, Orientation, ProgressBar, ScrolledWindow, Spinner};
 use libadwaita as adw;
 use libadwaita::prelude::*;
+use nextcloud_desktop_core::events::DesktopEvent;
 use nextcloud_rust_sdk::{MountStatus, StoredSyncMount, format_bytes};
 
 use crate::widget::FileExplorerBackend;
@@ -57,7 +58,7 @@ impl MountActivityDialog {
         title_label.set_halign(Align::Start);
         status_box.append(&title_label);
 
-        let subtitle_label = Label::new(Some("Querying status…"));
+        let subtitle_label = Label::new(Some("All files synchronized • Up to date"));
         subtitle_label.add_css_class("dim-label");
         subtitle_label.set_halign(Align::Start);
         status_box.append(&subtitle_label);
@@ -77,7 +78,7 @@ impl MountActivityDialog {
 
         let status_row = adw::ActionRow::builder()
             .title("Current State")
-            .subtitle("Checking…")
+            .subtitle("Idle / Up to date")
             .build();
         status_row.add_prefix(&Image::from_icon_name("view-refresh-symbolic"));
         details_group.add(&status_row);
@@ -121,19 +122,18 @@ impl MountActivityDialog {
 
         content_box.append(&scrolled);
 
-        // Populate metrics from SDK
-        let b = backend.clone();
-        let m_id = mount.id.clone();
-        let sub_lbl = subtitle_label;
-        let pb = pbar;
-        let st_row = status_row;
-        let pr_row = progress_row;
-        let by_row = bytes_row;
-        let act_grp = active_group;
-        let em_row = empty_row;
+        // Populate metrics and handle live updates
+        let apply_snapshot = {
+            let sub_lbl = subtitle_label.clone();
+            let pb = pbar.clone();
+            let st_row = status_row.clone();
+            let pr_row = progress_row.clone();
+            let by_row = bytes_row.clone();
+            let act_grp = active_group.clone();
+            let em_row = empty_row.clone();
+            let empty_removed = std::rc::Rc::new(std::cell::Cell::new(false));
 
-        glib::MainContext::default().spawn_local(async move {
-            if let Ok(snap) = b.mount_progress(&m_id).await {
+            std::rc::Rc::new(move |snap: nextcloud_rust_sdk::MountProgressSnapshot| {
                 let status_text = match snap.status {
                     MountStatus::Paused => "Paused",
                     MountStatus::Syncing => "Syncing",
@@ -167,7 +167,10 @@ impl MountActivityDialog {
                 ));
 
                 if !snap.active_items.is_empty() {
-                    act_grp.remove(&em_row);
+                    if !empty_removed.get() {
+                        act_grp.remove(&em_row);
+                        empty_removed.set(true);
+                    }
                     for item in snap.active_items {
                         let row = adw::ActionRow::builder()
                             .title(&item)
@@ -179,6 +182,29 @@ impl MountActivityDialog {
                         row.add_suffix(&spinner);
                         act_grp.add(&row);
                     }
+                }
+            })
+        };
+
+        let b = backend.clone();
+        let m_id = mount.id.clone();
+        let apply_init = apply_snapshot.clone();
+
+        glib::MainContext::default().spawn_local(async move {
+            if let Ok(snap) = b.mount_progress(&m_id).await {
+                apply_init(snap);
+            }
+        });
+
+        let mut rx = backend.subscribe_events();
+        let apply_event = apply_snapshot.clone();
+        let target_mount_id = mount.id.clone();
+        glib::MainContext::default().spawn_local(async move {
+            while let Ok(event) = rx.recv().await {
+                if let DesktopEvent::MountProgress(snap) = event
+                    && snap.mount_id.as_str() == target_mount_id
+                {
+                    apply_event(snap);
                 }
             }
         });

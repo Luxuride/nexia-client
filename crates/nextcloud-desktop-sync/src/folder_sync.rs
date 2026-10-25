@@ -187,11 +187,16 @@ impl FolderSyncEngine {
             SyncJournal::load_from_file(&journal_path).unwrap_or_else(|_| SyncJournal::new());
 
         let actions = reconcile(&local_files, &remote_files, &journal);
+        let is_vfs = mount.mode == "VirtualVfs";
         let total_actions = actions.len();
         progress.total_items = total_actions;
+        self.coordinator.set_mount_progress(progress.clone());
         self.coordinator
             .event_bus
             .emit(DesktopEvent::MountProgress(progress.clone()));
+        self.coordinator.event_bus.emit(DesktopEvent::SyncStarted {
+            pairing_id: mount_id.to_string(),
+        });
 
         let mut downloaded = 0;
         let mut uploaded = 0;
@@ -233,52 +238,86 @@ impl FolderSyncEngine {
                     if let Some(parent) = dest.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
-                    let full_remote = if mount.remote_path == "/" {
-                        relative_path.clone()
+                    if is_vfs {
+                        // In VirtualVfs mode, do not download bulk payload; create placeholder
+                        if !dest.exists() {
+                            let _ = std::fs::File::create(&dest);
+                        }
+                        let mtime = std::fs::metadata(&dest)
+                            .and_then(|m| m.modified())
+                            .unwrap_or(SystemTime::now());
+                        let mut entry = JournalEntry::new(&relative_path, 0, mtime, false);
+                        if let Some(e) = etag {
+                            entry = entry.with_remote_etag(e);
+                        }
+                        journal.record(entry);
+                        downloaded += 1;
+                        progress.completed_items += 1;
+                        self.coordinator.set_mount_progress(progress.clone());
+                        self.coordinator
+                            .event_bus
+                            .emit(DesktopEvent::MountProgress(progress.clone()));
+                        self.coordinator
+                            .event_bus
+                            .emit(DesktopEvent::FileTransferCompleted {
+                                relative_path: relative_path.clone(),
+                                kind: nextcloud_desktop_core::events::TransferKind::Hydration,
+                            });
                     } else {
-                        format!(
-                            "{}/{}",
-                            mount.remote_path.trim_end_matches('/'),
-                            relative_path.trim_start_matches('/')
-                        )
-                    };
-                    if let Ok(dav_path) = make_dav_path(&user, &full_remote) {
-                        match dav_client.get(&dav_path).await {
-                            Ok(bytes) => {
-                                if let Err(e) = std::fs::write(&dest, &bytes) {
-                                    error!(
-                                        dest = %dest.display(),
-                                        error = %e,
-                                        "Failed to write downloaded sync file"
-                                    );
-                                } else {
-                                    let mtime = std::fs::metadata(&dest)
-                                        .and_then(|m| m.modified())
-                                        .unwrap_or(SystemTime::now());
-                                    let mut entry = JournalEntry::new(
-                                        &relative_path,
-                                        bytes.len() as u64,
-                                        mtime,
-                                        false,
-                                    );
-                                    if let Some(e) = etag {
-                                        entry = entry.with_remote_etag(e);
+                        let full_remote = if mount.remote_path == "/" {
+                            relative_path.clone()
+                        } else {
+                            format!(
+                                "{}/{}",
+                                mount.remote_path.trim_end_matches('/'),
+                                relative_path.trim_start_matches('/')
+                            )
+                        };
+                        if let Ok(dav_path) = make_dav_path(&user, &full_remote) {
+                            match dav_client.get(&dav_path).await {
+                                Ok(bytes) => {
+                                    if let Err(e) = std::fs::write(&dest, &bytes) {
+                                        error!(
+                                            dest = %dest.display(),
+                                            error = %e,
+                                            "Failed to write downloaded sync file"
+                                        );
+                                    } else {
+                                        let mtime = std::fs::metadata(&dest)
+                                            .and_then(|m| m.modified())
+                                            .unwrap_or(SystemTime::now());
+                                        let mut entry = JournalEntry::new(
+                                            &relative_path,
+                                            bytes.len() as u64,
+                                            mtime,
+                                            false,
+                                        );
+                                        if let Some(e) = etag {
+                                            entry = entry.with_remote_etag(e);
+                                        }
+                                        journal.record(entry);
+                                        downloaded += 1;
+                                        progress.completed_items += 1;
+                                        progress.bytes_transferred += bytes.len() as u64;
+                                        self.coordinator.set_mount_progress(progress.clone());
+                                        self.coordinator
+                                            .event_bus
+                                            .emit(DesktopEvent::MountProgress(progress.clone()));
+                                        self.coordinator
+                                            .event_bus
+                                            .emit(DesktopEvent::FileTransferCompleted {
+                                                relative_path: relative_path.clone(),
+                                                kind: nextcloud_desktop_core::events::TransferKind::Download,
+                                            });
                                     }
-                                    journal.record(entry);
-                                    downloaded += 1;
-                                    progress.completed_items += 1;
-                                    progress.bytes_transferred += bytes.len() as u64;
-                                    self.coordinator
-                                        .event_bus
-                                        .emit(DesktopEvent::MountProgress(progress.clone()));
                                 }
-                            }
-                            Err(e) => {
-                                error!(
-                                    path = %full_remote,
-                                    error = %e,
-                                    "Failed to download remote file during sync"
-                                );
+                                Err(e) => {
+                                    error!(
+                                        path = %full_remote,
+                                        error = %e,
+                                        "Failed to download remote file during sync"
+                                    );
+                                }
                             }
                         }
                     }
@@ -330,9 +369,16 @@ impl FolderSyncEngine {
                                 uploaded += 1;
                                 progress.completed_items += 1;
                                 progress.bytes_transferred += size;
+                                self.coordinator.set_mount_progress(progress.clone());
                                 self.coordinator
                                     .event_bus
                                     .emit(DesktopEvent::MountProgress(progress.clone()));
+                                self.coordinator.event_bus.emit(
+                                    DesktopEvent::FileTransferCompleted {
+                                        relative_path: relative_path.clone(),
+                                        kind: nextcloud_desktop_core::events::TransferKind::Upload,
+                                    },
+                                );
                             }
                             Err(e) => {
                                 error!(
@@ -396,6 +442,7 @@ impl FolderSyncEngine {
 
         progress.status = MountStatus::Idle;
         progress.completed_items = progress.total_items;
+        self.coordinator.set_mount_progress(progress.clone());
         self.coordinator
             .event_bus
             .emit(DesktopEvent::MountProgress(progress));

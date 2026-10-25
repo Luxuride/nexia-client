@@ -1,6 +1,9 @@
 //! Mount points and synchronization pause/resume coordination.
 
-use nextcloud_rust_sdk::{MountDescriptor, MountId, MountState, OrchestratorError, SyncFileStatus};
+use nextcloud_rust_sdk::{
+    MountDescriptor, MountId, MountState, MountStatus, MountStorageUsage, OrchestratorError,
+    SyncFileStatus,
+};
 use std::path::PathBuf;
 
 use crate::coordinator::DesktopSyncCoordinator;
@@ -162,16 +165,33 @@ impl DesktopSyncCoordinator {
         id: MountId,
     ) -> Result<nextcloud_rust_sdk::MountStorageUsage, SyncError> {
         let handle = self.orchestrator_handle.read().await;
-        if let Some(ref h) = *handle {
-            h.mounts()
-                .storage_usage(id)
-                .await
-                .map_err(SyncError::Orchestrator)
-        } else {
-            Err(SyncError::NotFound(
-                "Orchestrator not initialized".to_string(),
-            ))
+        if let Some(ref h) = *handle
+            && let Ok(usage) = h.mounts().storage_usage(id.clone()).await
+        {
+            return Ok(usage);
         }
+
+        // Direct fallback: scan local folder pairing if orchestrator mount not yet loaded
+        let mounts = self.sync_mounts().await;
+        let found = mounts.into_iter().find(|m| m.id == id.as_str());
+        let (hydrated_count, local_bytes) = if let Some(ref m) = found {
+            let p = PathBuf::from(&m.local_target);
+            if p.exists() {
+                scan_local_dir_usage(&p)
+            } else {
+                (0, 0)
+            }
+        } else {
+            (0, 0)
+        };
+
+        let shared_thumbnail_bytes = scan_local_dir_bytes(&self.cache_dir().join("thumbnails"));
+        Ok(MountStorageUsage::new(
+            id,
+            local_bytes,
+            hydrated_count,
+            shared_thumbnail_bytes,
+        ))
     }
 
     /// Clears cached files for a mount point via the SDK, returning the number of bytes freed.
@@ -213,16 +233,70 @@ impl DesktopSyncCoordinator {
         &self,
         id: MountId,
     ) -> Result<nextcloud_rust_sdk::MountProgressSnapshot, SyncError> {
+        if let Ok(map) = self.mount_progress_cache.read()
+            && let Some(snap) = map.get(id.as_str())
+        {
+            return Ok(snap.clone());
+        }
+
         let handle = self.orchestrator_handle.read().await;
-        if let Some(ref h) = *handle {
-            h.mounts()
-                .progress(id)
-                .await
-                .map_err(SyncError::Orchestrator)
+        if let Some(ref h) = *handle
+            && let Ok(snap) = h.mounts().progress(id.clone()).await
+        {
+            return Ok(snap);
+        }
+
+        let is_paused = self.is_mount_paused(id.clone()).await.unwrap_or(false);
+        let status = if is_paused {
+            MountStatus::Paused
         } else {
-            Err(SyncError::NotFound(
-                "Orchestrator not initialized".to_string(),
-            ))
+            MountStatus::Idle
+        };
+        Ok(nextcloud_rust_sdk::MountProgressSnapshot::new(id, status))
+    }
+}
+
+fn scan_local_dir_usage(root: &std::path::Path) -> (usize, u64) {
+    let mut count = 0;
+    let mut total_bytes = 0;
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if let Ok(ft) = entry.file_type() {
+                    if ft.is_dir() {
+                        stack.push(entry.path());
+                    } else if ft.is_file() {
+                        let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                        if len > 0 {
+                            count += 1;
+                        }
+                        total_bytes += len;
+                    }
+                }
+            }
         }
     }
+    (count, total_bytes)
+}
+
+fn scan_local_dir_bytes(root: &std::path::Path) -> u64 {
+    let mut total_bytes = 0;
+    let mut stack = vec![root.to_path_buf()];
+
+    while let Some(dir) = stack.pop() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if let Ok(ft) = entry.file_type() {
+                    if ft.is_dir() {
+                        stack.push(entry.path());
+                    } else if ft.is_file() {
+                        total_bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
+                    }
+                }
+            }
+        }
+    }
+    total_bytes
 }

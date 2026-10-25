@@ -282,19 +282,29 @@ impl SyncMountSettingsDialog {
             let t_c = t_cell.clone();
 
             glib::MainContext::default().spawn_local(async move {
-                if let Ok(usage) = b.mount_storage_usage(&m_id).await {
-                    b_c.set(usage.local_bytes);
-                    t_c.set(usage.shared_thumbnail_bytes);
+                match b.mount_storage_usage(&m_id).await {
+                    Ok(usage) => {
+                        b_c.set(usage.local_bytes);
+                        t_c.set(usage.shared_thumbnail_bytes);
 
-                    let loc_str = format_bytes(usage.local_bytes);
-                    let thm_str = format_bytes(usage.shared_thumbnail_bytes);
+                        let loc_str = format_bytes(usage.local_bytes);
+                        let thm_str = format_bytes(usage.shared_thumbnail_bytes);
 
-                    row_loc
-                        .set_subtitle(&format!("{loc_str} ({} files)", usage.hydrated_files_count));
-                    row_thm.set_subtitle(&thm_str);
+                        row_loc.set_subtitle(&format!(
+                            "{loc_str} ({} files)",
+                            usage.hydrated_files_count
+                        ));
+                        row_thm.set_subtitle(&thm_str);
 
-                    btn_files.set_label(&format!("Clear ({loc_str})"));
-                    btn_thm.set_label(&format!("Clear ({thm_str})"));
+                        btn_files.set_label(&format!("Clear ({loc_str})"));
+                        btn_thm.set_label(&format!("Clear ({thm_str})"));
+                    }
+                    Err(_) => {
+                        row_loc.set_subtitle("0 B (0 files)");
+                        row_thm.set_subtitle("0 B");
+                        btn_files.set_label("Clear (0 B)");
+                        btn_thm.set_label("Clear (0 B)");
+                    }
                 }
             });
         });

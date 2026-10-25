@@ -46,6 +46,11 @@ pub struct DesktopSyncCoordinator {
     pub(crate) is_preloading_tree: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) storage: Option<Arc<nextcloud_desktop_core::DesktopStorage>>,
     pub(crate) watcher: Arc<tokio::sync::Mutex<Option<crate::watcher::FileSystemWatcher>>>,
+    pub(crate) mount_progress_cache: Arc<
+        std::sync::RwLock<
+            std::collections::HashMap<String, nextcloud_rust_sdk::MountProgressSnapshot>,
+        >,
+    >,
 }
 
 impl DesktopSyncCoordinator {
@@ -84,6 +89,9 @@ impl DesktopSyncCoordinator {
             is_preloading_tree: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             storage: None,
             watcher: Arc::new(tokio::sync::Mutex::new(None)),
+            mount_progress_cache: Arc::new(
+                std::sync::RwLock::new(std::collections::HashMap::new()),
+            ),
         };
 
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
@@ -259,6 +267,13 @@ impl DesktopSyncCoordinator {
         &self.event_bus
     }
 
+    /// Caches the current mount progress snapshot in memory.
+    pub fn set_mount_progress(&self, snapshot: nextcloud_rust_sdk::MountProgressSnapshot) {
+        if let Ok(mut map) = self.mount_progress_cache.write() {
+            map.insert(snapshot.mount_id.as_str().to_string(), snapshot);
+        }
+    }
+
     /// Returns the active orchestrator handle communicating with the background worker thread.
     pub async fn orchestrator_handle(&self) -> Option<OrchestratorHandle> {
         self.orchestrator_handle.read().await.clone()
@@ -387,11 +402,29 @@ impl DesktopSyncCoordinator {
             }
         }
 
-        if let Some(ref mut w) = *watcher_guard {
-            for mount in self.sync_mounts().await {
-                if mount.id == "app-default-vfs" || !mount.enabled {
-                    continue;
+        let orch_handle = self.orchestrator_handle.read().await.clone();
+        for mount in self.sync_mounts().await {
+            if mount.id == "app-default-vfs" || !mount.enabled {
+                continue;
+            }
+            if let Some(ref h) = orch_handle {
+                let m_mode = match mount.mode.as_str() {
+                    "BidirectionalSync" => nextcloud_rust_sdk::MountMode::BidirectionalSync,
+                    _ => nextcloud_rust_sdk::MountMode::VirtualVfs,
+                };
+                let mut desc = nextcloud_rust_sdk::MountDescriptor::new(
+                    &mount.account_id,
+                    &mount.remote_path,
+                    PathBuf::from(&mount.local_target),
+                    m_mode,
+                )
+                .with_id(MountId::from(mount.id.clone()));
+                if let Some(name) = mount.display_name.clone() {
+                    desc = desc.with_display_name(name);
                 }
+                let _ = h.mounts().add_mount(desc).await;
+            }
+            if let Some(ref mut w) = *watcher_guard {
                 let local_path = PathBuf::from(&mount.local_target);
                 let _ = w.watch_folder(&local_path, &mount.id);
             }
