@@ -68,16 +68,48 @@ impl SyncMountSettingsDialog {
         remote_row.add_prefix(&Image::from_icon_name("network-server-symbolic"));
         details_group.add(&remote_row);
 
-        let mode_desc = match mount.mode.as_str() {
-            "BidirectionalSync" => "Two-Way Synchronization (Local files mirrored to cloud)",
-            _ => "Virtual Filesystem (On-demand hydrated placeholders)",
-        };
-        let mode_row = adw::ActionRow::builder()
-            .title("Sync Mode")
-            .subtitle(mode_desc)
+        // Changeable Synchronization Mode
+        let mode_options = [
+            "Two-Way Synchronization (Local files mirrored to cloud)",
+            "Virtual Filesystem (On-demand hydrated placeholders)",
+        ];
+        let mode_model = gtk4::StringList::new(&mode_options);
+        let initial_selected = if mount.mode == "VirtualVfs" { 1 } else { 0 };
+
+        let mode_combo = adw::ComboRow::builder()
+            .title("Synchronization Mode")
+            .model(&mode_model)
+            .selected(initial_selected)
             .build();
-        mode_row.add_prefix(&Image::from_icon_name("emblem-synchronizing-symbolic"));
-        details_group.add(&mode_row);
+        mode_combo.add_prefix(&Image::from_icon_name("emblem-synchronizing-symbolic"));
+        details_group.add(&mode_combo);
+
+        let b_mode = backend.clone();
+        let m_id_mode = mount.id.clone();
+        let toast_mode = toast_overlay.clone();
+        let on_change_mode = on_change.clone();
+
+        mode_combo.connect_selected_notify(move |combo| {
+            let b = b_mode.clone();
+            let m_id = m_id_mode.clone();
+            let toast = toast_mode.clone();
+            let cb = on_change_mode.clone();
+            let new_mode = match combo.selected() {
+                1 => "VirtualVfs",
+                _ => "BidirectionalSync",
+            };
+            glib::MainContext::default().spawn_local(async move {
+                if b.update_sync_mount_mode(&m_id, new_mode).await.is_ok() {
+                    let desc = if new_mode == "VirtualVfs" {
+                        "Switched to Virtual Filesystem"
+                    } else {
+                        "Switched to Two-Way Synchronization"
+                    };
+                    toast.add_toast(adw::Toast::new(desc));
+                    cb();
+                }
+            });
+        });
 
         page.add(&details_group);
 

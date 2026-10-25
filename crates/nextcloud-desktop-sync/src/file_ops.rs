@@ -32,15 +32,12 @@ impl DesktopSyncCoordinator {
             DavPath::root(&user).map_err(|err| SyncError::InvalidPath(err.to_string()))?;
 
         let body = PropfindBody::all();
-        let resources = match dav_client.propfind(&root_dav, Depth::Infinity, &body).await {
+        let resources = match dav_client.propfind(&root_dav, Depth::One, &body).await {
             Ok(r) => r,
-            Err(_) => match dav_client.propfind(&root_dav, Depth::One, &body).await {
-                Ok(r) => r,
-                Err(err) => {
-                    tracing::warn!("Remote WebDAV PROPFIND failed ({err}), keeping default tree");
-                    return Ok(0);
-                }
-            },
+            Err(err) => {
+                tracing::warn!("Remote WebDAV PROPFIND failed ({err}), keeping default tree");
+                return Ok(0);
+            }
         };
 
         let dav_prefix = format!("/remote.php/dav/files/{user}");
@@ -111,6 +108,142 @@ impl DesktopSyncCoordinator {
         }
 
         Ok(inserted)
+    }
+
+    /// Refreshes the virtual file entries for a specific relative directory path.
+    pub async fn refresh_path(&self, relative_path: &str) -> Result<usize, SyncError> {
+        let vfs = self.active_vfs().await;
+
+        let Some((user, client, auth)) = self.active_dav_context().await else {
+            return Ok(0);
+        };
+
+        let dav_client = client.dav(&auth);
+        let dav_path = make_dav_path(&user, relative_path)?;
+
+        let body = PropfindBody::all();
+        let resources = match dav_client.propfind(&dav_path, Depth::One, &body).await {
+            Ok(r) => r,
+            Err(err) => {
+                tracing::warn!(path = %relative_path, error = %err, "Remote WebDAV PROPFIND for path failed");
+                return Ok(0);
+            }
+        };
+
+        let dav_prefix = format!("/remote.php/dav/files/{user}");
+        let summaries: Vec<nextcloud_rust_sdk::DavResourceSummary> = resources
+            .iter()
+            .map(|res| {
+                let mut sum =
+                    nextcloud_rust_sdk::DavResourceSummary::new(&res.href, res.is_collection);
+                if let Some(len) = res.content_length {
+                    sum = sum.with_content_length(len);
+                }
+                if let Some(ref etag) = res.etag {
+                    sum = sum.with_etag(etag);
+                }
+                if let Some(ref mime) = res.content_type {
+                    sum = sum.with_content_type(mime);
+                }
+                if let Some(ref fid) = res.file_id
+                    && let Ok(id) = fid.parse::<u64>()
+                {
+                    sum = sum.with_file_id(id);
+                }
+                if let Some(prev) = res.has_preview {
+                    sum = sum.with_has_preview(prev);
+                }
+                sum
+            })
+            .collect();
+
+        let inserted = vfs
+            .populate_from_resources(&dav_prefix, summaries.clone())
+            .await
+            .unwrap_or(0);
+
+        self.event_bus.emit(
+            nextcloud_desktop_core::events::DesktopEvent::VfsTreeUpdated {
+                node_count: inserted,
+            },
+        );
+
+        if self.is_autodownload_thumbnails_enabled().await {
+            let media_paths: Vec<String> = summaries
+                .into_iter()
+                .filter(|s| {
+                    !s.is_collection
+                        && s.has_preview != Some(false)
+                        && !s.href.ends_with(".svg")
+                        && (s.href.ends_with(".png")
+                            || s.href.ends_with(".jpg")
+                            || s.href.ends_with(".jpeg")
+                            || s.href.ends_with(".webp")
+                            || s.content_type
+                                .as_deref()
+                                .is_some_and(|m| m.starts_with("image/")))
+                })
+                .map(|s| {
+                    s.href
+                        .strip_prefix(&dav_prefix)
+                        .unwrap_or(&s.href)
+                        .to_string()
+                })
+                .collect();
+
+            if !media_paths.is_empty() {
+                self.batch_prefetch_thumbnails(media_paths, 64);
+            }
+        }
+
+        Ok(inserted)
+    }
+
+    /// Queries remote Nextcloud via WebDAV to list child directories beneath `relative_path`.
+    pub async fn list_remote_directory_folders(
+        &self,
+        relative_path: &str,
+    ) -> Result<Vec<String>, SyncError> {
+        let Some((user, client, auth)) = self.active_dav_context().await else {
+            return Ok(Vec::new());
+        };
+
+        let dav_client = client.dav(&auth);
+        let dav_path = make_dav_path(&user, relative_path)?;
+
+        let body = PropfindBody::all();
+        let resources = match dav_client.propfind(&dav_path, Depth::One, &body).await {
+            Ok(r) => r,
+            Err(err) => {
+                tracing::warn!(path = %relative_path, error = %err, "Failed to list remote folders");
+                return Ok(Vec::new());
+            }
+        };
+
+        let dav_prefix = format!("/remote.php/dav/files/{user}");
+        let clean_prefix = dav_prefix.trim_end_matches('/');
+
+        let mut folders = Vec::new();
+        for res in resources {
+            if !res.is_collection {
+                continue;
+            }
+            let href = res.href.trim_end_matches('/');
+            let relative = if let Some(idx) = href.find(clean_prefix) {
+                &href[idx + clean_prefix.len()..]
+            } else {
+                href
+            };
+            let decoded = decode_percent_str(relative);
+            let clean = format!("/{}", decoded.trim_matches('/'));
+            let requested_clean = format!("/{}", relative_path.trim_matches('/'));
+            if clean != requested_clean && clean != "/" {
+                folders.push(clean);
+            }
+        }
+        folders.sort();
+        folders.dedup();
+        Ok(folders)
     }
 
     /// Performs on-demand hydration for a virtual file, downloading via SDK or using local cache.
@@ -969,4 +1102,32 @@ async fn fetch_preview_bytes<
         return Some(b);
     }
     preview.get_by_path(with_slash, &simple_opts).await.ok()
+}
+
+fn decode_percent_str(input: &str) -> String {
+    let mut bytes = Vec::with_capacity(input.len());
+    let mut chars = input.bytes();
+    while let Some(b) = chars.next() {
+        if b == b'%' {
+            let h1 = chars.next();
+            let h2 = chars.next();
+            if let (Some(c1), Some(c2)) = (h1, h2) {
+                let hex_slice = [c1, c2];
+                if let Ok(s) = std::str::from_utf8(&hex_slice)
+                    && let Ok(val) = u8::from_str_radix(s, 16)
+                {
+                    bytes.push(val);
+                    continue;
+                }
+                bytes.push(b'%');
+                bytes.push(c1);
+                bytes.push(c2);
+            } else {
+                bytes.push(b'%');
+            }
+        } else {
+            bytes.push(b);
+        }
+    }
+    String::from_utf8_lossy(&bytes).to_string()
 }

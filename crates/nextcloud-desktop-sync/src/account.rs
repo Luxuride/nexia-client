@@ -337,6 +337,39 @@ impl DesktopSyncCoordinator {
         Ok(())
     }
 
+    /// Updates the synchronization mode for an existing sync mount in the SDK database and orchestrator.
+    pub async fn update_sync_mount_mode(&self, id: &str, new_mode: &str) -> Result<(), SyncError> {
+        let Some(client) = self.active_client().await else {
+            return Err(SyncError::NotFound("No active account".to_string()));
+        };
+
+        let mounts = client.list_sync_mounts().await.unwrap_or_default();
+        if let Some(target) = mounts.into_iter().find(|m| m.id == id) {
+            let mut updated = target.clone();
+            updated.mode = new_mode.to_string();
+            let _ = client.store_sync_mount(updated).await;
+
+            if let Some(ref h) = *self.orchestrator_handle.read().await {
+                let mount_mode = match new_mode {
+                    "BidirectionalSync" => MountMode::BidirectionalSync,
+                    _ => MountMode::VirtualVfs,
+                };
+                let mut desc = MountDescriptor::new(
+                    &target.account_id,
+                    &target.remote_path,
+                    std::path::PathBuf::from(&target.local_target),
+                    mount_mode,
+                )
+                .with_id(MountId::from(id.to_string()));
+                if let Some(name) = target.display_name {
+                    desc = desc.with_display_name(name);
+                }
+                let _ = h.mounts().add_mount(desc).await;
+            }
+        }
+        Ok(())
+    }
+
     /// Helper resolving active user name, SDK client, and auth credentials.
     pub(crate) async fn active_dav_context(&self) -> Option<(String, Client, BasicAuth)> {
         let client = self.active_client().await?;

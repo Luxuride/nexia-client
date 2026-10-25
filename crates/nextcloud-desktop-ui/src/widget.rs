@@ -303,6 +303,23 @@ pub trait FileExplorerBackend: Clone + 'static {
         async { Ok(()) }
     }
 
+    /// Updates the synchronization mode for an existing sync mount.
+    fn update_sync_mount_mode(
+        &self,
+        _mount_id: &str,
+        _new_mode: &str,
+    ) -> impl Future<Output = Result<(), UiError>> {
+        async { Ok(()) }
+    }
+
+    /// Queries remote Nextcloud via WebDAV to list child directories beneath `relative_path`.
+    fn list_remote_directory_folders(
+        &self,
+        _relative_path: &str,
+    ) -> impl Future<Output = Result<Vec<String>, UiError>> {
+        async { Ok(Vec::new()) }
+    }
+
     /// Queries the disk storage usage report for a mount point from the SDK.
     fn mount_storage_usage(
         &self,

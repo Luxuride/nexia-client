@@ -92,12 +92,40 @@ impl AddSyncFolderDialog {
             file_chooser.show();
         });
 
-        // 2. Remote path entry row
-        let remote_entry = adw::EntryRow::builder()
+        // 2. Remote directory selection row with visual browser
+        let selected_remote_path = Rc::new(std::cell::RefCell::new("/".to_string()));
+
+        let remote_row = adw::ActionRow::builder()
             .title("Remote Directory")
-            .text("/")
+            .subtitle("/")
             .build();
-        group.add(&remote_entry);
+        remote_row.add_prefix(&Image::from_icon_name("network-server-symbolic"));
+
+        let browse_remote_btn = Button::with_label("Browse Remote…");
+        browse_remote_btn.set_valign(Align::Center);
+        remote_row.add_suffix(&browse_remote_btn);
+        group.add(&remote_row);
+
+        let win_for_remote = window.clone();
+        let b_for_remote = backend.clone();
+        let rem_cell = selected_remote_path.clone();
+        let row_remote_clone = remote_row.clone();
+
+        browse_remote_btn.connect_clicked(move |_| {
+            let row_c = row_remote_clone.clone();
+            let rem_c = rem_cell.clone();
+            let init = rem_c.borrow().clone();
+
+            super::RemoteDirectoryBrowserDialog::present(
+                Some(&win_for_remote),
+                &b_for_remote,
+                &init,
+                Rc::new(move |chosen| {
+                    row_c.set_subtitle(&chosen);
+                    *rem_c.borrow_mut() = chosen;
+                }),
+            );
+        });
 
         // 3. Mode selector
         let mode_options = [
@@ -136,13 +164,13 @@ impl AddSyncFolderDialog {
         let toast = toast_overlay.clone();
         let win = window.clone();
         let path_ref = selected_local_path;
-        let r_entry = remote_entry;
+        let rem_ref = selected_remote_path;
         let m_row = mode_row;
         let n_entry = name_entry;
 
         add_btn.connect_clicked(move |_| {
             let local_path = path_ref.borrow().clone();
-            let remote_path = r_entry.text().to_string().trim().to_string();
+            let remote_path = rem_ref.borrow().clone();
             let remote_path = if remote_path.is_empty() || !remote_path.starts_with('/') {
                 format!("/{remote_path}")
             } else {

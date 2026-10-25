@@ -445,13 +445,18 @@ impl DesktopUiController {
     /// Lists items in the current virtual directory for display in the file view.
     pub async fn list_current_items(&self) -> Result<Vec<FileViewItem>, UiError> {
         let path = self.current_path().await;
-        let entries = self
-            .coordinator
-            .active_vfs()
-            .await
+        let vfs = self.coordinator.active_vfs().await;
+        let mut entries = vfs
             .list_children(&path)
             .await
             .map_err(|err| UiError::Controller(err.to_string()))?;
+
+        if entries.is_empty() {
+            let _ = self.coordinator.refresh_path(&path).await;
+            if let Ok(fresh) = vfs.list_children(&path).await {
+                entries = fresh;
+            }
+        }
 
         let display_cfg = self.effective_display_config().await;
         let active_hydrations = self.active_hydrations.read().await;
@@ -622,6 +627,8 @@ impl DesktopUiController {
 
     /// Refreshes the virtual file tree from the remote Nextcloud server.
     pub async fn refresh_virtual_tree(&self) -> Result<usize, UiError> {
+        let path = self.current_path().await;
+        let _ = self.coordinator.refresh_path(&path).await;
         self.coordinator
             .refresh_virtual_tree()
             .await
@@ -728,6 +735,29 @@ impl DesktopUiController {
             .remove_mount(id)
             .await
             .map(|_| ())
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Updates the synchronization mode for an existing sync mount.
+    pub async fn update_sync_mount_mode(
+        &self,
+        mount_id: &str,
+        new_mode: &str,
+    ) -> Result<(), UiError> {
+        self.coordinator
+            .update_sync_mount_mode(mount_id, new_mode)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Queries remote Nextcloud via WebDAV to list child directories beneath `relative_path`.
+    pub async fn list_remote_directory_folders(
+        &self,
+        relative_path: &str,
+    ) -> Result<Vec<String>, UiError> {
+        self.coordinator
+            .list_remote_directory_folders(relative_path)
+            .await
             .map_err(|err| UiError::Controller(err.to_string()))
     }
 
@@ -1139,6 +1169,17 @@ impl FileExplorerBackend for DesktopUiController {
             .remove_sync_mount(mount_id)
             .await
             .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn update_sync_mount_mode(&self, mount_id: &str, new_mode: &str) -> Result<(), UiError> {
+        self.update_sync_mount_mode(mount_id, new_mode).await
+    }
+
+    async fn list_remote_directory_folders(
+        &self,
+        relative_path: &str,
+    ) -> Result<Vec<String>, UiError> {
+        self.list_remote_directory_folders(relative_path).await
     }
 
     async fn mount_storage_usage(
