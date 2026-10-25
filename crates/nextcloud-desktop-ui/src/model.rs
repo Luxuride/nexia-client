@@ -139,6 +139,10 @@ pub struct FileViewItem {
     pub mime_type: Option<String>,
     /// Semantic icon category computed by `nextcloud-rust-sdk`.
     pub icon_category: ResourceIconCategory,
+    /// Last modification timestamp if available.
+    pub modified_at: Option<String>,
+    /// Permissions flags reported by Nextcloud if available.
+    pub permissions: Option<String>,
 }
 
 impl FileViewItem {

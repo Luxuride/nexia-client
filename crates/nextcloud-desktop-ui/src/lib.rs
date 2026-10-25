@@ -10,6 +10,8 @@ pub mod tray;
 pub mod widget;
 
 #[cfg(feature = "gtk")]
+pub mod account;
+#[cfg(feature = "gtk")]
 pub mod files;
 #[cfg(feature = "gtk")]
 pub mod gtk_app;

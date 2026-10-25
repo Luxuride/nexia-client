@@ -187,7 +187,8 @@ fn build_ui(
     *refresh_cell.borrow_mut() = Some(refresh_cb.clone());
 
     // Top HeaderBar whose buttons/layout never change across pages
-    let header_bar = MainHeaderBar::new(&controller, refresh_cb.clone());
+    let toast_overlay = adw::ToastOverlay::new();
+    let header_bar = MainHeaderBar::new(&controller, &toast_overlay, refresh_cb.clone());
 
     // Pages
     let files_page = CloudFilesPage::new(&controller, refresh_cb.clone());
@@ -223,7 +224,8 @@ fn build_ui(
     let root_box = GtkBox::new(Orientation::Vertical, 0);
     root_box.append(header_bar.root_widget());
     root_box.append(&paned);
-    window.set_content(Some(&root_box));
+    toast_overlay.set_child(Some(&root_box));
+    window.set_content(Some(&toast_overlay));
 
     // Intercept window close (X button) to keep running in background app bar
     window.connect_close_request(move |win| {

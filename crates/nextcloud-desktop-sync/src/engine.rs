@@ -9,6 +9,7 @@ use std::sync::Arc;
 use crate::error::SyncError;
 use crate::full_sync::FullSyncEngine;
 use crate::vfs::VirtualSyncEngine;
+use nextcloud_desktop_core::account::{Account, AccountId};
 use nextcloud_desktop_core::config::{AppConfig, SyncMode};
 use nextcloud_desktop_core::events::EventBus;
 
@@ -54,16 +55,52 @@ impl DesktopSyncCoordinator {
         &self.event_bus
     }
 
+    /// Returns a list of all configured accounts.
+    pub async fn accounts(&self) -> Vec<Account> {
+        self.config.read().await.accounts.clone()
+    }
+
+    /// Returns the currently active account if configured.
+    pub async fn active_account(&self) -> Option<Account> {
+        let conf = self.config.read().await;
+        conf.active_account_id
+            .as_ref()
+            .and_then(|id| conf.get_account(id).cloned())
+            .or_else(|| conf.accounts.first().cloned())
+    }
+
+    /// Switches the active account profile to `account_id` and resets the virtual drive.
+    pub async fn switch_account(&self, account_id: &AccountId) -> Result<(), SyncError> {
+        {
+            let mut conf = self.config.write().await;
+            conf.active_account_id = Some(account_id.clone());
+        }
+        let _ = self.refresh_virtual_tree().await;
+        Ok(())
+    }
+
+    /// Adds a new account profile, ensuring the system account remains intact.
+    pub async fn add_account(&self, account: Account) -> Result<(), SyncError> {
+        {
+            let mut conf = self.config.write().await;
+            conf.upsert_account(account.clone());
+            conf.active_account_id = Some(account.id);
+        }
+        let _ = self.refresh_virtual_tree().await;
+        Ok(())
+    }
+
     /// Refreshes the virtual file tree for the first configured account, or resets the local virtual hierarchy if no account is configured.
     pub async fn refresh_virtual_tree(&self) -> Result<usize, SyncError> {
-        let maybe_account = {
-            let conf = self.config.read().await;
-            conf.accounts.first().cloned()
-        };
+        let maybe_account = self.active_account().await;
 
         let Some(account) = maybe_account else {
             return Ok(self.vfs_engine.reset_default_hierarchy().await);
         };
+
+        if account.is_system || account.credentials.username.is_empty() {
+            return Ok(self.vfs_engine.reset_default_hierarchy().await);
+        }
 
         let server_url = ServerUrl::parse(&account.server.server_url)
             .map_err(|err| SyncError::InvalidPath(err.to_string()))?;
@@ -305,5 +342,56 @@ impl DesktopSyncCoordinator {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nextcloud_desktop_core::account::{AccountCredentials, ServerConfig};
+
+    #[tokio::test]
+    async fn account_management_and_system_account() {
+        let mut config = AppConfig::default();
+        config.ensure_system_account();
+        let config_lock = Arc::new(tokio::sync::RwLock::new(config));
+        let temp_dir = std::env::temp_dir().join(format!("test_coord_{}", std::process::id()));
+        let coordinator =
+            DesktopSyncCoordinator::new(config_lock, temp_dir.clone(), EventBus::new(100));
+
+        let accounts = coordinator.accounts().await;
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].name, "System Account");
+        assert!(accounts[0].is_system);
+
+        let active = coordinator.active_account().await.expect("has active");
+        assert_eq!(active.name, "System Account");
+
+        let new_acc = Account::new(
+            "Alice Nextcloud",
+            ServerConfig::new("https://cloud.alice.org"),
+            AccountCredentials::new("alice", "token123"),
+        );
+        let alice_id = new_acc.id.clone();
+        coordinator
+            .add_account(new_acc)
+            .await
+            .expect("add succeeds");
+
+        let accounts2 = coordinator.accounts().await;
+        assert_eq!(accounts2.len(), 2);
+
+        let active2 = coordinator.active_account().await.expect("has active");
+        assert_eq!(active2.id, alice_id);
+
+        let sys_id = Account::system_account().id;
+        coordinator
+            .switch_account(&sys_id)
+            .await
+            .expect("switch succeeds");
+        let active3 = coordinator.active_account().await.expect("has active");
+        assert_eq!(active3.id, sys_id);
+
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 }

@@ -28,6 +28,10 @@ pub struct VirtualEntrySummary {
     pub size: u64,
     /// ETag identifier.
     pub etag: Option<String>,
+    /// Last modification timestamp as formatted string.
+    pub modified_at: Option<String>,
+    /// Permission flags string reported by Nextcloud.
+    pub permissions: Option<String>,
     /// Content MIME type.
     pub mime_type: Option<String>,
     /// Semantic Freedesktop icon category determined by the SDK.
@@ -46,6 +50,8 @@ impl From<&VirtualNode> for VirtualEntrySummary {
             is_directory: node.metadata.is_directory,
             size: node.metadata.size,
             etag: node.metadata.etag.clone(),
+            modified_at: node.metadata.modified_at.clone(),
+            permissions: node.metadata.permissions.clone(),
             mime_type: node.metadata.mime_type.clone(),
             icon_category: node.metadata.icon_category(),
             is_hydrated: node.hydration.is_hydrated(),

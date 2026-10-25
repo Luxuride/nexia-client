@@ -119,9 +119,24 @@ pub struct Account {
     pub credentials: AccountCredentials,
     /// Current connection status.
     pub status: AccountStatus,
+    /// Whether this is the built-in system account (immutable).
+    #[serde(default)]
+    pub is_system: bool,
 }
 
 impl Account {
+    /// Returns the built-in, immutable system account profile.
+    pub fn system_account() -> Self {
+        Self {
+            id: AccountId("system-account".to_string()),
+            name: "System Account".to_string(),
+            server: ServerConfig::new("https://cloud.nextcloud.com"),
+            credentials: AccountCredentials::new("system", ""),
+            status: AccountStatus::Connected,
+            is_system: true,
+        }
+    }
+
     /// Creates a new account profile with default disconnected status.
     pub fn new(
         name: impl Into<String>,
@@ -134,6 +149,7 @@ impl Account {
             server,
             credentials,
             status: AccountStatus::Disconnected,
+            is_system: false,
         }
     }
 }

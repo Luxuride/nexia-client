@@ -1,5 +1,6 @@
 //! Core traits for composable, generic GTK 4 / Libadwaita UI components and views.
 
+use nextcloud_desktop_core::{Account, AccountId};
 use std::future::Future;
 use std::path::PathBuf;
 #[cfg(feature = "gtk")]
@@ -87,6 +88,18 @@ pub trait FileExplorerBackend: Clone + 'static {
 
     /// Returns the local hydration cache directory path string.
     fn cache_dir_display(&self) -> String;
+
+    /// Returns all configured account profiles.
+    fn accounts(&self) -> impl Future<Output = Vec<Account>>;
+
+    /// Returns the active account ID.
+    fn active_account_id(&self) -> impl Future<Output = Option<AccountId>>;
+
+    /// Switches the active account profile to `account_id`.
+    fn switch_account(&self, account_id: &AccountId) -> impl Future<Output = Result<(), UiError>>;
+
+    /// Adds a new account profile to the application.
+    fn add_account(&self, account: Account) -> impl Future<Output = Result<(), UiError>>;
 }
 
 /// Trait implemented by file collection views (such as icon grid and columnar list views).

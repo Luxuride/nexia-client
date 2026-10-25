@@ -1,5 +1,6 @@
 //! Controller managing application state and asynchronous backend operations.
 
+use nextcloud_desktop_core::{Account, AccountId};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -119,6 +120,8 @@ impl DesktopUiController {
                     status,
                     mime_type: e.mime_type,
                     icon_category: e.icon_category,
+                    modified_at: e.modified_at,
+                    permissions: e.permissions,
                 }
             })
             .collect();
@@ -241,6 +244,32 @@ impl DesktopUiController {
             .await
             .map_err(|err| UiError::Controller(err.to_string()))
     }
+
+    /// Returns all configured account profiles.
+    pub async fn accounts(&self) -> Vec<Account> {
+        self.coordinator.accounts().await
+    }
+
+    /// Returns the active account ID.
+    pub async fn active_account_id(&self) -> Option<AccountId> {
+        self.coordinator.active_account().await.map(|a| a.id)
+    }
+
+    /// Switches the active account profile to `account_id`.
+    pub async fn switch_account(&self, account_id: &AccountId) -> Result<(), UiError> {
+        self.coordinator
+            .switch_account(account_id)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Adds a new account profile to the application.
+    pub async fn add_account(&self, account: Account) -> Result<(), UiError> {
+        self.coordinator
+            .add_account(account)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
 }
 
 impl FileExplorerBackend for DesktopUiController {
@@ -318,5 +347,21 @@ impl FileExplorerBackend for DesktopUiController {
 
     fn cache_dir_display(&self) -> String {
         self.coordinator.vfs().cache_dir().display().to_string()
+    }
+
+    async fn accounts(&self) -> Vec<Account> {
+        self.accounts().await
+    }
+
+    async fn active_account_id(&self) -> Option<AccountId> {
+        self.active_account_id().await
+    }
+
+    async fn switch_account(&self, account_id: &AccountId) -> Result<(), UiError> {
+        self.switch_account(account_id).await
+    }
+
+    async fn add_account(&self, account: Account) -> Result<(), UiError> {
+        self.add_account(account).await
     }
 }

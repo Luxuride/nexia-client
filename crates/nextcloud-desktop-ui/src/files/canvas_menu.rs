@@ -2,12 +2,35 @@
 
 use gtk4::gdk;
 use gtk4::prelude::*;
-use gtk4::{Box as GtkBox, Button, GestureClick, Orientation, Popover, Separator};
+use gtk4::{Box as GtkBox, Button, GestureClick, Image, Label, Orientation, Popover, Separator};
 use libadwaita as adw;
 use std::rc::Rc;
 
 use crate::files::new_item_dialog::NewItemDialog;
+use crate::files::properties_dialog::PropertiesDialog;
+use crate::model::{FileSyncStatus, FileViewItem};
 use crate::widget::FileExplorerBackend;
+
+/// Helper creating a flat context menu button with both an icon and a label.
+fn make_menu_item(icon_name: &str, label_text: &str) -> Button {
+    let btn = Button::builder().has_frame(false).build();
+    let hbox = GtkBox::new(Orientation::Horizontal, 10);
+    hbox.set_can_target(false);
+
+    let icon = Image::from_icon_name(icon_name);
+    icon.set_can_target(false);
+
+    let label = Label::new(Some(label_text));
+    label.set_can_target(false);
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+
+    hbox.append(&icon);
+    hbox.append(&label);
+    btn.set_child(Some(&hbox));
+    btn.add_css_class("flat");
+    btn
+}
 
 /// Context menu shown on empty canvas right-clicks.
 pub struct CanvasContextMenu;
@@ -30,11 +53,7 @@ impl CanvasContextMenu {
         menu_box.set_margin_end(6);
 
         // 1. New Folder button
-        let new_folder_btn = Button::builder()
-            .label("New Folder…")
-            .icon_name("folder-new-symbolic")
-            .has_frame(false)
-            .build();
+        let new_folder_btn = make_menu_item("folder-new-symbolic", "New Folder…");
         let target_clone = target.clone().upcast::<gtk4::Widget>();
         let b = backend.clone();
         let toast = toast_overlay.clone();
@@ -46,11 +65,7 @@ impl CanvasContextMenu {
         });
 
         // 2. New File button
-        let new_file_btn = Button::builder()
-            .label("New Document…")
-            .icon_name("document-new-symbolic")
-            .has_frame(false)
-            .build();
+        let new_file_btn = make_menu_item("document-new-symbolic", "New Document…");
         let target_clone2 = target.clone().upcast::<gtk4::Widget>();
         let b2 = backend.clone();
         let toast2 = toast_overlay.clone();
@@ -62,11 +77,7 @@ impl CanvasContextMenu {
         });
 
         // 3. Refresh button
-        let refresh_btn = Button::builder()
-            .label("Refresh")
-            .icon_name("view-refresh-symbolic")
-            .has_frame(false)
-            .build();
+        let refresh_btn = make_menu_item("view-refresh-symbolic", "Refresh");
         let cb3 = on_refresh;
         let popover_clone3 = popover.clone();
         refresh_btn.connect_clicked(move |_| {
@@ -74,10 +85,50 @@ impl CanvasContextMenu {
             cb3();
         });
 
+        // 4. Properties button
+        let prop_btn = make_menu_item("document-properties-symbolic", "Properties");
+        let target_clone4 = target.clone().upcast::<gtk4::Widget>();
+        let b4 = backend.clone();
+        let toast4 = toast_overlay.clone();
+        let popover_clone4 = popover.clone();
+        prop_btn.connect_clicked(move |_| {
+            popover_clone4.popdown();
+            let b = b4.clone();
+            let toast = toast4.clone();
+            let parent = target_clone4.clone();
+            glib::MainContext::default().spawn_local(async move {
+                let current_path = b.current_path().await;
+                let name = if current_path == "/" {
+                    "Nextcloud".to_string()
+                } else {
+                    current_path
+                        .split('/')
+                        .rfind(|s| !s.is_empty())
+                        .unwrap_or("Folder")
+                        .to_string()
+                };
+                let folder_item = FileViewItem {
+                    path: current_path,
+                    name,
+                    is_directory: true,
+                    size_formatted: "Folder".to_string(),
+                    size_bytes: 0,
+                    status: FileSyncStatus::CloudPlaceholder,
+                    mime_type: Some("httpd/unix-directory".to_string()),
+                    icon_category: nextcloud_rust_sdk::ResourceIconCategory::Folder,
+                    modified_at: None,
+                    permissions: Some("Read & Write (Full)".to_string()),
+                };
+                PropertiesDialog::present(Some(&parent), &folder_item, &toast);
+            });
+        });
+
         menu_box.append(&new_folder_btn);
         menu_box.append(&new_file_btn);
         menu_box.append(&Separator::new(Orientation::Horizontal));
         menu_box.append(&refresh_btn);
+        menu_box.append(&Separator::new(Orientation::Horizontal));
+        menu_box.append(&prop_btn);
 
         popover.set_child(Some(&menu_box));
         popover.set_parent(target);

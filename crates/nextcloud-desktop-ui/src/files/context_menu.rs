@@ -58,11 +58,9 @@ impl ItemContextMenu {
                     } else {
                         match b.open_file(&item.path).await {
                             Ok(path) => {
-                                toast.add_toast(adw::Toast::new(&format!(
-                                    "Opened “{}” ({})",
-                                    item.name,
-                                    path.display()
-                                )));
+                                crate::files::launcher::launch_file_externally(&path);
+                                toast
+                                    .add_toast(adw::Toast::new(&format!("Opened “{}”", item.name)));
                             }
                             Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
                         }
@@ -118,10 +116,26 @@ impl ItemContextMenu {
             });
         }
 
+        // 4. Properties action
+        let properties_btn = Button::with_label("Properties");
+        properties_btn.add_css_class("flat");
+
+        {
+            let pop = popover.clone();
+            let toast = toast_overlay.clone();
+            let item_clone = item.clone();
+            properties_btn.connect_clicked(move |btn| {
+                pop.popdown();
+                crate::files::PropertiesDialog::present(Some(btn), &item_clone, &toast);
+            });
+        }
+
         menu_box.append(&open_btn);
         menu_box.append(&Separator::new(Orientation::Horizontal));
         menu_box.append(&rename_btn);
         menu_box.append(&delete_btn);
+        menu_box.append(&Separator::new(Orientation::Horizontal));
+        menu_box.append(&properties_btn);
         popover.set_child(Some(&menu_box));
         popover.set_parent(target);
 

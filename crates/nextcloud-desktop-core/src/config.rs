@@ -60,6 +60,8 @@ impl SyncFolderConfig {
 pub struct AppConfig {
     /// List of configured accounts.
     pub accounts: Vec<Account>,
+    /// Currently active account identifier.
+    pub active_account_id: Option<AccountId>,
     /// Configured sync folder pairings.
     pub sync_folders: Vec<SyncFolderConfig>,
     /// Global cache directory for virtual files and thumbnails.
@@ -78,7 +80,9 @@ impl AppConfig {
     /// Loads configuration from the specified file path, or creates a default if absent.
     pub fn load_from_path(path: &Path) -> Result<Self, CoreError> {
         if !path.exists() {
-            return Ok(Self::default());
+            let mut default_cfg = Self::default();
+            default_cfg.ensure_system_account();
+            return Ok(default_cfg);
         }
 
         let content = fs::read_to_string(path).map_err(|source| CoreError::ConfigLoad {
@@ -86,7 +90,20 @@ impl AppConfig {
             source,
         })?;
 
-        serde_json::from_str(&content).map_err(CoreError::ConfigParse)
+        let mut cfg: Self = serde_json::from_str(&content).map_err(CoreError::ConfigParse)?;
+        cfg.ensure_system_account();
+        Ok(cfg)
+    }
+
+    /// Ensures that the built-in system account is present in the configuration.
+    pub fn ensure_system_account(&mut self) {
+        let sys = Account::system_account();
+        if !self.accounts.iter().any(|acc| acc.id == sys.id) {
+            self.accounts.insert(0, sys.clone());
+        }
+        if self.active_account_id.is_none() {
+            self.active_account_id = Some(sys.id);
+        }
     }
 
     /// Saves configuration to the specified file path, creating parent directories if needed.
@@ -112,12 +129,28 @@ impl AppConfig {
         self.accounts.iter().find(|acc| &acc.id == id)
     }
 
-    /// Adds or updates an account profile.
+    /// Adds or updates an account profile. The system account is unchangeable.
     pub fn upsert_account(&mut self, account: Account) {
+        let sys_id = Account::system_account().id;
+        if account.id == sys_id {
+            return;
+        }
         if let Some(pos) = self.accounts.iter().position(|acc| acc.id == account.id) {
             self.accounts[pos] = account;
         } else {
             self.accounts.push(account);
+        }
+    }
+
+    /// Removes an account by ID, ensuring the system account is immutable and cannot be removed.
+    pub fn remove_account(&mut self, id: &AccountId) {
+        let sys_id = Account::system_account().id;
+        if id == &sys_id {
+            return;
+        }
+        self.accounts.retain(|acc| &acc.id != id);
+        if self.active_account_id.as_ref() == Some(id) {
+            self.active_account_id = Some(sys_id);
         }
     }
 }
@@ -150,8 +183,10 @@ mod tests {
         config.save_to_path(&config_file).expect("save succeeded");
         let loaded = AppConfig::load_from_path(&config_file).expect("load succeeded");
 
-        assert_eq!(loaded.accounts.len(), 1);
-        assert_eq!(loaded.accounts[0].name, "Test Account");
+        assert_eq!(loaded.accounts.len(), 2);
+        assert_eq!(loaded.accounts[0].name, "System Account");
+        assert!(loaded.accounts[0].is_system);
+        assert_eq!(loaded.accounts[1].name, "Test Account");
         assert_eq!(loaded.sync_folders.len(), 1);
         assert_eq!(loaded.sync_folders[0].mode, SyncMode::VirtualSync);
 
