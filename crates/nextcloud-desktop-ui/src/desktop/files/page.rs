@@ -113,6 +113,20 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
         // 3. Bottom status bar
         page_box.append(status_bar.root_widget());
 
+        // Listen for display presentation setting updates to refresh view immediately
+        let on_refresh_disp = on_refresh_request.clone();
+        let mut disp_rx = backend.subscribe_events();
+        glib::MainContext::default().spawn_local(async move {
+            while let Ok(event) = disp_rx.recv().await {
+                if matches!(
+                    event,
+                    nextcloud_desktop_core::events::DesktopEvent::DisplaySettingsChanged
+                ) {
+                    on_refresh_disp();
+                }
+            }
+        });
+
         toast_overlay.set_child(Some(&page_box));
 
         Self {

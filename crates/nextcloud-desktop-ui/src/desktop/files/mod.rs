@@ -16,6 +16,7 @@ pub mod rubberband;
 pub mod selection;
 pub mod sort_popover;
 pub mod status_bar;
+pub mod thumbnail_dialog;
 pub mod toolbar;
 
 pub use canvas_menu::CanvasContextMenu;
@@ -34,4 +35,5 @@ pub use rubberband::RubberbandOverlay;
 pub use selection::SelectionTracker;
 pub use sort_popover::SortPopover;
 pub use status_bar::FileStatusBar;
+pub use thumbnail_dialog::ThumbnailDownloadsDialog;
 pub use toolbar::PathToolbar;

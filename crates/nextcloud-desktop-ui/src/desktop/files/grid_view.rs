@@ -398,10 +398,10 @@ impl FileGridTile {
         name.set_valign(Align::Start);
         name.set_hexpand(false);
         name.set_max_width_chars(match zoom {
-            ZoomLevel::Small => 10,
-            ZoomLevel::Medium => 14,
-            ZoomLevel::Large => 18,
-            ZoomLevel::ExtraLarge => 24,
+            ZoomLevel::Small => 12,
+            ZoomLevel::Medium => 16,
+            ZoomLevel::Large => 20,
+            ZoomLevel::ExtraLarge => 26,
         });
         name.set_lines(3);
         name.set_ellipsize(pango::EllipsizeMode::End);

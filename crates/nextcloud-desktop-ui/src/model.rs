@@ -99,28 +99,28 @@ impl ZoomLevel {
     /// Returns the pixel dimension for grid view icons / thumbnails.
     pub const fn grid_icon_size(&self) -> i32 {
         match self {
-            Self::Small => 48,
-            Self::Medium => 64,
-            Self::Large => 96,
-            Self::ExtraLarge => 128,
+            Self::Small => 64,
+            Self::Medium => 96,
+            Self::Large => 128,
+            Self::ExtraLarge => 192,
         }
     }
 
     /// Returns the target pixel width of the item container card in grid view.
     pub const fn grid_item_width(&self) -> i32 {
         match self {
-            Self::Small => 100,
-            Self::Medium => 130,
-            Self::Large => 160,
-            Self::ExtraLarge => 200,
+            Self::Small => 130,
+            Self::Medium => 160,
+            Self::Large => 200,
+            Self::ExtraLarge => 260,
         }
     }
 
     /// Returns the pixel dimension for list view row icons.
     pub const fn list_icon_size(&self) -> i32 {
         match self {
-            Self::Small => 24,
-            Self::Medium => 32,
+            Self::Small => 28,
+            Self::Medium => 36,
             Self::Large => 48,
             Self::ExtraLarge => 64,
         }
@@ -144,10 +144,10 @@ impl ZoomLevel {
         }
     }
 
-    /// Returns the zoom percentage (50%, 100%, 150%, 200%).
+    /// Returns the zoom percentage (75%, 100%, 150%, 200%).
     pub const fn percentage(&self) -> u32 {
         match self {
-            Self::Small => 50,
+            Self::Small => 75,
             Self::Medium => 100,
             Self::Large => 150,
             Self::ExtraLarge => 200,
@@ -247,6 +247,8 @@ pub struct FileViewItem {
     pub status: FileSyncStatus,
     /// MIME type string if known.
     pub mime_type: Option<String>,
+    /// Nextcloud internal numeric file ID (`oc:fileid`) if available.
+    pub file_id: Option<u64>,
     /// Semantic icon category computed by `nextcloud-rust-sdk`.
     pub icon_category: ResourceIconCategory,
     /// Last modification timestamp if available.

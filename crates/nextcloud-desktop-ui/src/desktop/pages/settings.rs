@@ -278,45 +278,144 @@ impl SettingsPage {
             });
         }
 
-        // Group: File & Folder Presentation Preferences
+        // Group: Cloud Files Presentation Preferences
         let display_group = adw::PreferencesGroup::builder()
-            .title("File Explorer & Item Presentation")
-            .description("Configure what details and item count numbers are always shown.")
+            .title("Cloud Files Settings")
+            .description("Configure item metadata presentation and folder contents for the Cloud Files explorer.")
             .build();
 
-        let folder_items_options = [
-            "Direct items inside folder (Default)",
+        fn make_switch_row(title: &str, subtitle: &str) -> (adw::ActionRow, gtk4::Switch) {
+            let row = adw::ActionRow::builder()
+                .title(title)
+                .subtitle(subtitle)
+                .activatable(true)
+                .build();
+            let sw = gtk4::Switch::new();
+            sw.set_valign(gtk4::Align::Center);
+            row.add_suffix(&sw);
+            row.set_activatable_widget(Some(&sw));
+            (row, sw)
+        }
+
+        let (r_direct_items, sw_direct_items) = make_switch_row(
+            "Direct items inside folder",
+            "Show direct child item count on folders (e.g. “3 items”)",
+        );
+        let (r_total_items, sw_total_items) = make_switch_row(
             "Recursive total items",
-            "Both direct and total items",
-        ];
-        let folder_items_model = gtk4::StringList::new(&folder_items_options);
-        let folder_items_row = adw::ComboRow::builder()
-            .title("Folder Item Counts")
-            .subtitle("Choose how folder contents quantities are displayed on cards and rows")
-            .model(&folder_items_model)
-            .build();
+            "Show total item count in all subdirectories (e.g. “124 total items”)",
+        );
+        let (r_file_size, sw_file_size) = make_switch_row(
+            "File sizes",
+            "Show formatted file size under file names (e.g. “2.4 MB”)",
+        );
+        let (r_direct_size, sw_direct_size) = make_switch_row(
+            "Direct folder files size",
+            "Show total byte size of files directly inside folder",
+        );
+        let (r_total_size, sw_total_size) = make_switch_row(
+            "Recursive total folder size",
+            "Show total aggregated byte size of entire folder tree",
+        );
+        let (r_last_mod, sw_last_mod) = make_switch_row(
+            "Last modified date",
+            "Show last edit timestamp under file and folder names",
+        );
 
         let b_disp = backend.clone();
-        let folder_items_clone = folder_items_row.clone();
+        let s_di = sw_direct_items.clone();
+        let s_ti = sw_total_items.clone();
+        let s_fs = sw_file_size.clone();
+        let s_ds = sw_direct_size.clone();
+        let s_ts = sw_total_size.clone();
+        let s_lm = sw_last_mod.clone();
+
         glib::MainContext::default().spawn_local(async move {
             let cfg = b_disp.effective_display_config().await;
-            let sel = match cfg.folder_items {
-                nextcloud_desktop_core::FolderItemsDisplay::DirectOnly => 0,
-                nextcloud_desktop_core::FolderItemsDisplay::TotalOnly => 1,
-                nextcloud_desktop_core::FolderItemsDisplay::Both => 2,
-            };
-            folder_items_clone.set_selected(sel);
-            let b = b_disp.clone();
-            folder_items_clone.connect_selected_notify(move |combo| {
-                let mode = match combo.selected() {
-                    1 => nextcloud_desktop_core::FolderItemsDisplay::TotalOnly,
-                    2 => nextcloud_desktop_core::FolderItemsDisplay::Both,
-                    _ => nextcloud_desktop_core::FolderItemsDisplay::DirectOnly,
-                };
-                let b = b.clone();
+            s_di.set_active(cfg.show_direct_item_count);
+            s_ti.set_active(cfg.show_total_item_count);
+            s_fs.set_active(cfg.show_file_size);
+            s_ds.set_active(cfg.show_direct_folder_size);
+            s_ts.set_active(cfg.show_total_folder_size);
+            s_lm.set_active(cfg.show_last_modified);
+
+            let b_di = b_disp.clone();
+            s_di.connect_active_notify(move |sw| {
+                let act = sw.is_active();
+                let b = b_di.clone();
                 glib::MainContext::default().spawn_local(async move {
                     let mut cur = b.effective_display_config().await;
-                    cur.folder_items = mode;
+                    cur.show_direct_item_count = act;
+                    if let Some(acc_id) = b.active_account_id().await {
+                        let _ = b.set_account_display_config(&acc_id, cur.clone()).await;
+                    }
+                    let _ = b.set_global_display_config(cur).await;
+                });
+            });
+
+            let b_ti = b_disp.clone();
+            s_ti.connect_active_notify(move |sw| {
+                let act = sw.is_active();
+                let b = b_ti.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    let mut cur = b.effective_display_config().await;
+                    cur.show_total_item_count = act;
+                    if let Some(acc_id) = b.active_account_id().await {
+                        let _ = b.set_account_display_config(&acc_id, cur.clone()).await;
+                    }
+                    let _ = b.set_global_display_config(cur).await;
+                });
+            });
+
+            let b_fs = b_disp.clone();
+            s_fs.connect_active_notify(move |sw| {
+                let act = sw.is_active();
+                let b = b_fs.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    let mut cur = b.effective_display_config().await;
+                    cur.show_file_size = act;
+                    if let Some(acc_id) = b.active_account_id().await {
+                        let _ = b.set_account_display_config(&acc_id, cur.clone()).await;
+                    }
+                    let _ = b.set_global_display_config(cur).await;
+                });
+            });
+
+            let b_ds = b_disp.clone();
+            s_ds.connect_active_notify(move |sw| {
+                let act = sw.is_active();
+                let b = b_ds.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    let mut cur = b.effective_display_config().await;
+                    cur.show_direct_folder_size = act;
+                    if let Some(acc_id) = b.active_account_id().await {
+                        let _ = b.set_account_display_config(&acc_id, cur.clone()).await;
+                    }
+                    let _ = b.set_global_display_config(cur).await;
+                });
+            });
+
+            let b_ts = b_disp.clone();
+            s_ts.connect_active_notify(move |sw| {
+                let act = sw.is_active();
+                let b = b_ts.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    let mut cur = b.effective_display_config().await;
+                    cur.show_total_folder_size = act;
+                    if let Some(acc_id) = b.active_account_id().await {
+                        let _ = b.set_account_display_config(&acc_id, cur.clone()).await;
+                    }
+                    let _ = b.set_global_display_config(cur).await;
+                });
+            });
+
+            let b_lm = b_disp.clone();
+            s_lm.connect_active_notify(move |sw| {
+                let act = sw.is_active();
+                let b = b_lm.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    let mut cur = b.effective_display_config().await;
+                    cur.show_last_modified = act;
                     if let Some(acc_id) = b.active_account_id().await {
                         let _ = b.set_account_display_config(&acc_id, cur.clone()).await;
                     }
@@ -324,7 +423,13 @@ impl SettingsPage {
                 });
             });
         });
-        display_group.add(&folder_items_row);
+
+        display_group.add(&r_direct_items);
+        display_group.add(&r_total_items);
+        display_group.add(&r_file_size);
+        display_group.add(&r_direct_size);
+        display_group.add(&r_total_size);
+        display_group.add(&r_last_mod);
 
         page.add(&account_group);
         page.add(&display_group);

@@ -90,6 +90,17 @@ pub enum DesktopEvent {
         /// Remote path of the file.
         path: String,
     },
+    /// Thumbnail queue progress update.
+    ThumbnailProgress {
+        /// Number of completed thumbnails.
+        completed: usize,
+        /// Total number of queued thumbnails in this session.
+        total: usize,
+        /// Current number of thumbnails in progress.
+        in_progress: usize,
+    },
+    /// File explorer or display presentation settings were changed.
+    DisplaySettingsChanged,
     /// Virtual file tree was refreshed from remote WebDAV.
     VfsTreeUpdated {
         /// Total number of nodes currently indexed in the tree.

@@ -14,6 +14,21 @@ use nextcloud_desktop_core::account::{Account, AccountCredentials, ServerConfig}
 use nextcloud_desktop_core::config::AppConfig;
 use nextcloud_desktop_core::events::{DesktopEvent, EventBus};
 
+/// Snapshot of background thumbnail downloading queue and progress.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ThumbnailQueueSnapshot {
+    /// Total number of thumbnail tasks queued in this session.
+    pub total: usize,
+    /// Number of successfully downloaded and cached thumbnails.
+    pub completed: usize,
+    /// Number of failed thumbnail attempts.
+    pub failed: usize,
+    /// Number of thumbnail downloads currently in progress.
+    pub in_progress: usize,
+    /// List of paths currently being downloaded.
+    pub active_items: Vec<String>,
+}
+
 /// Master coordinator managing background orchestrator worker, mounts, VFS, and clients.
 #[derive(Clone)]
 pub struct DesktopSyncCoordinator {
@@ -27,9 +42,18 @@ pub struct DesktopSyncCoordinator {
     pub(crate) default_mount_id: Arc<RwLock<Option<MountId>>>,
     pub(crate) preview_semaphore: Arc<tokio::sync::Semaphore>,
     pub(crate) cached_theme_data: Arc<std::sync::RwLock<Option<nextcloud_rust_sdk::ThemeInfo>>>,
+    pub(crate) thumbnail_stats: Arc<std::sync::RwLock<ThumbnailQueueSnapshot>>,
 }
 
 impl DesktopSyncCoordinator {
+    /// Returns the live snapshot of background thumbnail download progress.
+    pub fn thumbnail_queue_snapshot(&self) -> ThumbnailQueueSnapshot {
+        self.thumbnail_stats
+            .read()
+            .map(|s| s.clone())
+            .unwrap_or_default()
+    }
+
     /// Creates a new synchronization coordinator launching the background orchestrator actor.
     pub fn new(config: Arc<RwLock<AppConfig>>, event_bus: EventBus) -> Self {
         let cache_dir = if let Ok(conf) = config.try_read() {
@@ -53,6 +77,7 @@ impl DesktopSyncCoordinator {
             default_mount_id: Arc::new(RwLock::new(None)),
             preview_semaphore: Arc::new(tokio::sync::Semaphore::new(8)),
             cached_theme_data: Arc::new(std::sync::RwLock::new(None)),
+            thumbnail_stats: Arc::new(std::sync::RwLock::new(ThumbnailQueueSnapshot::default())),
         };
 
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {

@@ -154,6 +154,14 @@ impl PropertiesDialog {
             .build();
         general_group.add(&row_path);
 
+        if let Some(fid) = item.file_id {
+            let row_fid = adw::ActionRow::builder()
+                .title("Nextcloud File ID")
+                .subtitle(fid.to_string())
+                .build();
+            general_group.add(&row_fid);
+        }
+
         let mod_time = item.modified_at.as_deref().unwrap_or("Recently updated");
         let row_modified = adw::ActionRow::builder()
             .title("Last Modified")

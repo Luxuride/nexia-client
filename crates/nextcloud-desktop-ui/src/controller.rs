@@ -27,40 +27,103 @@ pub struct DesktopUiController {
     active_hydrations: Arc<RwLock<HashSet<String>>>,
 }
 
-fn format_folder_size(
+fn format_folder_presentation(
     sum: &nextcloud_rust_sdk::DirectorySizeSummary,
-    mode: nextcloud_desktop_core::FolderItemsDisplay,
+    mod_at: Option<&str>,
+    cfg: &nextcloud_desktop_core::AdditionalItemsDisplayConfig,
 ) -> String {
-    match mode {
-        nextcloud_desktop_core::FolderItemsDisplay::DirectOnly => {
-            let count = sum.direct_items();
-            if count == 1 {
+    let mut parts = Vec::new();
+
+    let direct_count = sum.direct_items();
+    let total_count = sum.total_items();
+
+    if cfg.show_direct_item_count && cfg.show_total_item_count {
+        if direct_count == total_count {
+            let label = if direct_count == 1 {
                 "1 item".to_string()
             } else {
-                format!("{count} items")
-            }
-        }
-        nextcloud_desktop_core::FolderItemsDisplay::TotalOnly => {
-            let count = sum.total_items();
-            if count == 1 {
+                format!("{direct_count} items")
+            };
+            parts.push(label);
+        } else {
+            let d_lbl = if direct_count == 1 {
                 "1 item".to_string()
             } else {
-                format!("{count} items")
-            }
-        }
-        nextcloud_desktop_core::FolderItemsDisplay::Both => {
-            let direct = sum.direct_items();
-            let total = sum.total_items();
-            if direct == total {
-                if direct == 1 {
-                    "1 item".to_string()
-                } else {
-                    format!("{direct} items")
-                }
+                format!("{direct_count} items")
+            };
+            let t_lbl = if total_count == 1 {
+                "1 total".to_string()
             } else {
-                format!("{direct} direct ({total} total)")
-            }
+                format!("{total_count} total")
+            };
+            parts.push(format!("{d_lbl} ({t_lbl})"));
         }
+    } else if cfg.show_direct_item_count {
+        let label = if direct_count == 1 {
+            "1 item".to_string()
+        } else {
+            format!("{direct_count} items")
+        };
+        parts.push(label);
+    } else if cfg.show_total_item_count {
+        let label = if total_count == 1 {
+            "1 total item".to_string()
+        } else {
+            format!("{total_count} total items")
+        };
+        parts.push(label);
+    }
+
+    if cfg.show_direct_folder_size && cfg.show_total_folder_size {
+        if sum.direct_size == sum.total_size {
+            parts.push(nextcloud_rust_sdk::format_bytes(sum.direct_size));
+        } else {
+            parts.push(format!(
+                "{} ({} total)",
+                nextcloud_rust_sdk::format_bytes(sum.direct_size),
+                nextcloud_rust_sdk::format_bytes(sum.total_size)
+            ));
+        }
+    } else if cfg.show_direct_folder_size {
+        parts.push(nextcloud_rust_sdk::format_bytes(sum.direct_size));
+    } else if cfg.show_total_folder_size {
+        parts.push(format!(
+            "{} total",
+            nextcloud_rust_sdk::format_bytes(sum.total_size)
+        ));
+    }
+
+    if cfg.show_last_modified
+        && let Some(m) = mod_at
+    {
+        parts.push(m.to_string());
+    }
+
+    if parts.is_empty() {
+        "—".to_string()
+    } else {
+        parts.join(" • ")
+    }
+}
+
+fn format_file_presentation(
+    size_bytes: u64,
+    mod_at: Option<&str>,
+    cfg: &nextcloud_desktop_core::AdditionalItemsDisplayConfig,
+) -> String {
+    let mut parts = Vec::new();
+    if cfg.show_file_size {
+        parts.push(nextcloud_rust_sdk::format_bytes(size_bytes));
+    }
+    if cfg.show_last_modified
+        && let Some(m) = mod_at
+    {
+        parts.push(m.to_string());
+    }
+    if parts.is_empty() {
+        "—".to_string()
+    } else {
+        parts.join(" • ")
     }
 }
 
@@ -114,11 +177,16 @@ impl DesktopUiController {
         account_id: &AccountId,
         display: nextcloud_desktop_core::AdditionalItemsDisplayConfig,
     ) -> Result<(), UiError> {
-        let mut cfg = self.coordinator.config().write().await;
-        let mut prefs = cfg.get_account_preferences(account_id);
-        prefs.display = display;
-        cfg.set_account_preferences(account_id, prefs);
-        let _ = cfg.save_user_config(account_id);
+        {
+            let mut cfg = self.coordinator.config().write().await;
+            let mut prefs = cfg.get_account_preferences(account_id);
+            prefs.display = display;
+            cfg.set_account_preferences(account_id, prefs);
+            let _ = cfg.save_user_config(account_id);
+        }
+        self.coordinator
+            .event_bus()
+            .emit(nextcloud_desktop_core::events::DesktopEvent::DisplaySettingsChanged);
         Ok(())
     }
 
@@ -127,8 +195,13 @@ impl DesktopUiController {
         &self,
         display: nextcloud_desktop_core::AdditionalItemsDisplayConfig,
     ) -> Result<(), UiError> {
-        let mut cfg = self.coordinator.config().write().await;
-        cfg.global.default_display = display;
+        {
+            let mut cfg = self.coordinator.config().write().await;
+            cfg.global.default_display = display;
+        }
+        self.coordinator
+            .event_bus()
+            .emit(nextcloud_desktop_core::events::DesktopEvent::DisplaySettingsChanged);
         Ok(())
     }
 
@@ -283,12 +356,12 @@ impl DesktopUiController {
 
                 let size_formatted = if e.is_directory {
                     if let Some(ref sum) = e.directory_summary {
-                        format_folder_size(sum, display_cfg.folder_items)
+                        format_folder_presentation(sum, e.modified_at.as_deref(), &display_cfg)
                     } else {
                         "—".to_string()
                     }
                 } else {
-                    nextcloud_rust_sdk::format_bytes(e.size)
+                    format_file_presentation(e.size, e.modified_at.as_deref(), &display_cfg)
                 };
 
                 FileViewItem {
@@ -299,6 +372,7 @@ impl DesktopUiController {
                     size_bytes: e.size,
                     status,
                     mime_type: e.mime_type,
+                    file_id: e.file_id,
                     icon_category: e.icon_category,
                     modified_at: e.modified_at,
                     permissions: e.permissions,
@@ -335,6 +409,11 @@ impl DesktopUiController {
     /// Batch prefetches thumbnails in the background.
     pub fn prefetch_thumbnails(&self, paths: Vec<String>, size: u32) {
         self.coordinator.batch_prefetch_thumbnails(paths, size);
+    }
+
+    /// Returns the live snapshot of background thumbnail downloading queue and progress.
+    pub fn thumbnail_queue_snapshot(&self) -> nextcloud_desktop_sync::ThumbnailQueueSnapshot {
+        self.coordinator.thumbnail_queue_snapshot()
     }
 
     /// Returns `true` if there is a previous directory in the navigation history.
@@ -434,12 +513,12 @@ impl DesktopUiController {
 
                 let size_formatted = if e.is_directory {
                     if let Some(ref sum) = e.directory_summary {
-                        format_folder_size(sum, display_cfg.folder_items)
+                        format_folder_presentation(sum, e.modified_at.as_deref(), &display_cfg)
                     } else {
                         "—".to_string()
                     }
                 } else {
-                    nextcloud_rust_sdk::format_bytes(e.size)
+                    format_file_presentation(e.size, e.modified_at.as_deref(), &display_cfg)
                 };
 
                 FileViewItem {
@@ -450,6 +529,7 @@ impl DesktopUiController {
                     size_bytes: e.size,
                     status,
                     mime_type: e.mime_type,
+                    file_id: e.file_id,
                     icon_category: e.icon_category,
                     modified_at: e.modified_at,
                     permissions: e.permissions,
@@ -871,6 +951,10 @@ impl FileExplorerBackend for DesktopUiController {
         self.prefetch_thumbnails(paths, size);
     }
 
+    fn thumbnail_queue_snapshot(&self) -> nextcloud_desktop_sync::ThumbnailQueueSnapshot {
+        self.thumbnail_queue_snapshot()
+    }
+
     fn subscribe_events(
         &self,
     ) -> tokio::sync::broadcast::Receiver<nextcloud_desktop_core::events::DesktopEvent> {
@@ -1085,21 +1169,36 @@ mod tests {
     }
 
     #[test]
-    fn format_folder_size_respects_direct_and_total_modes() {
+    fn format_folder_presentation_respects_direct_and_total_modes() {
         let sum =
             nextcloud_rust_sdk::DirectorySizeSummary::new(1048576, 50, 5).with_direct(4096, 3, 2);
 
+        let mut cfg = nextcloud_desktop_core::AdditionalItemsDisplayConfig {
+            show_direct_item_count: true,
+            show_total_item_count: false,
+            ..Default::default()
+        };
+
         // Direct only (default)
-        let direct =
-            format_folder_size(&sum, nextcloud_desktop_core::FolderItemsDisplay::DirectOnly);
+        let direct = format_folder_presentation(&sum, None, &cfg);
         assert_eq!(direct, "5 items");
 
         // Total only
-        let total = format_folder_size(&sum, nextcloud_desktop_core::FolderItemsDisplay::TotalOnly);
-        assert_eq!(total, "55 items");
+        cfg.show_direct_item_count = false;
+        cfg.show_total_item_count = true;
+        let total = format_folder_presentation(&sum, None, &cfg);
+        assert_eq!(total, "55 total items");
 
         // Both
-        let both = format_folder_size(&sum, nextcloud_desktop_core::FolderItemsDisplay::Both);
-        assert_eq!(both, "5 direct (55 total)");
+        cfg.show_direct_item_count = true;
+        cfg.show_total_item_count = true;
+        let both = format_folder_presentation(&sum, None, &cfg);
+        assert_eq!(both, "5 items (55 total)");
+
+        // Hidden item count
+        cfg.show_direct_item_count = false;
+        cfg.show_total_item_count = false;
+        let hidden = format_folder_presentation(&sum, None, &cfg);
+        assert_eq!(hidden, "—");
     }
 }

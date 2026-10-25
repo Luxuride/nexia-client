@@ -10,7 +10,7 @@ pub mod error;
 pub(crate) mod file_ops;
 pub(crate) mod mounts;
 
-pub use coordinator::DesktopSyncCoordinator;
+pub use coordinator::{DesktopSyncCoordinator, ThumbnailQueueSnapshot};
 pub use error::SyncError;
 pub use file_ops::make_dav_path;
 

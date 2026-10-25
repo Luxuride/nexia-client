@@ -71,7 +71,26 @@ pub enum FolderItemsDisplay {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AdditionalItemsDisplayConfig {
     /// How folder item counts are presented in file explorer tiles and rows.
+    #[serde(default)]
     pub folder_items: FolderItemsDisplay,
+    /// Whether to display direct item counts inside folders (e.g. "3 items"). Default is true.
+    #[serde(default = "default_true")]
+    pub show_direct_item_count: bool,
+    /// Whether to display recursive total item counts inside folders (e.g. "124 items"). Default is false.
+    #[serde(default)]
+    pub show_total_item_count: bool,
+    /// Whether to display direct folder contents size (e.g. "2.4 MB"). Default is false.
+    #[serde(default)]
+    pub show_direct_folder_size: bool,
+    /// Whether to display recursive total folder size (e.g. "14.2 MB total"). Default is false.
+    #[serde(default)]
+    pub show_total_folder_size: bool,
+    /// Whether to display file size on file items (e.g. "1.5 MB"). Default is true.
+    #[serde(default = "default_true")]
+    pub show_file_size: bool,
+    /// Whether to display last modified date on items. Default is false.
+    #[serde(default)]
+    pub show_last_modified: bool,
     /// Whether to display permissions in properties dialog and detailed views.
     pub show_permissions: bool,
     /// Whether to display MIME type information.
@@ -86,10 +105,20 @@ pub struct AdditionalItemsDisplayConfig {
     pub autodownload_thumbnails: bool,
 }
 
+const fn default_true() -> bool {
+    true
+}
+
 impl Default for AdditionalItemsDisplayConfig {
     fn default() -> Self {
         Self {
             folder_items: FolderItemsDisplay::DirectOnly,
+            show_direct_item_count: true,
+            show_total_item_count: false,
+            show_direct_folder_size: false,
+            show_total_folder_size: false,
+            show_file_size: true,
+            show_last_modified: false,
             show_permissions: true,
             show_mime_type: true,
             show_size_breakdown: true,

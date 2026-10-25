@@ -115,6 +115,9 @@ pub trait FileExplorerBackend: Clone + 'static {
     /// Batch prefetches thumbnails for multiple remote paths concurrently in background.
     fn prefetch_thumbnails(&self, paths: Vec<String>, size: u32);
 
+    /// Returns the live snapshot of background thumbnail downloading queue and progress.
+    fn thumbnail_queue_snapshot(&self) -> nextcloud_desktop_sync::ThumbnailQueueSnapshot;
+
     /// Subscribes to broadcast desktop engine events.
     fn subscribe_events(
         &self,
