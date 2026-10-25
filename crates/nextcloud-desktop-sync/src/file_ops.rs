@@ -1222,17 +1222,14 @@ impl DesktopSyncCoordinator {
             return Ok(Some(thumb_path));
         }
 
-        // Fast check: is low-res fallback already cached?
-        let low_filename = format!("{:016x}_64.png", path_hash);
-        let low_path = thumbs_dir.join(low_filename);
-
-        // Update coordinator thumbnail stats
+        // Deduplicate in-flight requests: if this remote path is already being fetched, return immediately
         if let Ok(mut stats) = self.thumbnail_stats.write() {
+            if stats.active_items.contains(&remote_path.to_string()) {
+                return Ok(None);
+            }
+            stats.active_items.push(remote_path.to_string());
             stats.total += 1;
             stats.in_progress += 1;
-            if !stats.active_items.contains(&remote_path.to_string()) {
-                stats.active_items.push(remote_path.to_string());
-            }
             self.event_bus.emit(
                 nextcloud_desktop_core::events::DesktopEvent::ThumbnailProgress {
                     completed: stats.completed,
@@ -1265,66 +1262,24 @@ impl DesktopSyncCoordinator {
             return Ok(Some(thumb_path));
         }
 
-        // Look up file_id from active VFS, or query WebDAV PROPFIND if not present in tree
+        // Look up file_id from active VFS
         let vfs = self.active_vfs().await;
-        let mut file_id = vfs
+        let file_id = vfs
             .entry(remote_path)
             .await
             .ok()
             .flatten()
             .and_then(|e| e.file_id);
 
-        if file_id.is_none()
-            && let Some((user, client, auth)) = self.active_dav_context().await
-        {
-            let dav = client.dav(&auth);
-            if let Ok(dav_path) = make_dav_path(&user, remote_path) {
-                let body = PropfindBody::new([DavProperty::FileId]);
-                if let Ok(res) = dav.propfind(&dav_path, Depth::Zero, &body).await
-                    && let Some(first) = res.first()
-                    && let Some(ref fid) = first.file_id
-                    && let Ok(parsed) = fid.parse::<u64>()
-                {
-                    file_id = Some(parsed);
-                }
-            }
-        }
-
         if let Some((_, client, auth)) = self.active_dav_context().await {
             let preview = client.preview(&auth);
-
             let clean_no_slash = clean_path.trim_start_matches('/');
-            let with_slash = format!("/{clean_no_slash}");
-
-            // Progressive loading: if target size > 64 and 64px is not cached yet,
-            // fetch smallest 64px thumbnail first and emit ThumbnailReady immediately!
-            if effective_size > 64 && !low_path.exists() {
-                let low_opts = nextcloud_rust_sdk::PreviewOptions::new()
-                    .dimensions(64, 64)
-                    .mode(nextcloud_rust_sdk::PreviewMode::Cover);
-
-                if let Some(bytes) =
-                    fetch_preview_bytes(&preview, file_id, clean_no_slash, &with_slash, &low_opts)
-                        .await
-                    && tokio::fs::write(&low_path, &bytes).await.is_ok()
-                {
-                    self.install_freedesktop_previews_for_remote_path(remote_path, &bytes)
-                        .await;
-                    self.event_bus.emit(
-                        nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
-                            path: remote_path.to_string(),
-                            cached_path: low_path.clone(),
-                        },
-                    );
-                }
-            }
 
             let opts = nextcloud_rust_sdk::PreviewOptions::new()
                 .dimensions(effective_size, effective_size)
                 .mode(nextcloud_rust_sdk::PreviewMode::Cover);
 
-            if let Some(bytes) =
-                fetch_preview_bytes(&preview, file_id, clean_no_slash, &with_slash, &opts).await
+            if let Some(bytes) = fetch_preview_bytes(&preview, file_id, clean_no_slash, &opts).await
                 && tokio::fs::write(&thumb_path, &bytes).await.is_ok()
             {
                 self.install_freedesktop_previews_for_remote_path(remote_path, &bytes)
@@ -1349,56 +1304,6 @@ impl DesktopSyncCoordinator {
                 );
                 return Ok(Some(thumb_path));
             }
-
-            // Fallback to 64x64 if higher-res preview returned server error
-            if effective_size != 64 {
-                if low_path.exists() {
-                    if let Ok(mut stats) = self.thumbnail_stats.write() {
-                        stats.in_progress = stats.in_progress.saturating_sub(1);
-                        stats.completed += 1;
-                        stats.active_items.retain(|p| p != remote_path);
-                    }
-                    self.event_bus.emit(
-                        nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
-                            path: remote_path.to_string(),
-                            cached_path: low_path.clone(),
-                        },
-                    );
-                    return Ok(Some(low_path));
-                }
-
-                let low_opts = nextcloud_rust_sdk::PreviewOptions::new()
-                    .dimensions(64, 64)
-                    .mode(nextcloud_rust_sdk::PreviewMode::Cover);
-
-                if let Some(bytes) =
-                    fetch_preview_bytes(&preview, file_id, clean_no_slash, &with_slash, &low_opts)
-                        .await
-                    && tokio::fs::write(&low_path, &bytes).await.is_ok()
-                {
-                    self.install_freedesktop_previews_for_remote_path(remote_path, &bytes)
-                        .await;
-                    if let Ok(mut stats) = self.thumbnail_stats.write() {
-                        stats.in_progress = stats.in_progress.saturating_sub(1);
-                        stats.completed += 1;
-                        stats.active_items.retain(|p| p != remote_path);
-                        self.event_bus.emit(
-                            nextcloud_desktop_core::events::DesktopEvent::ThumbnailProgress {
-                                completed: stats.completed,
-                                total: stats.total,
-                                in_progress: stats.in_progress,
-                            },
-                        );
-                    }
-                    self.event_bus.emit(
-                        nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
-                            path: remote_path.to_string(),
-                            cached_path: low_path.clone(),
-                        },
-                    );
-                    return Ok(Some(low_path));
-                }
-            }
         }
 
         if let Ok(mut stats) = self.thumbnail_stats.write() {
@@ -1420,14 +1325,10 @@ impl DesktopSyncCoordinator {
             },
         );
 
-        if low_path.exists() {
-            return Ok(Some(low_path));
-        }
-
         Ok(None)
     }
 
-    /// Batch prefetches thumbnails for multiple remote paths progressively from smallest up to target size.
+    /// Batch prefetches thumbnails for multiple remote paths in the background.
     pub fn batch_prefetch_thumbnails(&self, paths: Vec<String>, size: u32) {
         if paths.is_empty() {
             return;
@@ -1436,43 +1337,42 @@ impl DesktopSyncCoordinator {
         let coord = self.clone();
         tokio::spawn(async move {
             let max_size = coord.max_thumbnail_size().await;
-            // Snap to standard Nextcloud thumbnail square sizes: 64, 128, 256, 512, 1024
-            let standard_size = match size {
-                s if s <= 64 => 64,
-                s if s <= 128 => 128,
-                s if s <= 256 => 256,
-                s if s <= 512 => 512,
-                _ => 1024,
-            };
-            let effective_size = standard_size.min(max_size).max(64);
+            let effective_size = size.clamp(64, max_size);
 
-            // Progressive size tiers: start with smallest (64px), then intermediate, up to target_size
-            let mut tiers = vec![64u32];
-            if effective_size > 128 {
-                tiers.push(128);
-            }
-            if effective_size > 64 && !tiers.contains(&effective_size) {
-                tiers.push(effective_size);
+            let thumbs_dir = coord.active_thumbnails_dir().await;
+            // Only process paths that are not already cached on disk
+            let missing_paths: Vec<String> = paths
+                .into_iter()
+                .filter(|p| {
+                    let clean = p.trim_matches('/');
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    std::hash::Hash::hash(&clean, &mut hasher);
+                    let path_hash = std::hash::Hasher::finish(&hasher);
+                    let thumb_path =
+                        thumbs_dir.join(format!("{:016x}_{effective_size}.png", path_hash));
+                    !thumb_path.exists()
+                })
+                .collect();
+
+            if missing_paths.is_empty() {
+                return;
             }
 
-            for size_tier in tiers {
-                let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(6));
-                let mut tasks = Vec::with_capacity(paths.len());
-                for path in &paths {
-                    let c = coord.clone();
-                    let p = path.clone();
-                    let sem = semaphore.clone();
-                    tasks.push(tokio::spawn(async move {
-                        let _permit = match sem.acquire().await {
-                            Ok(p) => p,
-                            Err(_) => return,
-                        };
-                        let _ = c.fetch_thumbnail(&p, size_tier).await;
-                    }));
-                }
-                for task in tasks {
-                    let _ = task.await;
-                }
+            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+            let mut tasks = Vec::with_capacity(missing_paths.len());
+            for path in missing_paths {
+                let c = coord.clone();
+                let sem = semaphore.clone();
+                tasks.push(tokio::spawn(async move {
+                    let _permit = match sem.acquire().await {
+                        Ok(p) => p,
+                        Err(_) => return,
+                    };
+                    let _ = c.fetch_thumbnail(&path, effective_size).await;
+                }));
+            }
+            for task in tasks {
+                let _ = task.await;
             }
         });
     }
@@ -1533,33 +1433,19 @@ async fn fetch_preview_bytes<
     preview: &nextcloud_rust_sdk::PreviewClient<'_, T, A>,
     file_id: Option<u64>,
     clean_no_slash: &str,
-    with_slash: &str,
     opts: &nextcloud_rust_sdk::PreviewOptions,
 ) -> Option<Vec<u8>> {
-    let simple_opts = nextcloud_rust_sdk::PreviewOptions::new().dimensions(
-        opts.width_px().unwrap_or(64),
-        opts.height_px().unwrap_or(64),
-    );
-
-    if let Some(fid) = file_id {
-        if let Ok(b) = preview.get_by_file_id(fid, opts).await {
-            return Some(b);
-        }
-        // Fallback without mode in case the server rejects 'mode=cover' parameter
-        if let Ok(b) = preview.get_by_file_id(fid, &simple_opts).await {
-            return Some(b);
-        }
+    // 1. Primary: fetch by path (standard and reliable across all Nextcloud versions)
+    if let Ok(bytes) = preview.get_by_path(clean_no_slash, opts).await {
+        return Some(bytes);
     }
-    if let Ok(b) = preview.get_by_path(clean_no_slash, opts).await {
-        return Some(b);
+    // 2. Secondary: fetch by numeric file ID if known
+    if let Some(fid) = file_id
+        && let Ok(bytes) = preview.get_by_file_id(fid, opts).await
+    {
+        return Some(bytes);
     }
-    if let Ok(b) = preview.get_by_path(with_slash, opts).await {
-        return Some(b);
-    }
-    if let Ok(b) = preview.get_by_path(clean_no_slash, &simple_opts).await {
-        return Some(b);
-    }
-    preview.get_by_path(with_slash, &simple_opts).await.ok()
+    None
 }
 
 fn decode_percent_str(input: &str) -> String {

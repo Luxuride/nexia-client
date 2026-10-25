@@ -457,12 +457,6 @@ impl DesktopUiController {
             if let Ok(fresh) = vfs.list_children(&path).await {
                 entries = fresh;
             }
-        } else if path != "/" {
-            let coord = self.coordinator.clone();
-            let p = path.clone();
-            tokio::spawn(async move {
-                let _ = coord.refresh_path(&p).await;
-            });
         }
 
         let display_cfg = self.effective_display_config().await;

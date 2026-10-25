@@ -7,6 +7,7 @@ use gtk4::{
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::files::canvas_menu::CanvasContextMenu;
@@ -28,6 +29,7 @@ pub struct FileListView {
     container: GtkBox,
     list_box: ListBox,
     items: Rc<RefCell<Vec<FileViewItem>>>,
+    icon_widgets: Rc<RefCell<HashMap<String, (GtkBox, i32)>>>,
     selection_tracker: SelectionTracker,
     generation: Rc<Cell<u64>>,
 }
@@ -175,6 +177,7 @@ impl FileListView {
         strip_listbox_linear_drag(&list_box);
 
         let items = Rc::new(RefCell::new(Vec::new()));
+        let icon_widgets = Rc::new(RefCell::new(HashMap::new()));
 
         // Wire selection changes
         let items_for_sel = items.clone();
@@ -281,6 +284,7 @@ impl FileListView {
             container,
             list_box,
             items,
+            icon_widgets,
             selection_tracker,
             generation,
         }
@@ -299,7 +303,27 @@ impl FileListView {
             self.list_box.remove(&child);
         }
         self.items.borrow_mut().clear();
+        self.icon_widgets.borrow_mut().clear();
         self.selection_tracker.clear();
+    }
+
+    /// Dynamically updates the thumbnail image for a rendered row when ready.
+    pub fn update_thumbnail(&self, path: &str, cached_path: &std::path::Path) {
+        if let Some((icon_box, icon_size)) = self.icon_widgets.borrow().get(path).cloned() {
+            let file = gtk4::gio::File::for_path(cached_path);
+            if let Ok(texture) = gdk::Texture::from_file(&file) {
+                let picture = gtk4::Picture::for_paintable(&texture);
+                picture.set_can_shrink(true);
+                picture.set_keep_aspect_ratio(true);
+                picture.set_halign(Align::Center);
+                picture.set_valign(Align::Center);
+                picture.set_size_request(icon_size, icon_size);
+                while let Some(first) = icon_box.first_child() {
+                    icon_box.remove(&first);
+                }
+                icon_box.append(&picture);
+            }
+        }
     }
 }
 
@@ -324,6 +348,21 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileListView {
         zoom: ZoomLevel,
         on_refresh: Rc<dyn Fn()>,
     ) {
+        // If the items in the directory are already identical, do not clear the listbox or reset scroll!
+        let is_identical = {
+            let existing = self.items.borrow();
+            existing.len() == items.len()
+                && existing.iter().zip(items.iter()).all(|(a, b)| {
+                    a.path == b.path
+                        && a.status == b.status
+                        && a.name == b.name
+                        && a.size_bytes == b.size_bytes
+                })
+        };
+        if is_identical {
+            return;
+        }
+
         self.clear();
         let current_gen = self.generation.get();
         let all_items = Rc::new(items.to_vec());
@@ -333,7 +372,14 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileListView {
         let chunk_size = 50;
         let initial_count = chunk_size.min(all_items.len());
         for item in &all_items[..initial_count] {
-            let row = FileListRow::build(item, backend, toast_overlay, zoom, on_refresh.clone());
+            let row = FileListRow::build(
+                item,
+                backend,
+                toast_overlay,
+                zoom,
+                on_refresh.clone(),
+                &self.icon_widgets,
+            );
             self.list_box.append(row.root_widget());
         }
 
@@ -348,6 +394,7 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileListView {
                 toast_overlay: toast_overlay.clone(),
                 zoom,
                 on_refresh,
+                icon_widgets: self.icon_widgets.clone(),
             };
             schedule_list_chunks(ctx, initial_count, chunk_size);
         }
@@ -367,6 +414,7 @@ struct ListChunkContext<B> {
     toast_overlay: adw::ToastOverlay,
     zoom: ZoomLevel,
     on_refresh: Rc<dyn Fn()>,
+    icon_widgets: Rc<RefCell<HashMap<String, (GtkBox, i32)>>>,
 }
 
 fn schedule_list_chunks<B: FileExplorerBackend + 'static>(
@@ -386,6 +434,7 @@ fn schedule_list_chunks<B: FileExplorerBackend + 'static>(
                 &ctx.toast_overlay,
                 ctx.zoom,
                 ctx.on_refresh.clone(),
+                &ctx.icon_widgets,
             );
             ctx.list_box.append(row.root_widget());
         }
@@ -408,6 +457,7 @@ impl FileListRow {
         toast_overlay: &adw::ToastOverlay,
         zoom: ZoomLevel,
         on_refresh: Rc<dyn Fn()>,
+        icon_widgets: &Rc<RefCell<HashMap<String, (GtkBox, i32)>>>,
     ) -> Self {
         let row = ListBoxRow::new();
         row.set_focusable(false);
@@ -457,51 +507,26 @@ impl FileListRow {
                 || item.name.ends_with(".pdf"));
 
         if is_thumbnail_candidate {
-            let backend_clone = backend.clone();
-            let path_clone = item.path.clone();
-            let icon_box_clone = icon_box.clone();
+            icon_widgets
+                .borrow_mut()
+                .insert(item.path.clone(), (icon_box.clone(), icon_size));
 
-            glib::idle_add_local_once(move || {
-                // 1. Immediately provide cached 64px thumbnail if already on disk
-                if let Some(cached_path) = backend_clone.cached_thumbnail(&path_clone, Some(64)) {
-                    let file = gtk4::gio::File::for_path(&cached_path);
-                    if let Ok(texture) = gdk::Texture::from_file(&file) {
-                        let picture = gtk4::Picture::for_paintable(&texture);
-                        picture.set_can_shrink(true);
-                        picture.set_keep_aspect_ratio(true);
-                        picture.set_halign(Align::Center);
-                        picture.set_valign(Align::Center);
-                        picture.set_size_request(icon_size, icon_size);
-                        while let Some(first) = icon_box_clone.first_child() {
-                            icon_box_clone.remove(&first);
-                        }
-                        icon_box_clone.append(&picture);
-                        return;
+            // Fast display if thumbnail is already cached on local disk
+            if let Some(cached_path) = backend.cached_thumbnail(&item.path, Some(64)) {
+                let file = gtk4::gio::File::for_path(&cached_path);
+                if let Ok(texture) = gdk::Texture::from_file(&file) {
+                    let picture = gtk4::Picture::for_paintable(&texture);
+                    picture.set_can_shrink(true);
+                    picture.set_keep_aspect_ratio(true);
+                    picture.set_halign(Align::Center);
+                    picture.set_valign(Align::Center);
+                    picture.set_size_request(icon_size, icon_size);
+                    while let Some(first) = icon_box.first_child() {
+                        icon_box.remove(&first);
                     }
+                    icon_box.append(&picture);
                 }
-
-                // 2. Asynchronously fetch 64px thumbnail if not yet cached
-                let b = backend_clone.clone();
-                let p = path_clone.clone();
-                let ib = icon_box_clone.clone();
-                glib::MainContext::default().spawn_local(async move {
-                    if let Some(thumb_path) = b.get_thumbnail(&p, 64).await {
-                        let file = gtk4::gio::File::for_path(&thumb_path);
-                        if let Ok(texture) = gdk::Texture::from_file(&file) {
-                            let picture = gtk4::Picture::for_paintable(&texture);
-                            picture.set_can_shrink(true);
-                            picture.set_keep_aspect_ratio(true);
-                            picture.set_halign(Align::Center);
-                            picture.set_valign(Align::Center);
-                            picture.set_size_request(icon_size, icon_size);
-                            while let Some(first) = ib.first_child() {
-                                ib.remove(&first);
-                            }
-                            ib.append(&picture);
-                        }
-                    }
-                });
-            });
+            }
         }
 
         let name = Label::new(Some(&item.name));

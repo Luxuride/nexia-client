@@ -83,6 +83,23 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
             on_refresh_request.clone(),
         );
 
+        // Wire asynchronous event listener for ready thumbnails to seamlessly update rendered tiles
+        let mut rx = backend.subscribe_events();
+        let g_view = grid_view.clone();
+        let l_view = list_view.clone();
+        glib::MainContext::default().spawn_local(async move {
+            while let Ok(event) = rx.recv().await {
+                if let nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
+                    ref path,
+                    ref cached_path,
+                } = event
+                {
+                    g_view.update_thumbnail(path, cached_path);
+                    l_view.update_thumbnail(path, cached_path);
+                }
+            }
+        });
+
         let empty_page = adw::StatusPage::builder()
             .icon_name("folder-open-symbolic")
             .title("Folder is Empty")

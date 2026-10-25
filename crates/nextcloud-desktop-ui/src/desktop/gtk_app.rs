@@ -3,7 +3,7 @@
 use gtk4::{Box as GtkBox, Orientation, Stack, StackTransitionType};
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use tokio::sync::mpsc;
 
@@ -397,9 +397,27 @@ fn build_ui(
         }
     });
 
-    // Reactive event subscriber loop for VfsTreeUpdated and sync cycle events
+    // Reactive event subscriber loop for VfsTreeUpdated and sync cycle events with 200ms debounce
     let mut event_rx = controller.subscribe_events();
-    let refresh_for_events = refresh_cb.clone();
+    let debounce_timer: Rc<Cell<Option<glib::SourceId>>> = Rc::new(Cell::new(None));
+    let refresh_for_events = {
+        let refresh = refresh_cb.clone();
+        let timer = debounce_timer.clone();
+        move || {
+            if let Some(source) = timer.take() {
+                source.remove();
+            }
+            let refresh = refresh.clone();
+            let timer_inner = timer.clone();
+            let source =
+                glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
+                    timer_inner.set(None);
+                    refresh();
+                });
+            timer.set(Some(source));
+        }
+    };
+    let direct_refresh = refresh_cb.clone();
     let ctrl_for_events = controller.clone();
     glib::MainContext::default().spawn_local(async move {
         while let Ok(event) = event_rx.recv().await {
@@ -418,7 +436,7 @@ fn build_ui(
                 }
                 nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. } => {
                     ctrl_for_events.set_current_path("/").await;
-                    refresh_for_events();
+                    direct_refresh();
                 }
                 nextcloud_desktop_core::events::DesktopEvent::VfsTreeUpdated { .. }
                 | nextcloud_desktop_core::events::DesktopEvent::SyncCompleted { .. } => {
