@@ -43,45 +43,57 @@ impl FolderSyncEngine {
         let dav_prefix = format!("/remote.php/dav/files/{user}");
         let mut collected = Vec::new();
         let mut dir_queue = vec![remote_root.to_string()];
+        let mut visited = std::collections::HashSet::new();
         let body = PropfindBody::all();
 
         while let Some(current_dir) = dir_queue.pop() {
-            let dav_path = make_dav_path(user, &current_dir)?;
+            let clean_current = if current_dir.is_empty() || current_dir == "/" {
+                "/".to_string()
+            } else {
+                format!("/{}", current_dir.trim_matches('/'))
+            };
+
+            if !visited.insert(clean_current.clone()) {
+                continue;
+            }
+
+            let dav_path = make_dav_path(user, &clean_current)?;
             let resources = match dav_client.propfind(&dav_path, Depth::One, &body).await {
                 Ok(r) => r,
                 Err(e) => {
-                    warn!(dir = %current_dir, error = %e, "WebDAV propfind failed during discovery");
+                    warn!(dir = %clean_current, error = %e, "WebDAV propfind failed during discovery");
                     continue;
                 }
             };
 
             for res in resources {
                 let decoded_href = percent_decode(&res.href);
-                let Some(path_after_prefix) = decoded_href.strip_prefix(&dav_prefix) else {
+                let path_after_prefix = if let Some(idx) = decoded_href.find(&dav_prefix) {
+                    &decoded_href[idx + dav_prefix.len()..]
+                } else if let Some(p) = decoded_href.strip_prefix(&dav_prefix) {
+                    p
+                } else {
                     continue;
                 };
 
-                let clean_path = path_after_prefix.trim_end_matches('/');
-                let clean_root = remote_root.trim_end_matches('/');
+                let clean_path = format!("/{}", path_after_prefix.trim_matches('/'));
 
-                // Skip current directory itself
-                if clean_path == clean_root || (clean_path.is_empty() && clean_root.is_empty()) {
+                // Skip the queried collection directory itself
+                if clean_path == clean_current || (clean_path == "/" && clean_current == "/") {
                     continue;
                 }
 
                 // Calculate relative path within the mount root
-                let relative_path = if clean_root.is_empty() || clean_root == "/" {
-                    if clean_path.starts_with('/') {
-                        clean_path.to_string()
-                    } else {
-                        format!("/{clean_path}")
-                    }
-                } else if let Some(rel) = clean_path.strip_prefix(clean_root) {
-                    if rel.starts_with('/') {
-                        rel.to_string()
-                    } else {
-                        format!("/{rel}")
-                    }
+                let clean_mount_root = if remote_root.is_empty() || remote_root == "/" {
+                    "/".to_string()
+                } else {
+                    format!("/{}", remote_root.trim_matches('/'))
+                };
+
+                let relative_path = if clean_mount_root == "/" {
+                    clean_path.clone()
+                } else if let Some(rel) = clean_path.strip_prefix(&clean_mount_root) {
+                    format!("/{}", rel.trim_matches('/'))
                 } else {
                     continue;
                 };
@@ -98,13 +110,8 @@ impl FolderSyncEngine {
                     is_directory: is_col,
                 });
 
-                if is_col {
-                    let next_remote_dir = if clean_path.starts_with('/') {
-                        clean_path.to_string()
-                    } else {
-                        format!("/{clean_path}")
-                    };
-                    dir_queue.push(next_remote_dir);
+                if is_col && !visited.contains(&clean_path) {
+                    dir_queue.push(clean_path);
                 }
             }
         }
@@ -464,5 +471,14 @@ mod tests {
             percent_decode("%2FDocuments%2Ffile.txt"),
             "/Documents/file.txt"
         );
+    }
+
+    #[test]
+    fn path_prefix_stripping() {
+        let dav_prefix = "/remote.php/dav/files/user";
+        let href = "https://nextcloud.example.com/remote.php/dav/files/user/Documents/report.pdf";
+        let idx = href.find(dav_prefix).expect("prefix found");
+        let path_after = &href[idx + dav_prefix.len()..];
+        assert_eq!(path_after, "/Documents/report.pdf");
     }
 }

@@ -45,6 +45,7 @@ pub struct DesktopSyncCoordinator {
     pub(crate) thumbnail_stats: Arc<std::sync::RwLock<ThumbnailQueueSnapshot>>,
     pub(crate) is_preloading_tree: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) storage: Option<Arc<nextcloud_desktop_core::DesktopStorage>>,
+    pub(crate) watcher: Arc<tokio::sync::Mutex<Option<crate::watcher::FileSystemWatcher>>>,
 }
 
 impl DesktopSyncCoordinator {
@@ -82,9 +83,16 @@ impl DesktopSyncCoordinator {
             thumbnail_stats: Arc::new(std::sync::RwLock::new(ThumbnailQueueSnapshot::default())),
             is_preloading_tree: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             storage: None,
+            watcher: Arc::new(tokio::sync::Mutex::new(None)),
         };
 
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
+            let watcher_coord = coord.clone();
+            rt_handle.spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                watcher_coord.init_watcher().await;
+            });
+
             if let Some(ref h) = handle {
                 let mut orch_rx = h.subscribe_events();
                 let bus = event_bus;
@@ -367,5 +375,42 @@ impl DesktopSyncCoordinator {
     pub async fn sync_all_mounts(&self) {
         let engine = crate::folder_sync::FolderSyncEngine::new(self.clone());
         engine.sync_all_mounts().await;
+    }
+
+    /// Initializes and starts the filesystem watcher for all active folder pairings.
+    pub async fn init_watcher(&self) {
+        let mut watcher_guard = self.watcher.lock().await;
+        if watcher_guard.is_none() {
+            let mut w = crate::watcher::FileSystemWatcher::new(self.clone());
+            if let Ok(()) = w.start() {
+                *watcher_guard = Some(w);
+            }
+        }
+
+        if let Some(ref mut w) = *watcher_guard {
+            for mount in self.sync_mounts().await {
+                if mount.id == "app-default-vfs" || !mount.enabled {
+                    continue;
+                }
+                let local_path = PathBuf::from(&mount.local_target);
+                let _ = w.watch_folder(&local_path, &mount.id);
+            }
+        }
+    }
+
+    /// Registers a local directory path with the filesystem watcher.
+    pub async fn watch_mount(&self, local_path: &std::path::Path, mount_id: &str) {
+        let mut watcher_guard = self.watcher.lock().await;
+        if let Some(ref mut w) = *watcher_guard {
+            let _ = w.watch_folder(local_path, mount_id);
+        }
+    }
+
+    /// Unregisters a local directory path from the filesystem watcher.
+    pub async fn unwatch_mount(&self, local_path: &std::path::Path) {
+        let mut watcher_guard = self.watcher.lock().await;
+        if let Some(ref mut w) = *watcher_guard {
+            w.unwatch_folder(local_path);
+        }
     }
 }

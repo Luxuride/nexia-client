@@ -323,6 +323,9 @@ impl DesktopSyncCoordinator {
             let _ = h.mounts().add_mount(desc).await;
         }
 
+        // Register with filesystem watcher to monitor for local edits & additions
+        self.watch_mount(&local_buf, &mount_id).await;
+
         // Immediately trigger initial sync for the newly registered mount
         let coord = self.clone();
         let mid = mount_id.clone();
@@ -335,6 +338,12 @@ impl DesktopSyncCoordinator {
 
     /// Removes a sync mount by ID from both the SDK database and the orchestrator.
     pub async fn remove_sync_mount(&self, id: &str) -> Result<(), SyncError> {
+        let mounts = self.sync_mounts().await;
+        if let Some(target) = mounts.into_iter().find(|m| m.id == id) {
+            let local_path = std::path::PathBuf::from(&target.local_target);
+            self.unwatch_mount(&local_path).await;
+        }
+
         if let Some(client) = self.active_client().await {
             let _ = client.remove_sync_mount(id).await;
         }

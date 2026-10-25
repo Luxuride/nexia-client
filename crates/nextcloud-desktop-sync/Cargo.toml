@@ -17,3 +17,4 @@ thiserror.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 uuid.workspace = true
+notify = "8.0.0"
