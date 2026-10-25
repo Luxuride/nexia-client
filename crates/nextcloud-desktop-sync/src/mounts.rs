@@ -254,6 +254,16 @@ impl DesktopSyncCoordinator {
         };
         Ok(nextcloud_rust_sdk::MountProgressSnapshot::new(id, status))
     }
+
+    /// Returns `true` if a folder synchronization cycle is actively in progress for `id`.
+    pub async fn is_mount_syncing(&self, id: &str) -> bool {
+        if let Ok(map) = self.mount_progress_cache.read()
+            && let Some(snap) = map.get(id)
+        {
+            return matches!(snap.status, MountStatus::Syncing);
+        }
+        false
+    }
 }
 
 fn scan_local_dir_usage(root: &std::path::Path) -> (usize, u64) {

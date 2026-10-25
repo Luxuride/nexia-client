@@ -221,11 +221,6 @@ impl DesktopSyncCoordinator {
             .map(|a| a.credentials.username.clone())
             .unwrap_or_else(|| "default".to_string());
 
-        let account_key = active_account
-            .as_ref()
-            .map(|a| a.id.0.replace([':', '/', ' '], "_"))
-            .unwrap_or_else(|| "default".to_string());
-
         let handle = self
             .orchestrator_handle
             .read()
@@ -237,11 +232,11 @@ impl DesktopSyncCoordinator {
         let mount_id = if let Some(ref id) = *mount_lock {
             id.clone()
         } else {
-            let initial_id = MountId::from(format!("app-vfs-{account_key}"));
+            let initial_id = MountId::from("app-default-vfs".to_string());
             let vfs_dir = self
                 .cache_dir()
                 .join("mounts")
-                .join(initial_id.as_str())
+                .join("app-default-vfs")
                 .join("vfs");
             let tree_file = vfs_dir.join("tree.json");
             if !tree_file.exists() {
@@ -305,15 +300,36 @@ impl DesktopSyncCoordinator {
                 nextcloud_rust_sdk::ServerUrl::parse(&active_acc.server.server_url)
                     .map(|u| u.authority().to_string())
                     .unwrap_or_default();
-            let clients = self.clients.read().await;
-            for c in clients.iter() {
-                let c_auth = c.server_url().authority().to_string();
-                if (c.server_url().as_str().trim_end_matches('/')
-                    == active_acc.server.server_url.trim_end_matches('/')
-                    || (!target_authority.is_empty() && c_auth == target_authority))
-                    && c.current_user_id().as_deref() == Some(&active_acc.credentials.username)
+            {
+                let clients = self.clients.read().await;
+                for c in clients.iter() {
+                    let c_auth = c.server_url().authority().to_string();
+                    if (c.server_url().as_str().trim_end_matches('/')
+                        == active_acc.server.server_url.trim_end_matches('/')
+                        || (!target_authority.is_empty() && c_auth == target_authority))
+                        && c.current_user_id().as_deref() == Some(&active_acc.credentials.username)
+                    {
+                        return Some(c.clone());
+                    }
+                }
+            }
+
+            // Client not yet initialized for active account: instantiate and cache
+            if let Ok(server_url) =
+                nextcloud_rust_sdk::ServerUrl::parse(&active_acc.server.server_url)
+            {
+                let secret = nextcloud_rust_sdk::SecretString::new(active_acc.credentials.secret());
+                if let Ok(client) = self
+                    .build_account_client(
+                        server_url,
+                        &active_acc.credentials.username,
+                        secret,
+                        &active_acc.id.0,
+                    )
+                    .await
                 {
-                    return Some(c.clone());
+                    self.add_client(client.clone()).await;
+                    return Some(client);
                 }
             }
         }

@@ -37,30 +37,37 @@ impl FileSystemWatcher {
 
     /// Starts monitoring local directories for changes using an asynchronous debounced worker.
     pub fn start(&mut self) -> Result<(), SyncError> {
-        let (tx, mut rx) = mpsc::channel::<PathBuf>(100);
+        let (tx, mut rx) = mpsc::channel::<(EventKind, PathBuf)>(100);
         let watched_map = self.watched_paths.clone();
 
         let event_handler = move |res: Result<Event, notify::Error>| match res {
             Ok(event) => {
-                if matches!(
+                if matches!(event.kind, EventKind::Access(_)) {
+                    for path in event.paths {
+                        if path.is_file()
+                            && let Ok(meta) = std::fs::metadata(&path)
+                            && meta.len() == 0
+                        {
+                            let _ = tx.blocking_send((event.kind, path));
+                        }
+                    }
+                } else if matches!(
                     event.kind,
-                    EventKind::Create(_)
-                        | EventKind::Modify(_)
-                        | EventKind::Remove(_)
-                        | EventKind::Access(_)
+                    EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
                 ) {
                     for path in event.paths {
                         // Skip internal journal, temporary and hidden files
-                        if let Some(file_name) = path.file_name().and_then(|s| s.to_str())
-                            && (file_name.starts_with('.')
-                                || file_name.ends_with(".part")
-                                || file_name.ends_with(".crdownload")
-                                || file_name.ends_with("journal.json")
-                                || file_name.ends_with("tree.json"))
-                        {
+                        if path.components().any(|c| {
+                            let s = c.as_os_str().to_string_lossy();
+                            s.starts_with('.')
+                                || s.ends_with(".part")
+                                || s.ends_with(".crdownload")
+                                || s.ends_with("journal.json")
+                                || s.ends_with("tree.json")
+                        }) {
                             continue;
                         }
-                        let _ = tx.blocking_send(path);
+                        let _ = tx.blocking_send((event.kind, path));
                     }
                 }
             }
@@ -91,19 +98,22 @@ impl FileSystemWatcher {
                 std::collections::HashSet::new();
 
             loop {
-                // Collect events with a 750ms debounce window
+                // Collect events with a 1500ms debounce window
                 tokio::select! {
-                    Some(changed_path) = rx.recv() => {
+                    Some((kind, changed_path)) = rx.recv() => {
                         // Check if 0-byte virtual placeholder file was accessed or opened: hydrate immediately!
-                        if changed_path.is_file()
-                            && let Ok(meta) = std::fs::metadata(&changed_path)
-                            && meta.len() == 0
-                        {
-                            let c = coord.clone();
-                            let p = changed_path.clone();
-                            tokio::spawn(async move {
-                                let _ = c.hydrate_local_file(&p).await;
-                            });
+                        if matches!(kind, EventKind::Access(_)) {
+                            if changed_path.is_file()
+                                && let Ok(meta) = std::fs::metadata(&changed_path)
+                                && meta.len() == 0
+                            {
+                                let c = coord.clone();
+                                let p = changed_path.clone();
+                                tokio::spawn(async move {
+                                    let _ = c.hydrate_local_file(&p).await;
+                                });
+                            }
+                            // Access events never trigger upload sync cycles
                             continue;
                         }
 
@@ -115,9 +125,12 @@ impl FileSystemWatcher {
                             }
                         }
                     }
-                    _ = tokio::time::sleep(Duration::from_millis(750)), if !pending_mounts.is_empty() => {
+                    _ = tokio::time::sleep(Duration::from_millis(1500)), if !pending_mounts.is_empty() => {
                         let to_sync: Vec<String> = pending_mounts.drain().collect();
                         for m_id in to_sync {
+                            if coord.is_mount_syncing(&m_id).await {
+                                continue;
+                            }
                             info!(mount_id = %m_id, "Local file change detected by watcher, triggering upload sync");
                             let _ = coord.sync_mount_folder(&m_id).await;
                         }

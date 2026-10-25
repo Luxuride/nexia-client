@@ -390,9 +390,29 @@ impl DesktopSyncCoordinator {
     /// Helper resolving active user name, SDK client, and auth credentials.
     pub(crate) async fn active_dav_context(&self) -> Option<(String, Client, BasicAuth)> {
         let client = self.active_client().await?;
-        let auth = client.credentials()?;
+        let auth = client.credentials().or_else(|| {
+            let conf = self.config.try_read().ok()?;
+            let acc = conf
+                .active_account_id
+                .as_ref()
+                .and_then(|id| conf.get_account(id))
+                .or_else(|| conf.accounts.first())?;
+            Some(BasicAuth::new(
+                &acc.credentials.username,
+                SecretString::new(acc.credentials.secret()),
+            ))
+        })?;
         let user = client
             .current_user_id()
+            .or_else(|| {
+                let conf = self.config.try_read().ok()?;
+                let acc = conf
+                    .active_account_id
+                    .as_ref()
+                    .and_then(|id| conf.get_account(id))
+                    .or_else(|| conf.accounts.first())?;
+                Some(acc.credentials.username.clone())
+            })
             .unwrap_or_else(|| "user".to_string());
         Some((user, client, auth))
     }
@@ -468,6 +488,29 @@ impl DesktopSyncCoordinator {
                 conf.sync_system_accounts(discovered_accounts);
             }
             self.persist_config().await;
+        }
+
+        // Ensure all configured accounts have their clients built and registered
+        let configured = {
+            let conf = self.config.read().await;
+            conf.accounts.clone()
+        };
+        for acc in configured {
+            let exists = {
+                let clients = self.clients.read().await;
+                clients
+                    .iter()
+                    .any(|c| c.current_user_id().as_deref() == Some(&acc.credentials.username))
+            };
+            if !exists && let Ok(server_url) = ServerUrl::parse(&acc.server.server_url) {
+                let secret = SecretString::new(acc.credentials.secret());
+                if let Ok(client) = self
+                    .build_account_client(server_url, &acc.credentials.username, secret, &acc.id.0)
+                    .await
+                {
+                    self.add_client(client).await;
+                }
+            }
         }
     }
 

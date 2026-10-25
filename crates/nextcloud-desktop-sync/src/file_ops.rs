@@ -24,6 +24,7 @@ impl DesktopSyncCoordinator {
         let vfs = self.active_vfs().await;
 
         let Some((user, client, auth)) = self.active_dav_context().await else {
+            tracing::warn!("Cannot refresh virtual tree: no active DAV context");
             return Ok(0);
         };
 
@@ -31,11 +32,15 @@ impl DesktopSyncCoordinator {
         let root_dav =
             DavPath::root(&user).map_err(|err| SyncError::InvalidPath(err.to_string()))?;
 
+        tracing::info!(user = %user, "Querying WebDAV root PROPFIND for virtual tree");
         let body = PropfindBody::all();
         let resources = match dav_client.propfind(&root_dav, Depth::One, &body).await {
-            Ok(r) => r,
+            Ok(r) => {
+                tracing::info!(count = r.len(), "WebDAV PROPFIND returned root resources");
+                r
+            }
             Err(err) => {
-                tracing::warn!("Remote WebDAV PROPFIND failed ({err}), keeping default tree");
+                tracing::warn!(error = %err, "Remote WebDAV PROPFIND failed, keeping default tree");
                 return Ok(0);
             }
         };
@@ -68,10 +73,19 @@ impl DesktopSyncCoordinator {
             .collect();
 
         // Repopulate directly inside the orchestrator actor thread
-        let inserted = vfs
+        let inserted = match vfs
             .populate_from_resources(&dav_prefix, summaries.clone())
             .await
-            .unwrap_or(0);
+        {
+            Ok(count) => {
+                tracing::info!(count, "VFS tree populated with resources");
+                count
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to populate VFS tree from resources");
+                0
+            }
+        };
 
         self.event_bus.emit(
             nextcloud_desktop_core::events::DesktopEvent::VfsTreeUpdated {
