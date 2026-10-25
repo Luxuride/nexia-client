@@ -200,6 +200,46 @@ impl DesktopSyncCoordinator {
         AppConfig::default_cache_dir()
     }
 
+    /// Returns the cache directory for a specific account.
+    pub fn account_dir(&self, account_id: &str) -> PathBuf {
+        self.cache_dir().join("accounts").join(account_id)
+    }
+
+    /// Returns the thumbnails directory for a specific account.
+    pub fn account_thumbnails_dir(&self, account_id: &str) -> PathBuf {
+        self.account_dir(account_id).join("thumbnails")
+    }
+
+    /// Returns the active account's thumbnails directory synchronously, or global fallback.
+    pub fn active_thumbnails_dir_sync(&self) -> PathBuf {
+        if let Ok(conf) = self.config.try_read()
+            && let Some(ref acc_id) = conf.active_account_id
+        {
+            self.account_thumbnails_dir(&acc_id.0)
+        } else {
+            self.cache_dir().join("thumbnails")
+        }
+    }
+
+    /// Returns the active account's thumbnails directory, or global fallback if no active account.
+    pub async fn active_thumbnails_dir(&self) -> PathBuf {
+        if let Some(account) = self.active_account().await {
+            self.account_thumbnails_dir(&account.id.0)
+        } else {
+            self.active_thumbnails_dir_sync()
+        }
+    }
+
+    /// Returns the virtual filesystem directory for a specific account.
+    pub fn account_vfs_dir(&self, account_id: &str) -> PathBuf {
+        self.account_dir(account_id).join("vfs")
+    }
+
+    /// Returns the mount cache directory for a specific account.
+    pub fn account_mounts_dir(&self, account_id: &str) -> PathBuf {
+        self.account_dir(account_id).join("mounts")
+    }
+
     /// Returns `true` if the background orchestrator actor thread is active.
     pub fn is_orchestrator_running(&self) -> bool {
         self.orchestrator
@@ -216,6 +256,10 @@ impl DesktopSyncCoordinator {
     /// Access the virtual filesystem handle for the active account mount.
     pub async fn active_vfs(&self) -> VfsHandle {
         let active_account = self.active_account().await;
+        let account_id_str = active_account
+            .as_ref()
+            .map(|a| a.id.0.clone())
+            .unwrap_or_else(|| "default".to_string());
         let active_user = active_account
             .as_ref()
             .map(|a| a.credentials.username.clone())
@@ -232,18 +276,24 @@ impl DesktopSyncCoordinator {
         let mount_id = if let Some(ref id) = *mount_lock {
             id.clone()
         } else {
-            let initial_id = MountId::from("app-default-vfs".to_string());
-            let vfs_dir = self
-                .cache_dir()
-                .join("mounts")
-                .join("app-default-vfs")
-                .join("vfs");
+            let initial_id = MountId::from(format!("app-vfs-{}", account_id_str));
+            let vfs_dir = self.account_vfs_dir(&account_id_str);
             let tree_file = vfs_dir.join("tree.json");
             if !tree_file.exists() {
                 let _ = std::fs::create_dir_all(&vfs_dir);
-                let tree = VirtualTree::new("Nextcloud");
-                if let Ok(json) = serde_json::to_string_pretty(&tree) {
-                    let _ = std::fs::write(&tree_file, json);
+                let legacy_tree = self
+                    .cache_dir()
+                    .join("mounts")
+                    .join("app-default-vfs")
+                    .join("vfs")
+                    .join("tree.json");
+                if legacy_tree.exists() {
+                    let _ = std::fs::copy(&legacy_tree, &tree_file);
+                } else {
+                    let tree = VirtualTree::new("Nextcloud");
+                    if let Ok(json) = serde_json::to_string_pretty(&tree) {
+                        let _ = std::fs::write(&tree_file, json);
+                    }
                 }
             }
 

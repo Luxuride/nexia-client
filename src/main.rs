@@ -9,6 +9,7 @@ use nextcloud_desktop_core::config::AppConfig;
 use nextcloud_desktop_core::events::EventBus;
 use nextcloud_desktop_sync::DesktopSyncCoordinator;
 use nextcloud_desktop_ui::controller::DesktopUiController;
+use nextcloud_desktop_ui::widget::FileExplorerBackend;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -150,6 +151,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             if args.list_mounts {
+                tracing::info!("Listing configured sync mounts...");
+                let configured = controller.sync_mounts().await;
+                for m in configured {
+                    tracing::info!(
+                        id = %m.id,
+                        account_id = %m.account_id,
+                        remote = %m.remote_path,
+                        local = %m.local_target,
+                        mode = %m.mode,
+                        enabled = m.enabled,
+                        "Configured Sync Mount"
+                    );
+                }
+
                 tracing::info!("Listing active orchestrator mounts...");
                 match controller.list_mounts().await {
                     Ok(mounts) => {

@@ -244,17 +244,12 @@ impl DesktopSyncCoordinator {
         };
 
         if let Some(account) = self.active_account().await {
-            let has_app_vfs = mounts.iter().any(|m| {
-                m.id == "app-default-vfs" || (m.remote_path == "/" && m.mode == "VirtualVfs")
-            });
+            let app_vfs_id = format!("app-vfs-{}", account.id.0);
+            let has_app_vfs = mounts.iter().any(|m| m.id == app_vfs_id);
             if !has_app_vfs {
-                let vfs_dir = self
-                    .cache_dir()
-                    .join("mounts")
-                    .join("app-default-vfs")
-                    .join("vfs");
+                let vfs_dir = self.account_vfs_dir(&account.id.0);
                 let default_app_mount = StoredSyncMount {
-                    id: "app-default-vfs".to_string(),
+                    id: app_vfs_id.clone(),
                     account_id: account.id.0.clone(),
                     remote_path: "/".to_string(),
                     local_target: vfs_dir.to_string_lossy().to_string(),

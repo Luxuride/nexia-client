@@ -699,7 +699,7 @@ impl DesktopSyncCoordinator {
 
     /// Cleans and deletes cached thumbnails, returning bytes freed.
     pub async fn clean_thumbnails(&self) -> Result<u64, SyncError> {
-        let thumbs_dir = self.cache_dir().join("thumbnails");
+        let thumbs_dir = self.active_thumbnails_dir().await;
         let mut freed = 0;
         if let Ok(entries) = std::fs::read_dir(&thumbs_dir) {
             for entry in entries.flatten() {
@@ -728,7 +728,7 @@ impl DesktopSyncCoordinator {
     /// Removes cached thumbnails that exceed the configured maximum thumbnail size, returning bytes freed.
     pub async fn clean_oversized_thumbnails(&self) -> Result<u64, SyncError> {
         let max_size = self.max_thumbnail_size().await;
-        let thumbs_dir = self.cache_dir().join("thumbnails");
+        let thumbs_dir = self.active_thumbnails_dir().await;
         let mut freed = 0;
         if let Ok(entries) = std::fs::read_dir(&thumbs_dir) {
             for entry in entries.flatten() {
@@ -907,8 +907,8 @@ impl DesktopSyncCoordinator {
         remote_path: &str,
         preferred_size: Option<u32>,
     ) -> Option<PathBuf> {
-        let cache_dir = self.cache_dir();
-        let thumbs_dir = cache_dir.join("thumbnails");
+        let thumbs_dir = self.active_thumbnails_dir_sync();
+        let fallback_thumbs_dir = self.cache_dir().join("thumbnails");
         let clean_path = remote_path.trim_matches('/');
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         std::hash::Hash::hash(&clean_path, &mut hasher);
@@ -919,11 +919,19 @@ impl DesktopSyncCoordinator {
             if p.exists() {
                 return Some(p);
             }
+            let fb_p = fallback_thumbs_dir.join(format!("{:016x}_{s}.png", path_hash));
+            if fb_p.exists() {
+                return Some(fb_p);
+            }
         }
 
         let low_p = thumbs_dir.join(format!("{:016x}_64.png", path_hash));
         if low_p.exists() {
             return Some(low_p);
+        }
+        let fb_low_p = fallback_thumbs_dir.join(format!("{:016x}_64.png", path_hash));
+        if fb_low_p.exists() {
+            return Some(fb_low_p);
         }
 
         None
@@ -946,8 +954,7 @@ impl DesktopSyncCoordinator {
         };
         let effective_size = standard_size.min(max_size).max(64);
 
-        let cache_dir = self.cache_dir();
-        let thumbs_dir = cache_dir.join("thumbnails");
+        let thumbs_dir = self.active_thumbnails_dir().await;
         let _ = tokio::fs::create_dir_all(&thumbs_dir).await;
 
         let clean_path = remote_path.trim_matches('/');

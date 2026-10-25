@@ -185,7 +185,7 @@ impl DesktopSyncCoordinator {
             (0, 0)
         };
 
-        let shared_thumbnail_bytes = scan_local_dir_bytes(&self.cache_dir().join("thumbnails"));
+        let shared_thumbnail_bytes = scan_local_dir_bytes(&self.active_thumbnails_dir().await);
         Ok(MountStorageUsage::new(
             id,
             local_bytes,

@@ -638,10 +638,8 @@ impl DesktopUiController {
 
     /// Triggers a synchronization cycle across all configured folder pairings.
     pub async fn trigger_sync(&self) -> Result<(), UiError> {
-        self.coordinator
-            .sync_all_pairs()
-            .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+        self.coordinator.sync_all_mounts().await;
+        Ok(())
     }
 
     /// Returns all configured account profiles.

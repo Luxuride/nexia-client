@@ -130,7 +130,7 @@ impl FolderSyncEngine {
 
     /// Synchronizes a single sync mount by ID.
     pub async fn sync_mount(&self, mount_id: &str) -> Result<usize, SyncError> {
-        if mount_id == "app-default-vfs" {
+        if mount_id.starts_with("app-") {
             return Ok(0);
         }
 
@@ -207,8 +207,10 @@ impl FolderSyncEngine {
             }
         };
 
-        let cache_dir = self.coordinator.config.read().await.resolved_cache_dir();
-        let mount_cache_dir = cache_dir.join("mounts").join(mount_id);
+        let mount_cache_dir = self
+            .coordinator
+            .account_mounts_dir(&mount.account_id)
+            .join(mount_id);
         if !mount_cache_dir.exists() {
             let _ = std::fs::create_dir_all(&mount_cache_dir);
         }
@@ -551,7 +553,7 @@ impl FolderSyncEngine {
     pub async fn sync_all_mounts(&self) {
         let mounts = self.coordinator.sync_mounts().await;
         for mount in mounts {
-            if mount.id == "app-default-vfs" || !mount.enabled {
+            if mount.id.starts_with("app-") || !mount.enabled {
                 continue;
             }
             let m_id = MountId::from(mount.id.clone());
