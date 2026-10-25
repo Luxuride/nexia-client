@@ -18,6 +18,10 @@ pub enum SyncError {
     #[error("VFS error: {0}")]
     Vfs(#[from] nextcloud_rust_sdk::VfsError),
 
+    /// Error originating from nextcloud-rust-sdk sync engine.
+    #[error("SDK sync error: {0}")]
+    SdkSync(#[from] nextcloud_rust_sdk::SyncError),
+
     /// Local filesystem I/O failure.
     #[error("local I/O failure at {path} while {context}: {source}")]
     LocalIo {
