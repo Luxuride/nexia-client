@@ -65,11 +65,12 @@ impl ActivityPage {
                         .activatable(true)
                         .build();
 
-                    let icon_name = if mount_id_str == "app-default-vfs" {
-                        "folder-remote-symbolic"
-                    } else {
-                        "folder-symbolic"
-                    };
+                    let icon_name =
+                        if mount_id_str.starts_with("app-") || mount_id_str == "app-default-vfs" {
+                            "folder-remote-symbolic"
+                        } else {
+                            "folder-symbolic"
+                        };
                     row.add_prefix(&Image::from_icon_name(icon_name));
 
                     let pbar = ProgressBar::new();

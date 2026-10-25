@@ -230,4 +230,34 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(temp_dir);
     }
+
+    #[tokio::test]
+    async fn primary_account_vfs_protection_and_legacy_purge() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "nextcloud_vfs_protect_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let config = AppConfig {
+            cache_dir: Some(temp_dir.clone()),
+            ..Default::default()
+        };
+        let config_lock = Arc::new(tokio::sync::RwLock::new(config));
+        let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
+
+        // 1. Verify internal VFS identification
+        assert!(DesktopSyncCoordinator::is_internal_vfs("app-default-vfs"));
+        assert!(DesktopSyncCoordinator::is_internal_vfs("app-vfs-user-1"));
+        assert!(!DesktopSyncCoordinator::is_internal_vfs("custom-sync-uuid"));
+
+        // 2. Attempting to remove an internal account VFS must be rejected
+        let res = coordinator
+            .remove_sync_mount_with_cleanup("app-vfs-user-1", true)
+            .await;
+        assert!(res.is_err());
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
 }

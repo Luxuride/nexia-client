@@ -177,8 +177,8 @@ impl SyncMountSettingsDialog {
 
         page.add(&clean_group);
 
-        // 4. Remove sync pairing (for user-added mounts)
-        let is_app_default = mount.id == "app-default-vfs";
+        // 4. Remove sync pairing (for user-added mounts only; the primary account virtual drive is permanent)
+        let is_app_default = mount.id.starts_with("app-") || mount.id == "app-default-vfs";
         if !is_app_default {
             let remove_group = adw::PreferencesGroup::builder()
                 .title("Remove Synchronization")

@@ -233,6 +233,11 @@ impl DesktopSyncCoordinator {
         Ok(())
     }
 
+    /// Checks whether a mount ID represents an internal account virtual drive (which cannot be removed).
+    pub fn is_internal_vfs(mount_id: &str) -> bool {
+        mount_id.starts_with("app-") || mount_id == "app-default-vfs"
+    }
+
     /// Lists all sync mounts stored in the SDK database for the active account, ensuring the application virtual drive is registered.
     pub async fn sync_mounts(&self) -> Vec<StoredSyncMount> {
         let mut mounts = if let Some(client) = self.active_client().await
@@ -243,7 +248,34 @@ impl DesktopSyncCoordinator {
             Vec::new()
         };
 
+        // 1. Purge legacy app-default-vfs mount if present
+        let had_legacy = mounts.iter().any(|m| {
+            m.id == "app-default-vfs" || m.local_target.contains("mounts/app-default-vfs")
+        });
+        if had_legacy {
+            if let Some(client) = self.active_client().await {
+                let _ = client.remove_sync_mount("app-default-vfs").await;
+            }
+            if let Some(ref h) = *self.orchestrator_handle.read().await {
+                let _ = h
+                    .mounts()
+                    .remove_mount(MountId::from("app-default-vfs".to_string()))
+                    .await;
+            }
+            let legacy_dir = self.cache_dir().join("mounts").join("app-default-vfs");
+            if legacy_dir.exists() {
+                let _ = tokio::fs::remove_dir_all(&legacy_dir).await;
+            }
+            mounts.retain(|m| {
+                m.id != "app-default-vfs" && !m.local_target.contains("mounts/app-default-vfs")
+            });
+        }
+
+        // 2. Ensure per-account virtual mount exists
         if let Some(account) = self.active_account().await {
+            // Filter to only mounts belonging to the active account (or unassigned)
+            mounts.retain(|m| m.account_id.is_empty() || m.account_id == account.id.0);
+
             let app_vfs_id = format!("app-vfs-{}", account.id.0);
             let has_app_vfs = mounts.iter().any(|m| m.id == app_vfs_id);
             if !has_app_vfs {
@@ -265,6 +297,11 @@ impl DesktopSyncCoordinator {
                 mounts.insert(0, default_app_mount);
             }
         }
+
+        // 3. Deduplicate mounts by ID
+        let mut seen = std::collections::HashSet::new();
+        mounts.retain(|m| seen.insert(m.id.clone()));
+
         mounts
     }
 
@@ -343,6 +380,12 @@ impl DesktopSyncCoordinator {
         id: &str,
         clean_local_files: bool,
     ) -> Result<(), SyncError> {
+        if Self::is_internal_vfs(id) {
+            return Err(SyncError::InvalidPath(
+                "Cannot remove primary account virtual drive".to_string(),
+            ));
+        }
+
         let mounts = self.sync_mounts().await;
         if let Some(target) = mounts.into_iter().find(|m| m.id == id) {
             let local_path = std::path::PathBuf::from(&target.local_target);

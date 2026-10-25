@@ -144,7 +144,7 @@ impl SyncFoldersPage {
 
                 for mount in mounts {
                     let is_vfs = mount.mode == "VirtualVfs";
-                    let is_app_vfs = mount.id == "app-default-vfs";
+                    let is_app_vfs = mount.id.starts_with("app-") || mount.id == "app-default-vfs";
 
                     let title_text = mount.display_name.clone().unwrap_or_else(|| {
                         if is_app_vfs {
@@ -176,77 +176,79 @@ impl SyncFoldersPage {
                     };
                     row.add_prefix(&Image::from_icon_name(icon_name));
 
-                    // Per-mount Sync Now button
-                    let sync_btn = Button::with_label("Sync Now");
-                    sync_btn.set_valign(Align::Center);
-                    sync_btn.add_css_class("flat");
+                    if !is_app_vfs {
+                        // Per-mount Sync Now button
+                        let sync_btn = Button::with_label("Sync Now");
+                        sync_btn.set_valign(Align::Center);
+                        sync_btn.add_css_class("flat");
 
-                    let b_sync = b.clone();
-                    let m_id_sync = mount.id.clone();
-                    let t_sync = toast.clone();
+                        let b_sync = b.clone();
+                        let m_id_sync = mount.id.clone();
+                        let t_sync = toast.clone();
 
-                    sync_btn.connect_clicked(move |_| {
-                        let b = b_sync.clone();
-                        let m_id = m_id_sync.clone();
-                        let toast = t_sync.clone();
+                        sync_btn.connect_clicked(move |_| {
+                            let b = b_sync.clone();
+                            let m_id = m_id_sync.clone();
+                            let toast = t_sync.clone();
 
-                        glib::MainContext::default().spawn_local(async move {
-                            toast.add_toast(adw::Toast::new("Synchronizing folder…"));
-                            let _ = b.sync_mount(&m_id).await;
+                            glib::MainContext::default().spawn_local(async move {
+                                toast.add_toast(adw::Toast::new("Synchronizing folder…"));
+                                let _ = b.sync_mount(&m_id).await;
+                            });
                         });
-                    });
 
-                    row.add_suffix(&sync_btn);
+                        row.add_suffix(&sync_btn);
 
-                    // Per-mount Pause / Resume button
-                    let pause_btn = Button::with_label("Pause");
-                    pause_btn.set_valign(Align::Center);
-                    pause_btn.add_css_class("flat");
+                        // Per-mount Pause / Resume button
+                        let pause_btn = Button::with_label("Pause");
+                        pause_btn.set_valign(Align::Center);
+                        pause_btn.add_css_class("flat");
 
-                    let b_p = b.clone();
-                    let m_id_p = mount.id.clone();
-                    let btn_p = pause_btn.clone();
-                    let t_p = toast.clone();
+                        let b_p = b.clone();
+                        let m_id_p = mount.id.clone();
+                        let btn_p = pause_btn.clone();
+                        let t_p = toast.clone();
 
-                    pause_btn.connect_clicked(move |_| {
-                        let b = b_p.clone();
-                        let m_id = m_id_p.clone();
-                        let btn = btn_p.clone();
-                        let toast = t_p.clone();
+                        pause_btn.connect_clicked(move |_| {
+                            let b = b_p.clone();
+                            let m_id = m_id_p.clone();
+                            let btn = btn_p.clone();
+                            let toast = t_p.clone();
 
-                        glib::MainContext::default().spawn_local(async move {
-                            if let Ok(paused) = b.is_mount_paused(&m_id).await {
-                                if paused {
-                                    let _ = b.resume_mount(&m_id).await;
-                                    btn.set_label("Pause");
-                                    btn.remove_css_class("destructive-action");
-                                    toast.add_toast(adw::Toast::new(
-                                        "Folder synchronization resumed",
-                                    ));
-                                } else {
-                                    let _ = b.pause_mount(&m_id).await;
-                                    btn.set_label("Resume");
-                                    btn.add_css_class("destructive-action");
-                                    toast.add_toast(adw::Toast::new(
-                                        "Folder synchronization paused",
-                                    ));
+                            glib::MainContext::default().spawn_local(async move {
+                                if let Ok(paused) = b.is_mount_paused(&m_id).await {
+                                    if paused {
+                                        let _ = b.resume_mount(&m_id).await;
+                                        btn.set_label("Pause");
+                                        btn.remove_css_class("destructive-action");
+                                        toast.add_toast(adw::Toast::new(
+                                            "Folder synchronization resumed",
+                                        ));
+                                    } else {
+                                        let _ = b.pause_mount(&m_id).await;
+                                        btn.set_label("Resume");
+                                        btn.add_css_class("destructive-action");
+                                        toast.add_toast(adw::Toast::new(
+                                            "Folder synchronization paused",
+                                        ));
+                                    }
                                 }
+                            });
+                        });
+
+                        // Initialize per-mount pause button status
+                        let b_init_p = b.clone();
+                        let m_id_init_p = mount.id.clone();
+                        let btn_init_p = pause_btn.clone();
+                        glib::MainContext::default().spawn_local(async move {
+                            if let Ok(true) = b_init_p.is_mount_paused(&m_id_init_p).await {
+                                btn_init_p.set_label("Resume");
+                                btn_init_p.add_css_class("destructive-action");
                             }
                         });
-                    });
 
-                    // Initialize per-mount pause button status
-                    let b_init_p = b.clone();
-                    let m_id_init_p = mount.id.clone();
-                    let btn_init_p = pause_btn.clone();
-                    glib::MainContext::default().spawn_local(async move {
-                        if let Ok(true) = b_init_p.is_mount_paused(&m_id_init_p).await {
-                            btn_init_p.set_label("Resume");
-                            btn_init_p.add_css_class("destructive-action");
-                        }
-                    });
-
-                    row.add_suffix(&pause_btn);
+                        row.add_suffix(&pause_btn);
+                    }
 
                     // Configure / Settings button
                     let settings_btn = Button::from_icon_name("emblem-system-symbolic");

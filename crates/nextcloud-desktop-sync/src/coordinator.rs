@@ -488,8 +488,15 @@ impl DesktopSyncCoordinator {
         }
 
         let orch_handle = self.orchestrator_handle.read().await.clone();
+        if let Some(ref h) = orch_handle {
+            let _ = h
+                .mounts()
+                .remove_mount(MountId::from("app-default-vfs".to_string()))
+                .await;
+        }
+
         for mount in self.sync_mounts().await {
-            if mount.id == "app-default-vfs" || !mount.enabled {
+            if Self::is_internal_vfs(&mount.id) || !mount.enabled {
                 continue;
             }
             if let Some(ref h) = orch_handle {

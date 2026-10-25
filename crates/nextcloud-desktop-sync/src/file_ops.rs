@@ -276,7 +276,7 @@ impl DesktopSyncCoordinator {
 
                 // If this file matches a local folder sync mount, hydrate the local file directly
                 for mount in self.sync_mounts().await {
-                    if mount.id == "app-default-vfs" || !mount.enabled {
+                    if Self::is_internal_vfs(&mount.id) || !mount.enabled {
                         continue;
                     }
                     let m_remote = mount.remote_path.trim_end_matches('/');
@@ -350,7 +350,7 @@ impl DesktopSyncCoordinator {
             .unwrap_or_else(|_| local_path.to_path_buf());
 
         for mount in mounts {
-            if mount.id == "app-default-vfs" || !mount.enabled {
+            if Self::is_internal_vfs(&mount.id) || !mount.enabled {
                 continue;
             }
             let target_root = PathBuf::from(&mount.local_target);
