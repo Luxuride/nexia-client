@@ -29,7 +29,7 @@ pub struct DesktopTrayItem {
     status_text: String,
 }
 
-#[cfg(feature = "tray")]
+#[cfg(all(feature = "tray", target_os = "linux"))]
 impl DesktopTrayItem {
     /// Creates a new tray item with the given action dispatch sender.
     pub fn new(sender: UnboundedSender<TrayAction>) -> Self {
@@ -47,7 +47,7 @@ impl DesktopTrayItem {
     }
 }
 
-#[cfg(feature = "tray")]
+#[cfg(all(feature = "tray", target_os = "linux"))]
 fn build_cloud_pixmap() -> Vec<Icon> {
     let size = 22usize;
     let mut data = vec![0u8; size * size * 4];
@@ -81,7 +81,7 @@ fn build_cloud_pixmap() -> Vec<Icon> {
     }]
 }
 
-#[cfg(feature = "tray")]
+#[cfg(all(feature = "tray", target_os = "linux"))]
 impl Tray for DesktopTrayItem {
     fn id(&self) -> String {
         "eu.luxuride.nextcloud-desktop".into()
