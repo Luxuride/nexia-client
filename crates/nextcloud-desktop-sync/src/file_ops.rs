@@ -286,6 +286,42 @@ impl DesktopSyncCoordinator {
         }
     }
 
+    /// Retrieves an existing public share link for a virtual file or directory, if one exists.
+    pub async fn get_public_share(&self, remote_path: &str) -> Result<Option<String>, SyncError> {
+        let clean_path = format!("/{}", remote_path.trim_matches('/'));
+
+        if let Some((_, client, auth)) = self.active_dav_context().await {
+            let share_client = client.shares(&auth);
+            match share_client.get_public_link(&clean_path).await {
+                Ok(Some(share)) => Ok(share.url().map(String::from)),
+                Ok(None) => Ok(None),
+                Err(err) => {
+                    tracing::warn!(path = %clean_path, error = %err, "Failed to retrieve public share link");
+                    Ok(None)
+                }
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Deletes any public share link associated with a virtual file or directory.
+    pub async fn delete_public_share(&self, remote_path: &str) -> Result<bool, SyncError> {
+        let clean_path = format!("/{}", remote_path.trim_matches('/'));
+
+        if let Some((_, client, auth)) = self.active_dav_context().await {
+            let share_client = client.shares(&auth);
+            share_client
+                .delete_public_link(&clean_path)
+                .await
+                .map_err(|e| SyncError::Other(format!("Failed to delete public share link: {e}")))
+        } else {
+            Err(SyncError::Other(
+                "No active Nextcloud account configured".to_string(),
+            ))
+        }
+    }
+
     /// Runs synchronization on all enabled two-way sync folder pairs via SDK `FolderSyncRunner`.
     pub async fn sync_all_pairs(&self) -> Result<(), SyncError> {
         let (pairs, cache_dir) = {

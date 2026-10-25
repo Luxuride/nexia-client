@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn test_strip_flowbox_linear_drag_removes_gesture_drag() {
-        if gtk4::init().is_err() {
+        if gtk4::init().is_err() || gdk::Display::default().is_none() {
             return;
         }
 

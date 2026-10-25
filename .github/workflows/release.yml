@@ -23,7 +23,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build Release Binary
-        run: cargo build --release --bin nextcloud-desktop-rs
+        run: cargo build --release --bin nextcloud-desktop-rs --no-default-features
       - name: Package Windows Zip
         shell: bash
         run: |

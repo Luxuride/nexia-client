@@ -57,8 +57,10 @@ mod tests {
     async fn orchestrator_mounts_pause_resume_and_file_status() {
         let temp_dir = std::env::temp_dir().join(format!("nc_test_orch_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
-        let mut config = AppConfig::default();
-        config.cache_dir = Some(temp_dir.clone());
+        let config = AppConfig {
+            cache_dir: Some(temp_dir.clone()),
+            ..Default::default()
+        };
         let config_lock = Arc::new(tokio::sync::RwLock::new(config));
         let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
 
@@ -140,8 +142,10 @@ mod tests {
     async fn orchestrator_vfs_file_mutations() {
         let temp_dir = std::env::temp_dir().join(format!("nc_test_vfs_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
-        let mut config = AppConfig::default();
-        config.cache_dir = Some(temp_dir.clone());
+        let config = AppConfig {
+            cache_dir: Some(temp_dir.clone()),
+            ..Default::default()
+        };
         let config_lock = Arc::new(tokio::sync::RwLock::new(config));
         let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
 
@@ -184,8 +188,10 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let mut config = AppConfig::default();
-        config.cache_dir = Some(temp_dir.clone());
+        let config = AppConfig {
+            cache_dir: Some(temp_dir.clone()),
+            ..Default::default()
+        };
         let config_lock = Arc::new(tokio::sync::RwLock::new(config));
         let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
 

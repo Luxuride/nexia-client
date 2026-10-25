@@ -68,12 +68,22 @@ pub enum DesktopEvent {
         /// Remote path of the dehydrated node.
         path: String,
     },
+    /// A thumbnail preview download started.
+    ThumbnailDownloadStarted {
+        /// Remote path of the file.
+        path: String,
+    },
     /// A thumbnail preview was downloaded and cached on disk.
     ThumbnailReady {
         /// Remote path of the file.
         path: String,
         /// Local cached thumbnail path.
         cached_path: PathBuf,
+    },
+    /// A thumbnail preview download failed or was unavailable.
+    ThumbnailFailed {
+        /// Remote path of the file.
+        path: String,
     },
     /// Virtual file tree was refreshed from remote WebDAV.
     VfsTreeUpdated {

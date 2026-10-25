@@ -24,6 +24,8 @@ thiserror.workspace = true
 gtk4 = { workspace = true, optional = true }
 libadwaita = { workspace = true, optional = true }
 glib = { workspace = true, optional = true }
-ksni = { workspace = true, optional = true }
 uniffi = { workspace = true, optional = true }
 gdk-pixbuf = { version = "0.22", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { workspace = true, optional = true }

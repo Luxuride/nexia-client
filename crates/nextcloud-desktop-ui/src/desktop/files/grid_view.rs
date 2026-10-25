@@ -385,7 +385,7 @@ mod tests {
     #[test]
     fn test_flowbox_stretches_and_allocates_dynamically() {
         crate::suppress_gtk_logs();
-        if gtk4::init().is_err() {
+        if gtk4::init().is_err() || gdk::Display::default().is_none() {
             return;
         }
         let flow_box = FlowBox::new();

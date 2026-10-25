@@ -1,8 +1,8 @@
 //! App bar and system tray StatusNotifierItem integration for background operation.
 
-#[cfg(feature = "tray")]
+#[cfg(all(feature = "tray", target_os = "linux"))]
 use ksni::menu::{MenuItem, StandardItem};
-#[cfg(feature = "tray")]
+#[cfg(all(feature = "tray", target_os = "linux"))]
 use ksni::{Category, Icon, Status, ToolTip, Tray, TrayMethods};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -22,7 +22,7 @@ pub enum TrayAction {
 }
 
 /// Freedesktop StatusNotifierItem representation for Nextcloud Desktop.
-#[cfg(feature = "tray")]
+#[cfg(all(feature = "tray", target_os = "linux"))]
 pub struct DesktopTrayItem {
     sender: UnboundedSender<TrayAction>,
     syncing: bool,
@@ -193,7 +193,7 @@ impl Tray for DesktopTrayItem {
 }
 
 /// Spawns the system tray item in the background using Tokio.
-#[cfg(feature = "tray")]
+#[cfg(all(feature = "tray", target_os = "linux"))]
 pub fn spawn_app_bar_tray(sender: UnboundedSender<TrayAction>) {
     tokio::spawn(async move {
         let tray = DesktopTrayItem::new(sender);
@@ -214,8 +214,8 @@ pub fn spawn_app_bar_tray(sender: UnboundedSender<TrayAction>) {
     });
 }
 
-/// Stub spawn function when tray feature is not enabled.
-#[cfg(not(feature = "tray"))]
+/// Stub spawn function when tray feature or Linux is not enabled.
+#[cfg(not(all(feature = "tray", target_os = "linux")))]
 pub fn spawn_app_bar_tray(_sender: UnboundedSender<TrayAction>) {
     tracing::debug!("Tray feature not compiled; skipping app bar status notifier initialization");
 }

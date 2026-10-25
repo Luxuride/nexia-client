@@ -22,7 +22,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: cargo fmt --all --check
+      - run: cargo fmt --all -- --check
 
   clippy:
     name: clippy
@@ -59,7 +59,12 @@ jobs:
           brew install gtk4 libadwaita pkg-config openssl
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace
+      - name: Run Linux & macOS tests
+        if: runner.os != 'Windows'
+        run: cargo test --workspace
+      - name: Run Windows tests
+        if: runner.os == 'Windows'
+        run: cargo test --package nextcloud-desktop-core --package nextcloud-desktop-sync
 
   docs:
     name: docs
