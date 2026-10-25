@@ -6,7 +6,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::error::UiError;
-use crate::model::{FileSyncStatus, FileViewItem, FileViewMode, ZoomLevel};
+use crate::model::{
+    FileSortCriteria, FileSyncStatus, FileViewItem, FileViewMode, ThemeInfo, ZoomLevel,
+};
 use crate::widget::FileExplorerBackend;
 use nextcloud_desktop_sync::{
     DesktopSyncCoordinator, MountDescriptor, MountId, MountState, SyncFileStatus,
@@ -20,6 +22,7 @@ pub struct DesktopUiController {
     navigation: Arc<RwLock<NavigationHistory>>,
     view_mode: Arc<RwLock<FileViewMode>>,
     zoom_level: Arc<RwLock<ZoomLevel>>,
+    sort_criteria: Arc<RwLock<FileSortCriteria>>,
 }
 
 impl DesktopUiController {
@@ -30,6 +33,7 @@ impl DesktopUiController {
             navigation: Arc::new(RwLock::new(NavigationHistory::new())),
             view_mode: Arc::new(RwLock::new(FileViewMode::Grid)),
             zoom_level: Arc::new(RwLock::new(ZoomLevel::Medium)),
+            sort_criteria: Arc::new(RwLock::new(FileSortCriteria::default())),
         }
     }
 
@@ -61,6 +65,21 @@ impl DesktopUiController {
     /// Sets the active view zoom level.
     pub async fn set_zoom_level(&self, zoom: ZoomLevel) {
         *self.zoom_level.write().await = zoom;
+    }
+
+    /// Returns the current file sorting criteria.
+    pub async fn sort_criteria(&self) -> FileSortCriteria {
+        *self.sort_criteria.read().await
+    }
+
+    /// Sets the active file sorting criteria.
+    pub async fn set_sort_criteria(&self, criteria: FileSortCriteria) {
+        *self.sort_criteria.write().await = criteria;
+    }
+
+    /// Fetches server visual theming metadata.
+    pub async fn server_theming(&self) -> Option<ThemeInfo> {
+        self.coordinator.server_theming().await
     }
 
     /// Searches files matching `query` across local VFS and server unified search.
@@ -104,11 +123,8 @@ impl DesktopUiController {
             })
             .collect();
 
-        items.sort_by(|a, b| {
-            b.is_directory
-                .cmp(&a.is_directory)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
+        let criteria = self.sort_criteria().await;
+        FileViewItem::sort_items(&mut items, &criteria);
 
         Ok(items)
     }
@@ -202,11 +218,8 @@ impl DesktopUiController {
             .collect();
 
         // Sort directories first, then alphabetically by name
-        items.sort_by(|a, b| {
-            b.is_directory
-                .cmp(&a.is_directory)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
+        let criteria = self.sort_criteria().await;
+        FileViewItem::sort_items(&mut items, &criteria);
 
         Ok(items)
     }
@@ -506,6 +519,18 @@ impl FileExplorerBackend for DesktopUiController {
 
     async fn set_zoom_level(&self, zoom: ZoomLevel) {
         self.set_zoom_level(zoom).await;
+    }
+
+    async fn sort_criteria(&self) -> FileSortCriteria {
+        self.sort_criteria().await
+    }
+
+    async fn set_sort_criteria(&self, criteria: FileSortCriteria) {
+        self.set_sort_criteria(criteria).await;
+    }
+
+    async fn server_theming(&self) -> Option<ThemeInfo> {
+        self.server_theming().await
     }
 
     async fn search_items(&self, query: &str) -> Result<Vec<FileViewItem>, UiError> {

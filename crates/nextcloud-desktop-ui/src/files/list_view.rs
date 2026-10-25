@@ -16,7 +16,9 @@ use crate::files::launcher::launch_file_externally;
 use crate::files::rename_dialog::RenameDialog;
 use crate::files::rubberband::{RubberbandOverlay, strip_listbox_linear_drag};
 use crate::files::selection::SelectionTracker;
-use crate::model::{FileViewItem, ResourceIconCategory, ZoomLevel};
+use crate::model::{
+    FileSortCriteria, FileSortField, FileSortOrder, FileViewItem, ResourceIconCategory, ZoomLevel,
+};
 use crate::widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
 
 /// Detailed columnar list view representing the active virtual directory.
@@ -42,28 +44,37 @@ impl FileListView {
 
         // Column header bar matching Nautilus list view layout
         let col_header = GtkBox::new(Orientation::Horizontal, 12);
-        col_header.set_margin_top(8);
-        col_header.set_margin_bottom(6);
+        col_header.set_margin_top(4);
+        col_header.set_margin_bottom(4);
         col_header.set_margin_start(16);
         col_header.set_margin_end(16);
 
-        let col_name = Label::new(Some("Name"));
-        col_name.set_hexpand(true);
-        col_name.set_halign(Align::Start);
-        col_name.add_css_class("caption-heading");
-        col_name.add_css_class("dim-label");
+        let btn_name = Button::builder()
+            .label("Name")
+            .has_frame(false)
+            .hexpand(true)
+            .halign(Align::Start)
+            .build();
+        btn_name.add_css_class("flat");
+        btn_name.add_css_class("caption-heading");
 
-        let col_type = Label::new(Some("Type"));
-        col_type.set_size_request(120, -1);
-        col_type.set_halign(Align::Start);
-        col_type.add_css_class("caption-heading");
-        col_type.add_css_class("dim-label");
+        let btn_type = Button::builder()
+            .label("Type")
+            .has_frame(false)
+            .width_request(120)
+            .halign(Align::Start)
+            .build();
+        btn_type.add_css_class("flat");
+        btn_type.add_css_class("caption-heading");
 
-        let col_size = Label::new(Some("Size"));
-        col_size.set_size_request(90, -1);
-        col_size.set_halign(Align::End);
-        col_size.add_css_class("caption-heading");
-        col_size.add_css_class("dim-label");
+        let btn_size = Button::builder()
+            .label("Size")
+            .has_frame(false)
+            .width_request(90)
+            .halign(Align::End)
+            .build();
+        btn_size.add_css_class("flat");
+        btn_size.add_css_class("caption-heading");
 
         let col_actions = Label::new(Some("Actions"));
         col_actions.set_size_request(110, -1);
@@ -71,9 +82,82 @@ impl FileListView {
         col_actions.add_css_class("caption-heading");
         col_actions.add_css_class("dim-label");
 
-        col_header.append(&col_name);
-        col_header.append(&col_type);
-        col_header.append(&col_size);
+        // Wire sorting to column header buttons
+        {
+            let b = backend.clone();
+            let cb = on_refresh.clone();
+            btn_name.connect_clicked(move |_| {
+                let b = b.clone();
+                let cb = cb.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    let cur = b.sort_criteria().await;
+                    let new_order = if cur.field == FileSortField::Name {
+                        cur.order.invert()
+                    } else {
+                        FileSortOrder::Ascending
+                    };
+                    b.set_sort_criteria(FileSortCriteria::new(
+                        FileSortField::Name,
+                        new_order,
+                        cur.folders_first,
+                    ))
+                    .await;
+                    cb();
+                });
+            });
+        }
+
+        {
+            let b = backend.clone();
+            let cb = on_refresh.clone();
+            btn_type.connect_clicked(move |_| {
+                let b = b.clone();
+                let cb = cb.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    let cur = b.sort_criteria().await;
+                    let new_order = if cur.field == FileSortField::Type {
+                        cur.order.invert()
+                    } else {
+                        FileSortOrder::Ascending
+                    };
+                    b.set_sort_criteria(FileSortCriteria::new(
+                        FileSortField::Type,
+                        new_order,
+                        cur.folders_first,
+                    ))
+                    .await;
+                    cb();
+                });
+            });
+        }
+
+        {
+            let b = backend.clone();
+            let cb = on_refresh.clone();
+            btn_size.connect_clicked(move |_| {
+                let b = b.clone();
+                let cb = cb.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    let cur = b.sort_criteria().await;
+                    let new_order = if cur.field == FileSortField::Size {
+                        cur.order.invert()
+                    } else {
+                        FileSortOrder::Descending
+                    };
+                    b.set_sort_criteria(FileSortCriteria::new(
+                        FileSortField::Size,
+                        new_order,
+                        cur.folders_first,
+                    ))
+                    .await;
+                    cb();
+                });
+            });
+        }
+
+        col_header.append(&btn_name);
+        col_header.append(&btn_type);
+        col_header.append(&btn_size);
         col_header.append(&col_actions);
 
         container.append(&col_header);

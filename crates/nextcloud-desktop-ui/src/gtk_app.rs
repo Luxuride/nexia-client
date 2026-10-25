@@ -44,6 +44,44 @@ pub fn launch_gtk_application(
         let provider = gtk4::CssProvider::new();
         provider.load_from_data(
             "
+            @define-color accent_color #0082c9;
+            @define-color accent_bg_color #0082c9;
+
+            .nextcloud-server-banner {
+                background: linear-gradient(135deg, #0082c9 0%, #005a8e 100%);
+                color: #ffffff;
+                padding: 12px 14px;
+                border-radius: 10px;
+                margin: 10px 8px 6px 8px;
+                box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+            }
+            .nextcloud-brand-icon {
+                background-color: rgba(255, 255, 255, 0.22);
+                border-radius: 50%;
+                padding: 6px;
+                color: #ffffff;
+            }
+            .nextcloud-server-title {
+                font-weight: 700;
+                font-size: 15px;
+                color: #ffffff;
+            }
+            .nextcloud-server-slogan {
+                font-size: 11px;
+                color: rgba(255, 255, 255, 0.82);
+            }
+            .nextcloud-status-badge {
+                font-size: 11px;
+                color: rgba(255, 255, 255, 0.90);
+                font-weight: 500;
+            }
+            .status-dot-connected {
+                background-color: #46ba61;
+                border-radius: 50%;
+                min-width: 8px;
+                min-height: 8px;
+            }
+
             flowboxchild {
                 border-radius: 8px;
                 padding: 2px;
@@ -215,10 +253,13 @@ fn build_ui(
 
     let stack_for_nav = content_stack.clone();
     let header_for_nav = header_bar.clone();
-    let sidebar = NavigationSidebar::new(Rc::new(move |page| {
-        stack_for_nav.set_visible_child_name(page.stack_name());
-        header_for_nav.set_page_subtitle(page.title());
-    }));
+    let sidebar = NavigationSidebar::new(
+        &controller,
+        Rc::new(move |page| {
+            stack_for_nav.set_visible_child_name(page.stack_name());
+            header_for_nav.set_page_subtitle(page.title());
+        }),
+    );
 
     paned.set_start_child(Some(sidebar.root_widget()));
     paned.set_end_child(Some(&content_stack));

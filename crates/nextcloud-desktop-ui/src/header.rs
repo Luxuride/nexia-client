@@ -27,10 +27,26 @@ impl MainHeaderBar {
         let account_switcher = AccountSwitcher::new(backend, toast_overlay, on_refresh);
         header_bar.pack_start(account_switcher.widget());
 
+        // Asynchronously populate server title from server theming if available
+        let b = backend.clone();
+        let wt = window_title.clone();
+        glib::MainContext::default().spawn_local(async move {
+            if let Some(theme) = b.server_theming().await
+                && let Some(name) = theme.name()
+            {
+                wt.set_title(name);
+            }
+        });
+
         Self {
             header_bar,
             window_title,
         }
+    }
+
+    /// Updates the server title displayed in the center [`adw::WindowTitle`].
+    pub fn set_server_name(&self, name: &str) {
+        self.window_title.set_title(name);
     }
 
     /// Updates the subtitle displayed in the center [`adw::WindowTitle`] without altering the header bar layout.

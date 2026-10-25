@@ -25,6 +25,15 @@ impl DesktopSyncCoordinator {
         Ok(self.active_client().await)
     }
 
+    /// Fetches server visual theming metadata for the active account, if available.
+    pub async fn server_theming(&self) -> Option<nextcloud_rust_sdk::ThemeInfo> {
+        if let Some((_, client, auth)) = self.active_dav_context().await {
+            client.theming(&auth).get_theme().await.ok()
+        } else {
+            None
+        }
+    }
+
     /// Helper resolving active user name, SDK client, and auth credentials.
     pub(crate) async fn active_dav_context(&self) -> Option<(String, Client, BasicAuth)> {
         let client = self.active_client().await?;

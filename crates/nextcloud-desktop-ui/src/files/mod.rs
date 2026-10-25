@@ -14,6 +14,7 @@ pub mod properties_dialog;
 pub mod rename_dialog;
 pub mod rubberband;
 pub mod selection;
+pub mod sort_popover;
 pub mod status_bar;
 pub mod toolbar;
 
@@ -31,5 +32,6 @@ pub use properties_dialog::PropertiesDialog;
 pub use rename_dialog::RenameDialog;
 pub use rubberband::RubberbandOverlay;
 pub use selection::SelectionTracker;
+pub use sort_popover::SortPopover;
 pub use status_bar::FileStatusBar;
 pub use toolbar::PathToolbar;

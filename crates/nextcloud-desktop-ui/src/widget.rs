@@ -35,6 +35,18 @@ pub trait FileExplorerBackend: Clone + 'static {
     /// Updates the current view zoom level.
     fn set_zoom_level(&self, zoom: ZoomLevel) -> impl Future<Output = ()>;
 
+    /// Returns the current file sorting criteria.
+    fn sort_criteria(&self) -> impl Future<Output = nextcloud_rust_sdk::FileSortCriteria>;
+
+    /// Updates the current file sorting criteria.
+    fn set_sort_criteria(
+        &self,
+        criteria: nextcloud_rust_sdk::FileSortCriteria,
+    ) -> impl Future<Output = ()>;
+
+    /// Fetches server visual theming metadata.
+    fn server_theming(&self) -> impl Future<Output = Option<nextcloud_rust_sdk::ThemeInfo>>;
+
     /// Searches files matching `query` across local VFS and server unified search.
     fn search_items(&self, query: &str)
     -> impl Future<Output = Result<Vec<FileViewItem>, UiError>>;

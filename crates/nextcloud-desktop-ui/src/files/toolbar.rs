@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use crate::files::new_folder::NewFolderPopover;
 use crate::files::path_bar::PathBar;
+use crate::files::sort_popover::SortPopover;
 use crate::model::{FileViewMode, ZoomLevel};
 use crate::widget::{FileExplorerBackend, ViewComponent};
 
@@ -86,8 +87,9 @@ impl PathToolbar {
         zoom_box.append(&zoom_out_btn);
         zoom_box.append(&zoom_in_btn);
 
-        // Right-side actions: New Folder + Grid/List Switcher
+        // Right-side actions: New Folder + Sort + Grid/List Switcher
         let new_folder = NewFolderPopover::new(backend, toast_overlay, on_change.clone());
+        let sort_popover = SortPopover::new(backend, on_change.clone());
 
         let view_mode_box = GtkBox::new(Orientation::Horizontal, 0);
         view_mode_box.add_css_class("linked");
@@ -110,6 +112,7 @@ impl PathToolbar {
         container.append(&search_entry);
         container.append(new_folder.root_widget());
         container.append(&search_toggle);
+        container.append(sort_popover.widget());
         container.append(&zoom_box);
         container.append(&view_mode_box);
 

@@ -1,7 +1,8 @@
 //! Presentation models and UI state representations backed by `nextcloud-rust-sdk`.
 
 pub use nextcloud_rust_sdk::{
-    BreadcrumbSegment as PathSegment, ResourceIconCategory, breadcrumb_segments, format_bytes,
+    BreadcrumbSegment as PathSegment, FileSortCriteria, FileSortField, FileSortOrder,
+    ResourceIconCategory, ThemeInfo, breadcrumb_segments, format_bytes,
 };
 
 /// Available navigation views in the application sidebar.
@@ -218,6 +219,45 @@ impl FileViewItem {
     /// Returns the full-color Adwaita / Nautilus icon name matching this item.
     pub const fn nautilus_icon_name(&self) -> &'static str {
         self.icon_category.freedesktop_icon_name()
+    }
+
+    /// Sorts a slice of [`FileViewItem`] in place according to the specified criteria.
+    pub fn sort_items(items: &mut [Self], criteria: &FileSortCriteria) {
+        items.sort_by(|a, b| {
+            if criteria.folders_first && a.is_directory != b.is_directory {
+                return if a.is_directory {
+                    std::cmp::Ordering::Less
+                } else {
+                    std::cmp::Ordering::Greater
+                };
+            }
+
+            let ord = match criteria.field {
+                FileSortField::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                FileSortField::Size => a.size_bytes.cmp(&b.size_bytes),
+                FileSortField::Modified => a.modified_at.cmp(&b.modified_at),
+                FileSortField::Type => {
+                    let ext_a = std::path::Path::new(&a.name)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    let ext_b = std::path::Path::new(&b.name)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    ext_a
+                        .cmp(&ext_b)
+                        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                }
+            };
+
+            match criteria.order {
+                FileSortOrder::Ascending => ord,
+                FileSortOrder::Descending => ord.reverse(),
+            }
+        });
     }
 
     /// Returns the symbolic icon name matching this item.
