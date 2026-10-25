@@ -2,7 +2,8 @@
 
 use nextcloud_rust_sdk::{
     Client, MountDescriptor, MountId, MountMode, MountsHandle, NextcloudOrchestrator,
-    OrchestratorConfig, OrchestratorHandle, ServerUrl, SessionState, VfsHandle, VirtualTree,
+    OrchestratorConfig, OrchestratorEvent, OrchestratorHandle, ServerUrl, SessionState, VfsHandle,
+    VirtualTree,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,7 +12,7 @@ use tokio::sync::RwLock;
 use crate::error::SyncError;
 use nextcloud_desktop_core::account::{Account, AccountCredentials, ServerConfig};
 use nextcloud_desktop_core::config::AppConfig;
-use nextcloud_desktop_core::events::EventBus;
+use nextcloud_desktop_core::events::{DesktopEvent, EventBus};
 
 /// Master coordinator managing background orchestrator worker, mounts, VFS, and clients.
 #[derive(Clone)]
@@ -39,16 +40,63 @@ impl DesktopSyncCoordinator {
         let orch = NextcloudOrchestrator::start(orch_config).ok();
         let handle = orch.as_ref().map(|o| o.handle());
 
-        Self {
+        let coord = Self {
             config,
             config_path: None,
-            event_bus,
+            event_bus: event_bus.clone(),
             clients: Arc::new(RwLock::new(Vec::new())),
             active_client_idx: Arc::new(RwLock::new(0)),
             orchestrator: Arc::new(std::sync::Mutex::new(orch)),
-            orchestrator_handle: Arc::new(RwLock::new(handle)),
+            orchestrator_handle: Arc::new(RwLock::new(handle.clone())),
             default_mount_id: Arc::new(RwLock::new(None)),
+        };
+
+        if let Some(ref h) = handle {
+            let mut orch_rx = h.subscribe_events();
+            let bus = event_bus;
+            tokio::spawn(async move {
+                while let Ok(event) = orch_rx.recv().await {
+                    match event {
+                        OrchestratorEvent::VfsTreeChanged { .. } => {
+                            bus.emit(DesktopEvent::VfsTreeUpdated { node_count: 0 });
+                        }
+                        OrchestratorEvent::FileHydrated { remote_path, .. } => {
+                            bus.emit(DesktopEvent::NodeHydrated {
+                                path: remote_path,
+                                size: 0,
+                            });
+                        }
+                        OrchestratorEvent::FileDehydrated { remote_path, .. } => {
+                            bus.emit(DesktopEvent::NodeDehydrated { path: remote_path });
+                        }
+                        OrchestratorEvent::SyncCycleCompleted {
+                            items_processed, ..
+                        } => {
+                            bus.emit(DesktopEvent::SyncCompleted {
+                                pairing_id: "default".to_string(),
+                                uploaded: 0,
+                                downloaded: items_processed as usize,
+                                conflicts: 0,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+            });
         }
+
+        // Periodic background WebDAV synchronizer
+        let periodic_coord = coord.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                if periodic_coord.active_client().await.is_some() {
+                    let _ = periodic_coord.refresh_virtual_tree().await;
+                }
+            }
+        });
+
+        coord
     }
 
     /// Attaches a configuration file path for persistent state storage.
