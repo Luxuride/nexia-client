@@ -37,7 +37,7 @@ fn format_folder_presentation(
     let direct_count = sum.direct_items();
     let total_count = sum.total_items();
 
-    if cfg.show_direct_item_count {
+    if cfg.show_direct_item_count && (direct_count > 0 || sum.total_size == 0) {
         let label = if direct_count == 1 {
             "1 item".to_string()
         } else {
@@ -46,7 +46,7 @@ fn format_folder_presentation(
         parts.push(label);
     }
 
-    if cfg.show_total_item_count {
+    if cfg.show_total_item_count && (total_count > 0 || sum.total_size == 0) {
         let label = if total_count == 1 {
             "1 total item".to_string()
         } else {

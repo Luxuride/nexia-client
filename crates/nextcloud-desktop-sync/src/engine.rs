@@ -122,6 +122,17 @@ mod tests {
         assert!(!coordinator.is_sync_paused().await.unwrap());
         coordinator.pause_all_sync().await.expect("pause all sync");
         assert!(coordinator.is_sync_paused().await.unwrap());
+
+        // Uploading should be disabled while sync is paused
+        let upload_err = coordinator
+            .create_file("/paused_upload.txt", b"test")
+            .await
+            .expect_err("upload must be disabled while paused");
+        assert!(matches!(
+            upload_err,
+            crate::error::SyncError::OperationDisabled(_)
+        ));
+
         coordinator
             .resume_all_sync()
             .await

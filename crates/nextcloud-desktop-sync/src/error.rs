@@ -58,6 +58,10 @@ pub enum SyncError {
     #[error("orchestrator error: {0}")]
     Orchestrator(#[from] nextcloud_rust_sdk::OrchestratorError),
 
+    /// Synchronization is paused or operation is disabled.
+    #[error("operation disabled: {0}")]
+    OperationDisabled(String),
+
     /// Background asynchronous task join failure.
     #[error("background task failed: {0}")]
     Task(#[from] tokio::task::JoinError),

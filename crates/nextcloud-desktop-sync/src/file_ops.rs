@@ -301,6 +301,13 @@ impl DesktopSyncCoordinator {
 
     /// Creates a new directory in the virtual tree and on the remote WebDAV server if online.
     pub async fn create_directory(&self, remote_path: &str) -> Result<(), SyncError> {
+        if self.is_sync_paused().await? {
+            return Err(SyncError::OperationDisabled(
+                "Uploads and modifications are disabled while synchronization is paused"
+                    .to_string(),
+            ));
+        }
+
         if let Some((user, client, auth)) = self.active_dav_context().await {
             let dav_client = client.dav(&auth);
             if let Ok(dav_path) = make_dav_path(&user, remote_path) {
@@ -320,6 +327,12 @@ impl DesktopSyncCoordinator {
         remote_path: &str,
         content: &[u8],
     ) -> Result<String, SyncError> {
+        if self.is_sync_paused().await? {
+            return Err(SyncError::OperationDisabled(
+                "Uploads are disabled while synchronization is paused".to_string(),
+            ));
+        }
+
         let clean_path = format!("/{}", remote_path.trim_matches('/'));
 
         if let Some((user, client, auth)) = self.active_dav_context().await {
