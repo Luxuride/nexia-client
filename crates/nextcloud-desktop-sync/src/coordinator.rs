@@ -51,50 +51,52 @@ impl DesktopSyncCoordinator {
             default_mount_id: Arc::new(RwLock::new(None)),
         };
 
-        if let Some(ref h) = handle {
-            let mut orch_rx = h.subscribe_events();
-            let bus = event_bus;
-            tokio::spawn(async move {
-                while let Ok(event) = orch_rx.recv().await {
-                    match event {
-                        OrchestratorEvent::VfsTreeChanged { .. } => {
-                            bus.emit(DesktopEvent::VfsTreeUpdated { node_count: 0 });
+        if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
+            if let Some(ref h) = handle {
+                let mut orch_rx = h.subscribe_events();
+                let bus = event_bus;
+                rt_handle.spawn(async move {
+                    while let Ok(event) = orch_rx.recv().await {
+                        match event {
+                            OrchestratorEvent::VfsTreeChanged { .. } => {
+                                bus.emit(DesktopEvent::VfsTreeUpdated { node_count: 0 });
+                            }
+                            OrchestratorEvent::FileHydrated { remote_path, .. } => {
+                                bus.emit(DesktopEvent::NodeHydrated {
+                                    path: remote_path,
+                                    size: 0,
+                                });
+                            }
+                            OrchestratorEvent::FileDehydrated { remote_path, .. } => {
+                                bus.emit(DesktopEvent::NodeDehydrated { path: remote_path });
+                            }
+                            OrchestratorEvent::SyncCycleCompleted {
+                                items_processed, ..
+                            } => {
+                                bus.emit(DesktopEvent::SyncCompleted {
+                                    pairing_id: "default".to_string(),
+                                    uploaded: 0,
+                                    downloaded: items_processed as usize,
+                                    conflicts: 0,
+                                });
+                            }
+                            _ => {}
                         }
-                        OrchestratorEvent::FileHydrated { remote_path, .. } => {
-                            bus.emit(DesktopEvent::NodeHydrated {
-                                path: remote_path,
-                                size: 0,
-                            });
-                        }
-                        OrchestratorEvent::FileDehydrated { remote_path, .. } => {
-                            bus.emit(DesktopEvent::NodeDehydrated { path: remote_path });
-                        }
-                        OrchestratorEvent::SyncCycleCompleted {
-                            items_processed, ..
-                        } => {
-                            bus.emit(DesktopEvent::SyncCompleted {
-                                pairing_id: "default".to_string(),
-                                uploaded: 0,
-                                downloaded: items_processed as usize,
-                                conflicts: 0,
-                            });
-                        }
-                        _ => {}
+                    }
+                });
+            }
+
+            // Periodic background WebDAV synchronizer
+            let periodic_coord = coord.clone();
+            rt_handle.spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    if periodic_coord.active_client().await.is_some() {
+                        let _ = periodic_coord.refresh_virtual_tree().await;
                     }
                 }
             });
         }
-
-        // Periodic background WebDAV synchronizer
-        let periodic_coord = coord.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                if periodic_coord.active_client().await.is_some() {
-                    let _ = periodic_coord.refresh_virtual_tree().await;
-                }
-            }
-        });
 
         coord
     }

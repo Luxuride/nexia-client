@@ -79,16 +79,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .or_else(|| Some(std::env::temp_dir().join("nc_cache")));
     }
 
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let _rt_guard = rt.enter();
+
     let event_bus = EventBus::new(256);
     let shared_config = Arc::new(RwLock::new(config));
     let coordinator =
         DesktopSyncCoordinator::new(shared_config, event_bus).with_config_path(config_path);
     let controller = DesktopUiController::new(coordinator.clone());
-
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    let _rt_guard = rt.enter();
 
     rt.block_on(async {
         controller.ensure_discovered_accounts().await;
