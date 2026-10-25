@@ -82,6 +82,11 @@ impl DesktopUiController {
         self.coordinator.server_theming().await
     }
 
+    /// Fetches and caches server theme logo, returning the cached image file path if successful.
+    pub async fn fetch_theme_logo(&self) -> Option<PathBuf> {
+        self.coordinator.fetch_theme_logo().await
+    }
+
     /// Searches files matching `query` across local VFS and server unified search.
     pub async fn search_items(&self, query: &str) -> Result<Vec<FileViewItem>, UiError> {
         let trimmed = query.trim();
@@ -541,6 +546,10 @@ impl FileExplorerBackend for DesktopUiController {
 
     async fn server_theming(&self) -> Option<ThemeInfo> {
         self.server_theming().await
+    }
+
+    async fn fetch_theme_logo(&self) -> Option<PathBuf> {
+        self.fetch_theme_logo().await
     }
 
     async fn search_items(&self, query: &str) -> Result<Vec<FileViewItem>, UiError> {

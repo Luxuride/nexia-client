@@ -47,6 +47,9 @@ pub trait FileExplorerBackend: Clone + 'static {
     /// Fetches server visual theming metadata.
     fn server_theming(&self) -> impl Future<Output = Option<nextcloud_rust_sdk::ThemeInfo>>;
 
+    /// Fetches server theme logo or favicon image path if available.
+    fn fetch_theme_logo(&self) -> impl Future<Output = Option<PathBuf>>;
+
     /// Searches files matching `query` across local VFS and server unified search.
     fn search_items(&self, query: &str)
     -> impl Future<Output = Result<Vec<FileViewItem>, UiError>>;

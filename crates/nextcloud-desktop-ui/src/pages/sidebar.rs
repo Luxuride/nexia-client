@@ -71,10 +71,11 @@ impl NavigationSidebar {
         container.append(&banner);
         container.append(&Separator::new(Orientation::Horizontal));
 
-        // Asynchronously populate server title and slogan from server theming
+        // Asynchronously populate server title, slogan, branding color, and logo from server theming
         let b = backend.clone();
         let title_c = title_label.clone();
         let slogan_c = slogan_label.clone();
+        let icon_box_c = icon_box.clone();
         glib::MainContext::default().spawn_local(async move {
             if let Some(theme) = b.server_theming().await {
                 if let Some(name) = theme.name() {
@@ -82,6 +83,22 @@ impl NavigationSidebar {
                 }
                 if let Some(slogan) = theme.slogan() {
                     slogan_c.set_text(slogan);
+                }
+                if let Some(color_hex) = theme.color() {
+                    apply_server_theme_color(color_hex, theme.color_text());
+                }
+            }
+            if let Some(logo_path) = b.fetch_theme_logo().await {
+                let file = gtk4::gio::File::for_path(&logo_path);
+                if let Ok(texture) = gtk4::gdk::Texture::from_file(&file) {
+                    let picture = gtk4::Picture::for_paintable(&texture);
+                    picture.set_can_shrink(true);
+                    picture.set_keep_aspect_ratio(true);
+                    picture.set_size_request(20, 20);
+                    while let Some(child) = icon_box_c.first_child() {
+                        icon_box_c.remove(&child);
+                    }
+                    icon_box_c.append(&picture);
                 }
             }
         });
@@ -163,4 +180,55 @@ fn build_sidebar_row(icon_name: &str, title: &str) -> ListBoxRow {
     hbox.append(&label);
     row.set_child(Some(&hbox));
     row
+}
+
+/// Dynamically updates CSS colors according to the server's brand identity.
+pub fn apply_server_theme_color(color_hex: &str, text_color: Option<&str>) {
+    let clean_hex = color_hex.trim();
+    if !clean_hex.starts_with('#') || clean_hex.len() != 7 {
+        return;
+    }
+
+    let r = u8::from_str_radix(&clean_hex[1..3], 16).unwrap_or(0);
+    let g = u8::from_str_radix(&clean_hex[3..5], 16).unwrap_or(130);
+    let b = u8::from_str_radix(&clean_hex[5..7], 16).unwrap_or(201);
+
+    // Darker variant for smooth gradient bottom right
+    let dark_r = (r as f32 * 0.70) as u8;
+    let dark_g = (g as f32 * 0.70) as u8;
+    let dark_b = (b as f32 * 0.70) as u8;
+    let darker_hex = format!("#{dark_r:02x}{dark_g:02x}{dark_b:02x}");
+
+    let text_hex = text_color.unwrap_or("#ffffff");
+
+    let css = format!(
+        "
+        @define-color accent_color {clean_hex};
+        @define-color accent_bg_color {clean_hex};
+
+        .nextcloud-server-banner {{
+            background: linear-gradient(135deg, {clean_hex} 0%, {darker_hex} 100%);
+            color: {text_hex};
+        }}
+        .nextcloud-server-title {{
+            color: {text_hex};
+        }}
+        .nextcloud-server-slogan {{
+            color: alpha({text_hex}, 0.82);
+        }}
+        .nextcloud-status-badge {{
+            color: alpha({text_hex}, 0.90);
+        }}
+        "
+    );
+
+    let provider = gtk4::CssProvider::new();
+    provider.load_from_data(&css);
+    if let Some(display) = gtk4::gdk::Display::default() {
+        gtk4::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk4::STYLE_PROVIDER_PRIORITY_USER,
+        );
+    }
 }

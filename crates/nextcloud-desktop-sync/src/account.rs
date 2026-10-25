@@ -27,8 +27,35 @@ impl DesktopSyncCoordinator {
 
     /// Fetches server visual theming metadata for the active account, if available.
     pub async fn server_theming(&self) -> Option<nextcloud_rust_sdk::ThemeInfo> {
-        if let Some((_, client, auth)) = self.active_dav_context().await {
-            client.theming(&auth).get_theme().await.ok()
+        let client = self.active_client().await?;
+        if let Some(auth) = client.credentials()
+            && let Ok(theme) = client.theming(&auth).get_theme().await
+        {
+            return Some(theme);
+        }
+        client.anonymous_theming().get_theme().await.ok()
+    }
+
+    /// Fetches and caches server theme logo, returning the cached image file path if successful.
+    pub async fn fetch_theme_logo(&self) -> Option<std::path::PathBuf> {
+        let client = self.active_client().await?;
+        let cache_dir = self.cache_dir();
+        let theming_dir = cache_dir.join("theming");
+        let _ = tokio::fs::create_dir_all(&theming_dir).await;
+        let logo_path = theming_dir.join("server_logo.png");
+
+        if logo_path.exists() {
+            return Some(logo_path);
+        }
+
+        let bytes = if let Some(auth) = client.credentials() {
+            client.theming(&auth).fetch_logo_bytes().await.ok()?
+        } else {
+            client.anonymous_theming().fetch_logo_bytes().await.ok()?
+        };
+
+        if tokio::fs::write(&logo_path, &bytes).await.is_ok() {
+            Some(logo_path)
         } else {
             None
         }
