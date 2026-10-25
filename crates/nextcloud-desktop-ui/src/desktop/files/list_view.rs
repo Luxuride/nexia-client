@@ -374,6 +374,7 @@ impl FileListRow {
         let icon_size = zoom.list_icon_size();
         let icon_box = GtkBox::new(Orientation::Horizontal, 0);
         icon_box.set_size_request(icon_size, icon_size);
+        icon_box.set_overflow(gtk4::Overflow::Hidden);
         icon_box.set_halign(Align::Center);
         icon_box.set_valign(Align::Center);
 
@@ -424,6 +425,22 @@ impl FileListRow {
                 let icon_box_clone = icon_box.clone();
 
                 glib::MainContext::default().spawn_local(async move {
+                    if thumb_dim > 64
+                        && let Some(low_path) = backend_clone.get_thumbnail(&path_clone, 64).await
+                    {
+                        let file = gtk4::gio::File::for_path(&low_path);
+                        if let Ok(texture) = gdk::Texture::from_file(&file) {
+                            let picture = gtk4::Picture::for_paintable(&texture);
+                            picture.set_can_shrink(true);
+                            picture.set_keep_aspect_ratio(true);
+                            picture.set_size_request(icon_size, icon_size);
+                            while let Some(first) = icon_box_clone.first_child() {
+                                icon_box_clone.remove(&first);
+                            }
+                            icon_box_clone.append(&picture);
+                        }
+                    }
+
                     if let Some(thumb_path) =
                         backend_clone.get_thumbnail(&path_clone, thumb_dim).await
                     {
@@ -456,7 +473,7 @@ impl FileListRow {
 
         // 3. Size column
         let size_lbl = Label::new(Some(&item.size_formatted));
-        size_lbl.set_size_request(90, -1);
+        size_lbl.set_size_request(110, -1);
         size_lbl.set_halign(Align::End);
         size_lbl.add_css_class("dim-label");
 

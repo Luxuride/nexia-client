@@ -1,6 +1,6 @@
 //! GTK 4 and Libadwaita desktop user interface application runner and window builder.
 
-use gtk4::{Box as GtkBox, Orientation, Paned, Stack, StackTransitionType};
+use gtk4::{Box as GtkBox, Orientation, Stack, StackTransitionType};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::RefCell;
@@ -260,24 +260,19 @@ fn build_ui(
     let files_page = CloudFilesPage::new(&controller, refresh_cb.clone());
     *files_page_cell.borrow_mut() = Some(files_page.clone());
 
-    let sync_page = SyncFoldersPage::new(&controller);
-    let activity_page = ActivityPage::new();
-    let settings_page = SettingsPage::new(&controller);
+    let sync_page = SyncFoldersPage::new(&controller, &toast_overlay);
+    let activity_page = ActivityPage::new(&controller);
+    let settings_page = SettingsPage::new(&controller, &toast_overlay);
 
     content_stack.add_named(files_page.root_widget(), Some("cloud_files"));
     content_stack.add_named(sync_page.root_widget(), Some("sync_folders"));
     content_stack.add_named(activity_page.root_widget(), Some("transfers"));
     content_stack.add_named(settings_page.root_widget(), Some("settings"));
 
-    // Main layout
-    let paned = Paned::new(Orientation::Horizontal);
-    paned.set_position(210);
-    paned.set_shrink_start_child(false);
-    paned.set_shrink_end_child(false);
-    paned.set_resize_start_child(false);
-    paned.set_resize_end_child(true);
-    paned.set_vexpand(true);
-    paned.set_hexpand(true);
+    // Main layout with fixed sidebar width (no dragging or enlarging)
+    let main_layout = GtkBox::new(Orientation::Horizontal, 0);
+    main_layout.set_vexpand(true);
+    main_layout.set_hexpand(true);
 
     let stack_for_nav = content_stack.clone();
     let header_for_nav = header_bar.clone();
@@ -288,15 +283,23 @@ fn build_ui(
             header_for_nav.set_page_subtitle(page.title());
         }),
     );
+    sidebar.root_widget().set_size_request(210, -1);
+    sidebar.root_widget().set_hexpand(false);
 
-    paned.set_start_child(Some(sidebar.root_widget()));
-    paned.set_end_child(Some(&content_stack));
+    let sidebar_sep = gtk4::Separator::new(Orientation::Vertical);
+
+    content_stack.set_hexpand(true);
+    content_stack.set_vexpand(true);
+
+    main_layout.append(sidebar.root_widget());
+    main_layout.append(&sidebar_sep);
+    main_layout.append(&content_stack);
 
     let root_box = GtkBox::new(Orientation::Vertical, 0);
     root_box.set_vexpand(true);
     root_box.set_hexpand(true);
     root_box.append(header_bar.root_widget());
-    root_box.append(&paned);
+    root_box.append(&main_layout);
     toast_overlay.set_child(Some(&root_box));
     window.set_content(Some(&toast_overlay));
 

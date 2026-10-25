@@ -236,11 +236,13 @@ impl FileGridTile {
         child.set_hexpand(true);
         let card = GtkBox::new(Orientation::Vertical, 4);
         let item_width = zoom.grid_item_width();
-        let item_height = (item_width as f32 * 1.1) as i32;
+        let icon_size = zoom.grid_icon_size();
+        let item_height = icon_size + 70;
         card.set_size_request(item_width, item_height);
         card.set_halign(Align::Fill);
         card.set_hexpand(true);
         card.set_valign(Align::Start);
+        card.set_overflow(gtk4::Overflow::Hidden);
         card.add_css_class("file-tile");
 
         // Hover suggestion tooltip displaying full item metadata
@@ -253,9 +255,9 @@ impl FileGridTile {
         );
         card.set_tooltip_text(Some(&tooltip));
 
-        let icon_size = zoom.grid_icon_size();
         let icon_box = GtkBox::new(Orientation::Vertical, 0);
         icon_box.set_size_request(icon_size, icon_size);
+        icon_box.set_overflow(gtk4::Overflow::Hidden);
         icon_box.set_halign(Align::Center);
         icon_box.set_valign(Align::Center);
 
@@ -308,6 +310,22 @@ impl FileGridTile {
                 let icon_box_clone = icon_box.clone();
 
                 glib::MainContext::default().spawn_local(async move {
+                    if thumb_dim > 64
+                        && let Some(low_path) = backend_clone.get_thumbnail(&path_clone, 64).await
+                    {
+                        let file = gtk4::gio::File::for_path(&low_path);
+                        if let Ok(texture) = gdk::Texture::from_file(&file) {
+                            let picture = gtk4::Picture::for_paintable(&texture);
+                            picture.set_can_shrink(true);
+                            picture.set_keep_aspect_ratio(true);
+                            picture.set_size_request(icon_size, icon_size);
+                            while let Some(first) = icon_box_clone.first_child() {
+                                icon_box_clone.remove(&first);
+                            }
+                            icon_box_clone.append(&picture);
+                        }
+                    }
+
                     if let Some(thumb_path) =
                         backend_clone.get_thumbnail(&path_clone, thumb_dim).await
                     {
@@ -332,7 +350,9 @@ impl FileGridTile {
         name.set_wrap_mode(pango::WrapMode::WordChar);
         name.set_justify(Justification::Center);
         name.set_halign(Align::Fill);
+        name.set_valign(Align::Start);
         name.set_hexpand(true);
+        name.set_size_request(-1, 36);
         name.set_max_width_chars(match zoom {
             ZoomLevel::Small => 10,
             ZoomLevel::Medium => 14,
@@ -343,6 +363,7 @@ impl FileGridTile {
         name.set_ellipsize(pango::EllipsizeMode::End);
 
         let sub = Label::new(Some(&item.size_formatted));
+        sub.set_size_request(-1, 18);
         sub.add_css_class("caption");
         sub.add_css_class("dim-label");
 

@@ -404,11 +404,11 @@ mod tests {
         let mut had_gesture_drag = false;
         let controllers = fb.observe_controllers();
         for i in 0..controllers.n_items() {
-            if let Some(obj) = controllers.item(i) {
-                if obj.type_().name() == "GtkGestureDrag" {
-                    had_gesture_drag = true;
-                    break;
-                }
+            if let Some(obj) = controllers.item(i)
+                && obj.type_().name() == "GtkGestureDrag"
+            {
+                had_gesture_drag = true;
+                break;
             }
         }
         assert!(

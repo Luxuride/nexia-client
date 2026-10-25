@@ -26,6 +26,7 @@ pub struct PathToolbar {
     search_entry: SearchEntry,
     search_toggle: ToggleButton,
     zoom_out_btn: Button,
+    zoom_state_btn: Button,
     zoom_in_btn: Button,
 }
 
@@ -81,10 +82,15 @@ impl PathToolbar {
         let zoom_out_btn = Button::from_icon_name("zoom-out-symbolic");
         zoom_out_btn.set_tooltip_text(Some("Zoom Out (Ctrl+-)"));
 
+        let zoom_state_btn = Button::with_label("100%");
+        zoom_state_btn.add_css_class("flat");
+        zoom_state_btn.set_tooltip_text(Some("Current zoom level (click to reset to 100%)"));
+
         let zoom_in_btn = Button::from_icon_name("zoom-in-symbolic");
         zoom_in_btn.set_tooltip_text(Some("Zoom In (Ctrl++)"));
 
         zoom_box.append(&zoom_out_btn);
+        zoom_box.append(&zoom_state_btn);
         zoom_box.append(&zoom_in_btn);
 
         // Right-side actions: New Folder + Sort + Grid/List Switcher
@@ -236,6 +242,20 @@ impl PathToolbar {
             });
         }
 
+        // Wire Zoom Reset button (middle state)
+        {
+            let b = backend.clone();
+            let cb = on_change.clone();
+            zoom_state_btn.connect_clicked(move |_| {
+                let b = b.clone();
+                let cb = cb.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    b.set_zoom_level(ZoomLevel::Medium).await;
+                    cb();
+                });
+            });
+        }
+
         // Wire Zoom In button
         {
             let b = backend.clone();
@@ -278,6 +298,7 @@ impl PathToolbar {
             search_entry,
             search_toggle,
             zoom_out_btn,
+            zoom_state_btn,
             zoom_in_btn,
         }
     }
@@ -291,6 +312,7 @@ impl PathToolbar {
         self.path_bar.update(&cur_path, backend, on_navigate);
 
         let zoom = backend.zoom_level().await;
+        self.zoom_state_btn.set_label(&zoom.display_label());
         self.zoom_out_btn.set_sensitive(zoom > ZoomLevel::Small);
         self.zoom_in_btn.set_sensitive(zoom < ZoomLevel::ExtraLarge);
     }

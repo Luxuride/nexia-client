@@ -125,12 +125,18 @@ impl PropertiesDialog {
         copy_btn.set_tooltip_text(Some("Copy Public Link"));
         copy_btn.set_visible(false);
 
+        let unshare_btn = Button::with_label("Unshare");
+        unshare_btn.add_css_class("destructive-action");
+        unshare_btn.set_valign(gtk4::Align::Center);
+        unshare_btn.set_visible(false);
+
         let backend_clone = backend.clone();
         let path_clone = item.path.clone();
         let toast_clone = toast_overlay.clone();
         let row_share_clone = row_share.clone();
         let share_btn_clone = share_btn.clone();
         let copy_btn_clone = copy_btn.clone();
+        let unshare_btn_clone = unshare_btn.clone();
 
         share_btn.connect_clicked(move |_| {
             share_btn_clone.set_sensitive(false);
@@ -141,6 +147,7 @@ impl PropertiesDialog {
             let r = row_share_clone.clone();
             let s_btn = share_btn_clone.clone();
             let c_btn = copy_btn_clone.clone();
+            let u_btn = unshare_btn_clone.clone();
 
             glib::MainContext::default().spawn_local(async move {
                 match b.create_public_share(&p).await {
@@ -148,6 +155,7 @@ impl PropertiesDialog {
                         r.set_subtitle(&url);
                         s_btn.set_visible(false);
                         c_btn.set_visible(true);
+                        u_btn.set_visible(true);
                         if let Some(display) = gdk::Display::default() {
                             display.clipboard().set_text(&url);
                         }
@@ -173,8 +181,67 @@ impl PropertiesDialog {
             }
         });
 
+        let backend_unshare = backend.clone();
+        let path_unshare = item.path.clone();
+        let toast_unshare = toast_overlay.clone();
+        let row_share_unshare = row_share.clone();
+        let share_btn_unshare = share_btn.clone();
+        let copy_btn_unshare = copy_btn.clone();
+        let unshare_btn_self = unshare_btn.clone();
+        unshare_btn.connect_clicked(move |_| {
+            unshare_btn_self.set_sensitive(false);
+            unshare_btn_self.set_label("Removing…");
+            let b = backend_unshare.clone();
+            let p = path_unshare.clone();
+            let t = toast_unshare.clone();
+            let r = row_share_unshare.clone();
+            let s_btn = share_btn_unshare.clone();
+            let c_btn = copy_btn_unshare.clone();
+            let u_btn = unshare_btn_self.clone();
+
+            glib::MainContext::default().spawn_local(async move {
+                match b.delete_public_share(&p).await {
+                    Ok(_) => {
+                        r.set_subtitle("No public link generated yet");
+                        s_btn.set_visible(true);
+                        s_btn.set_sensitive(true);
+                        s_btn.set_label("Create Public Link");
+                        c_btn.set_visible(false);
+                        u_btn.set_visible(false);
+                        u_btn.set_sensitive(true);
+                        u_btn.set_label("Unshare");
+                        t.add_toast(adw::Toast::new("Public link removed"));
+                    }
+                    Err(e) => {
+                        u_btn.set_sensitive(true);
+                        u_btn.set_label("Unshare");
+                        t.add_toast(adw::Toast::new(&format!("Failed to remove link: {e}")));
+                    }
+                }
+            });
+        });
+
+        // Query existing share on load
+        {
+            let b = backend.clone();
+            let p = item.path.clone();
+            let r = row_share.clone();
+            let s_btn = share_btn.clone();
+            let c_btn = copy_btn.clone();
+            let u_btn = unshare_btn.clone();
+            glib::MainContext::default().spawn_local(async move {
+                if let Ok(Some(url)) = b.get_public_share(&p).await {
+                    r.set_subtitle(&url);
+                    s_btn.set_visible(false);
+                    c_btn.set_visible(true);
+                    u_btn.set_visible(true);
+                }
+            });
+        }
+
         row_share.add_suffix(&share_btn);
         row_share.add_suffix(&copy_btn);
+        row_share.add_suffix(&unshare_btn);
         share_group.add(&row_share);
 
         page.add(&general_group);
