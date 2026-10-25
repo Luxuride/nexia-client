@@ -77,6 +77,20 @@ impl AppConfig {
         Ok(base.join("nextcloud-desktop-rs").join("config.json"))
     }
 
+    /// Returns the default cache directory path in the user cache directory.
+    pub fn default_cache_dir() -> PathBuf {
+        dirs::cache_dir()
+            .map(|c| c.join("nextcloud-desktop"))
+            .unwrap_or_else(|| std::env::temp_dir().join("nextcloud-desktop"))
+    }
+
+    /// Resolves the configured cache directory, falling back to [`Self::default_cache_dir`].
+    pub fn resolved_cache_dir(&self) -> PathBuf {
+        self.cache_dir
+            .clone()
+            .unwrap_or_else(Self::default_cache_dir)
+    }
+
     /// Loads configuration from the specified file path, or creates a default if absent.
     pub fn load_from_path(path: &Path) -> Result<Self, CoreError> {
         if !path.exists() {

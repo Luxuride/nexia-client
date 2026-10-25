@@ -4,7 +4,7 @@ use nextcloud_rust_sdk::{
     BasicAuth, Client, DavPath, Depth, PropfindBody, SecretString, ServerUrl, StoreKey,
 };
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::error::SyncError;
@@ -19,30 +19,18 @@ use nextcloud_desktop_core::events::EventBus;
 pub struct DesktopSyncCoordinator {
     config: Arc<tokio::sync::RwLock<AppConfig>>,
     config_path: Option<PathBuf>,
-    cache_dir: PathBuf,
     event_bus: EventBus,
-    vfs_engines: Arc<tokio::sync::RwLock<HashMap<AccountId, VirtualSyncEngine>>>,
     sdk_clients: Arc<tokio::sync::RwLock<HashMap<AccountId, Client>>>,
-    full_sync_engine: FullSyncEngine,
 }
 
 impl DesktopSyncCoordinator {
     /// Creates a new synchronization coordinator.
-    pub fn new(
-        config: Arc<tokio::sync::RwLock<AppConfig>>,
-        cache_dir: PathBuf,
-        event_bus: EventBus,
-    ) -> Self {
-        let full_sync_engine = FullSyncEngine::new(event_bus.clone());
-
+    pub fn new(config: Arc<tokio::sync::RwLock<AppConfig>>, event_bus: EventBus) -> Self {
         Self {
             config,
             config_path: None,
-            cache_dir,
             event_bus,
-            vfs_engines: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             sdk_clients: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-            full_sync_engine,
         }
     }
 
@@ -54,8 +42,11 @@ impl DesktopSyncCoordinator {
     }
 
     /// Access the base cache directory path.
-    pub fn cache_dir(&self) -> &Path {
-        &self.cache_dir
+    pub fn cache_dir(&self) -> PathBuf {
+        if let Ok(conf) = self.config.try_read() {
+            return conf.resolved_cache_dir();
+        }
+        AppConfig::default_cache_dir()
     }
 
     /// Access the virtual sync engine for the active account.
@@ -66,32 +57,18 @@ impl DesktopSyncCoordinator {
             .map(|a| a.id)
             .unwrap_or_else(|| AccountId("default".to_string()));
 
-        {
-            let map = self.vfs_engines.read().await;
-            if let Some(engine) = map.get(&active_id) {
-                return engine.clone();
-            }
-        }
-
-        let mut map = self.vfs_engines.write().await;
-        if let Some(engine) = map.get(&active_id) {
-            return engine.clone();
-        }
-
         let account_vfs_dir = self
-            .cache_dir
+            .cache_dir()
             .join("accounts")
             .join(&active_id.0)
             .join("vfs");
         let _ = std::fs::create_dir_all(&account_vfs_dir);
-        let engine = VirtualSyncEngine::new(account_vfs_dir, self.event_bus.clone());
-        map.insert(active_id, engine.clone());
-        engine
+        VirtualSyncEngine::new(account_vfs_dir, self.event_bus.clone())
     }
 
     /// Access the full sync engine.
-    pub fn full_sync(&self) -> &FullSyncEngine {
-        &self.full_sync_engine
+    pub fn full_sync(&self) -> FullSyncEngine {
+        FullSyncEngine::new(self.event_bus.clone())
     }
 
     /// Access the shared event bus.
@@ -112,7 +89,8 @@ impl DesktopSyncCoordinator {
             }
         }
 
-        let account_dir = self.cache_dir.join("accounts").join(&account.id.0);
+        let cache_dir = self.cache_dir();
+        let account_dir = cache_dir.join("accounts").join(&account.id.0);
         let _ = std::fs::create_dir_all(&account_dir);
 
         let auth_db = account_dir.join("auth.db");
@@ -493,8 +471,8 @@ impl DesktopSyncCoordinator {
             let dav_prefix = format!("/remote.php/dav/files/{}", account.credentials.username);
             let journal_path = cache_dir.join(format!("journal_{}.json", pair.id));
 
-            let _ = self
-                .full_sync_engine
+            let sync_engine = FullSyncEngine::new(self.event_bus.clone());
+            let _ = sync_engine
                 .run_sync(
                     &pair,
                     &account.credentials.username,
@@ -519,9 +497,7 @@ mod tests {
         let mut config = AppConfig::default();
         config.ensure_system_account();
         let config_lock = Arc::new(tokio::sync::RwLock::new(config));
-        let temp_dir = std::env::temp_dir().join(format!("test_coord_{}", std::process::id()));
-        let coordinator =
-            DesktopSyncCoordinator::new(config_lock, temp_dir.clone(), EventBus::new(100));
+        let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
 
         coordinator.sync_discovered_accounts().await;
 
@@ -556,7 +532,5 @@ mod tests {
             .expect("switch succeeds");
         let active3 = coordinator.active_account().await.expect("has active");
         assert_eq!(active3.id, first_id);
-
-        let _ = std::fs::remove_dir_all(temp_dir);
     }
 }

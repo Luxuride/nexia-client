@@ -1,8 +1,8 @@
 //! Virtual synchronization engine managing the in-memory metadata tree and on-demand hydration.
 
 use nextcloud_rust_sdk::{
-    BasicAuth, DavClient, DavResource, HydratedContent, HydrationState, NodeMetadata,
-    ReqwestTransport, VirtualNode, VirtualTree, normalize_path,
+    BasicAuth, DavClient, DavResource, DavResourceSummary, HydratedContent, HydrationState,
+    NodeMetadata, ReqwestTransport, VirtualNode, VirtualTree, normalize_path,
 };
 use std::fs;
 use std::marker::PhantomData;
@@ -28,8 +28,22 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
     /// Creates a new virtual sync engine storing cached files in `cache_dir`.
     pub fn new(cache_dir: impl Into<PathBuf>, event_bus: EventBus) -> Self {
         let cache_dir = cache_dir.into();
-        let mut initial_tree = VirtualTree::new("Nextcloud");
-        S::seed(&mut initial_tree);
+        let tree_file = cache_dir.join("tree.json");
+        let initial_tree = if tree_file.exists() {
+            fs::read_to_string(&tree_file)
+                .ok()
+                .and_then(|data| serde_json::from_str(&data).ok())
+                .unwrap_or_else(|| {
+                    let mut tree = VirtualTree::new("Nextcloud");
+                    S::seed(&mut tree);
+                    tree
+                })
+        } else {
+            let mut tree = VirtualTree::new("Nextcloud");
+            S::seed(&mut tree);
+            tree
+        };
+
         Self {
             tree: Arc::new(RwLock::new(initial_tree)),
             cache_dir,
@@ -38,11 +52,19 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
         }
     }
 
+    fn persist_tree(&self, tree: &VirtualTree) {
+        let tree_file = self.cache_dir.join("tree.json");
+        if let Ok(json) = serde_json::to_string(tree) {
+            let _ = fs::write(tree_file, json);
+        }
+    }
+
     /// Resets the virtual tree to the default Nextcloud folder hierarchy.
     pub async fn reset_default_hierarchy(&self) -> usize {
         let mut tree = self.tree.write().await;
         *tree = VirtualTree::new("Nextcloud");
         let count = S::seed(&mut tree);
+        self.persist_tree(&tree);
         self.event_bus
             .emit(DesktopEvent::VfsTreeUpdated { node_count: count });
         count
@@ -59,39 +81,30 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
         base_dav_prefix: &str,
         resources: &[DavResource],
     ) -> Result<usize, SyncError> {
+        let summaries: Vec<DavResourceSummary> = resources
+            .iter()
+            .map(|res| {
+                let mut sum = DavResourceSummary::new(&res.href, res.is_collection);
+                if let Some(len) = res.content_length {
+                    sum = sum.with_content_length(len);
+                }
+                if let Some(ref etag) = res.etag {
+                    sum = sum.with_etag(etag);
+                }
+                if let Some(ref mime) = res.content_type {
+                    sum = sum.with_content_type(mime);
+                }
+                if let Some(has_preview) = res.has_preview {
+                    sum = sum.with_has_preview(has_preview);
+                }
+                sum
+            })
+            .collect();
+
         let mut tree = self.tree.write().await;
         *tree = VirtualTree::new("Nextcloud");
-
-        let mut inserted = 0;
-        let prefix = base_dav_prefix.trim_end_matches('/');
-
-        for res in resources {
-            let relative = if res.href.starts_with(prefix) {
-                &res.href[prefix.len()..]
-            } else {
-                &res.href
-            };
-
-            let clean_path = if relative.is_empty() || relative == "/" {
-                "/".to_string()
-            } else {
-                format!("/{}", relative.trim_matches('/'))
-            };
-
-            if clean_path == "/" {
-                continue;
-            }
-
-            let meta = build_node_metadata(&clean_path, res);
-            let node = if res.is_collection {
-                VirtualNode::new_directory(meta)
-            } else {
-                VirtualNode::new_file(meta)
-            };
-
-            tree.insert(node);
-            inserted += 1;
-        }
+        let inserted = tree.populate_from_resources(base_dav_prefix, &summaries);
+        self.persist_tree(&tree);
 
         self.event_bus.emit(DesktopEvent::VfsTreeUpdated {
             node_count: inserted,
@@ -130,6 +143,7 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
         {
             let mut tree = self.tree.write().await;
             let _ = tree.hydrate_path(&clean_path, local_cached.clone());
+            self.persist_tree(&tree);
         }
 
         self.event_bus.emit(DesktopEvent::NodeHydrated {
@@ -176,6 +190,7 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
         {
             let mut tree = self.tree.write().await;
             let _ = tree.hydrate_path(&clean_path, local_cached.clone());
+            self.persist_tree(&tree);
         }
 
         self.event_bus.emit(DesktopEvent::NodeHydrated {
@@ -193,15 +208,14 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
 
         {
             let mut tree = self.tree.write().await;
-            let node = tree
-                .get_mut(&clean_path)
-                .ok_or_else(|| SyncError::NotFound(clean_path.clone()))?;
-
-            if let Some(cached) = node.hydration.cached_path() {
+            if let Some(node) = tree.get(&clean_path)
+                && let Some(cached) = node.hydration.cached_path()
+            {
                 target_cached_path = Some(cached.to_path_buf());
             }
 
-            node.hydration = HydrationState::Placeholder;
+            tree.dehydrate(&clean_path)?;
+            self.persist_tree(&tree);
         }
 
         if let Some(path) = target_cached_path.filter(|p| p.exists()) {
@@ -245,6 +259,7 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
             &clean_path,
         )));
         let count = tree.len();
+        self.persist_tree(&tree);
         drop(tree);
 
         self.event_bus
@@ -273,6 +288,7 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
         let count = {
             let mut tree = self.tree.write().await;
             tree.insert(node);
+            self.persist_tree(&tree);
             tree.len()
         };
 
@@ -290,6 +306,7 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
         let (new_path, count) = {
             let mut tree = self.tree.write().await;
             let new_path = tree.rename(old_remote_path, new_name)?;
+            self.persist_tree(&tree);
             (new_path, tree.len())
         };
 
@@ -307,6 +324,7 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
         let (new_path, count) = {
             let mut tree = self.tree.write().await;
             let new_path = tree.move_node(source_path, target_dir_path)?;
+            self.persist_tree(&tree);
             (new_path, tree.len())
         };
 
@@ -335,6 +353,7 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
             if tree.remove(&clean_path).is_none() {
                 return Err(SyncError::NotFound(clean_path));
             }
+            self.persist_tree(&tree);
             tree.len()
         };
 
@@ -366,28 +385,6 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
         })?;
 
         Ok(local_cached)
-    }
-}
-
-fn build_node_metadata(clean_path: &str, res: &DavResource) -> NodeMetadata {
-    if res.is_collection {
-        let mut meta = NodeMetadata::directory(clean_path);
-        if let Some(ref etag) = res.etag {
-            meta = meta.with_etag(etag.clone());
-        }
-        meta
-    } else {
-        let mut meta = NodeMetadata::file(clean_path).with_size(res.content_length.unwrap_or(0));
-        if let Some(ref etag) = res.etag {
-            meta = meta.with_etag(etag.clone());
-        }
-        if let Some(ref mime) = res.content_type {
-            meta = meta.with_mime_type(mime.clone());
-        }
-        if let Some(has_prev) = res.has_preview {
-            meta = meta.with_has_preview(has_prev);
-        }
-        meta
     }
 }
 

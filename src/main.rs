@@ -60,17 +60,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         AppConfig::default_config_path().unwrap_or_else(|_| PathBuf::from("config.json"))
     });
 
-    let config = AppConfig::load_from_path(&config_path).unwrap_or_default();
-    let cache_dir = config.cache_dir.clone().unwrap_or_else(|| {
-        dirs::cache_dir()
+    let mut config = AppConfig::load_from_path(&config_path).unwrap_or_default();
+    if config.cache_dir.is_none() {
+        config.cache_dir = dirs::cache_dir()
             .map(|c| c.join("nextcloud-desktop"))
-            .unwrap_or_else(|| std::env::temp_dir().join("nc_cache"))
-    });
+            .or_else(|| Some(std::env::temp_dir().join("nc_cache")));
+    }
 
     let event_bus = EventBus::new(256);
     let shared_config = Arc::new(RwLock::new(config));
-    let coordinator = DesktopSyncCoordinator::new(shared_config, cache_dir, event_bus)
-        .with_config_path(config_path);
+    let coordinator =
+        DesktopSyncCoordinator::new(shared_config, event_bus).with_config_path(config_path);
     let controller = DesktopUiController::new(coordinator.clone());
 
     let rt = tokio::runtime::Builder::new_multi_thread()
