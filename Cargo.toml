@@ -38,6 +38,7 @@ gtk4 = { version = "0.11" }
 libadwaita = { version = "0.9", features = ["v1_2"] }
 glib = { version = "0.22" }
 ksni = { version = "0.3", default-features = false, features = ["tokio"] }
+uniffi = { version = "0.29" }
 
 [package]
 name = "nextcloud-desktop-rs"
@@ -49,9 +50,11 @@ authors.workspace = true
 description = "Modern GTK desktop application for Nextcloud with virtual file sync"
 
 [features]
-default = ["gtk", "tray"]
+default = ["desktop"]
+desktop = ["gtk", "tray"]
 gtk = ["nextcloud-desktop-ui/gtk"]
 tray = ["nextcloud-desktop-ui/tray"]
+android = ["nextcloud-desktop-ui/android"]
 
 [dependencies]
 nextcloud-desktop-core.workspace = true

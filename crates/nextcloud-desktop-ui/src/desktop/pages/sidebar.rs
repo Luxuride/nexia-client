@@ -36,8 +36,10 @@ impl NavigationSidebar {
 
         let icon_box = GtkBox::new(Orientation::Horizontal, 0);
         icon_box.add_css_class("nextcloud-brand-icon");
+        icon_box.set_valign(Align::Center);
+        icon_box.set_halign(Align::Center);
         let icon = Image::from_icon_name("weather-overcast-symbolic");
-        icon.set_pixel_size(18);
+        icon.set_pixel_size(28);
         icon_box.append(&icon);
 
         let title_label = Label::new(Some("Nextcloud"));
@@ -94,11 +96,44 @@ impl NavigationSidebar {
                     let picture = gtk4::Picture::for_paintable(&texture);
                     picture.set_can_shrink(true);
                     picture.set_keep_aspect_ratio(true);
-                    picture.set_size_request(20, 20);
+                    picture.set_size_request(56, 40);
                     while let Some(child) = icon_box_c.first_child() {
                         icon_box_c.remove(&child);
                     }
                     icon_box_c.append(&picture);
+                }
+            }
+        });
+
+        // Event-driven online and sync status updates for the banner badge
+        let mut event_rx = backend.subscribe_events();
+        let dot_rx = status_dot.clone();
+        let lbl_rx = status_label.clone();
+        glib::MainContext::default().spawn_local(async move {
+            while let Ok(event) = event_rx.recv().await {
+                match event {
+                    nextcloud_desktop_core::events::DesktopEvent::SyncStarted { .. } => {
+                        dot_rx.remove_css_class("status-dot-connected");
+                        dot_rx.remove_css_class("status-dot-offline");
+                        dot_rx.add_css_class("status-dot-syncing");
+                        lbl_rx.set_text("Syncing…");
+                    }
+                    nextcloud_desktop_core::events::DesktopEvent::SyncCompleted { .. } => {
+                        dot_rx.remove_css_class("status-dot-syncing");
+                        dot_rx.remove_css_class("status-dot-offline");
+                        dot_rx.add_css_class("status-dot-connected");
+                        lbl_rx.set_text("Online");
+                    }
+                    nextcloud_desktop_core::events::DesktopEvent::Notification {
+                        level: nextcloud_desktop_core::events::NotificationLevel::Error,
+                        ..
+                    } => {
+                        dot_rx.remove_css_class("status-dot-syncing");
+                        dot_rx.remove_css_class("status-dot-connected");
+                        dot_rx.add_css_class("status-dot-offline");
+                        lbl_rx.set_text("Offline");
+                    }
+                    _ => {}
                 }
             }
         });
@@ -218,6 +253,24 @@ pub fn apply_server_theme_color(color_hex: &str, text_color: Option<&str>) {
         }}
         .nextcloud-status-badge {{
             color: alpha({text_hex}, 0.90);
+        }}
+        .status-dot-connected {{
+            background-color: #46ba61;
+            border-radius: 50%;
+            min-width: 8px;
+            min-height: 8px;
+        }}
+        .status-dot-syncing {{
+            background-color: #3584e4;
+            border-radius: 50%;
+            min-width: 8px;
+            min-height: 8px;
+        }}
+        .status-dot-offline {{
+            background-color: #e01b24;
+            border-radius: 50%;
+            min-width: 8px;
+            min-height: 8px;
         }}
         "
     );

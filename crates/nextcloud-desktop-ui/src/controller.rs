@@ -568,6 +568,12 @@ impl FileExplorerBackend for DesktopUiController {
         self.prefetch_thumbnails(paths, size);
     }
 
+    fn subscribe_events(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<nextcloud_desktop_core::events::DesktopEvent> {
+        self.subscribe_events()
+    }
+
     async fn can_go_back(&self) -> bool {
         self.can_go_back().await
     }

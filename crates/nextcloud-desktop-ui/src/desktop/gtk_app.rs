@@ -71,18 +71,20 @@ pub fn launch_gtk_application(
             }
             .nextcloud-brand-icon {
                 background-color: rgba(255, 255, 255, 0.22);
-                border-radius: 50%;
+                border-radius: 8px;
                 padding: 6px;
+                min-width: 44px;
+                min-height: 44px;
                 color: #ffffff;
             }
             .nextcloud-server-title {
                 font-weight: 700;
-                font-size: 15px;
+                font-size: 16px;
                 color: #ffffff;
             }
             .nextcloud-server-slogan {
                 font-size: 11px;
-                color: rgba(255, 255, 255, 0.82);
+                color: rgba(255, 255, 255, 0.85);
             }
             .nextcloud-status-badge {
                 font-size: 11px;
@@ -91,6 +93,18 @@ pub fn launch_gtk_application(
             }
             .status-dot-connected {
                 background-color: #46ba61;
+                border-radius: 50%;
+                min-width: 8px;
+                min-height: 8px;
+            }
+            .status-dot-syncing {
+                background-color: #3584e4;
+                border-radius: 50%;
+                min-width: 8px;
+                min-height: 8px;
+            }
+            .status-dot-offline {
+                background-color: #e01b24;
                 border-radius: 50%;
                 min-width: 8px;
                 min-height: 8px;

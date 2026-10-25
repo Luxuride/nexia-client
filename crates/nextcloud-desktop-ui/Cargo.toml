@@ -8,9 +8,11 @@ authors.workspace = true
 description = "GTK 4 desktop user interface views and controllers for Nextcloud Desktop"
 
 [features]
-default = ["gtk", "tray"]
+default = ["desktop"]
+desktop = ["gtk", "tray"]
 gtk = ["dep:gtk4", "dep:libadwaita", "dep:glib"]
 tray = ["dep:ksni"]
+android = ["dep:uniffi"]
 
 [dependencies]
 nextcloud-desktop-core.workspace = true
@@ -23,3 +25,4 @@ gtk4 = { workspace = true, optional = true }
 libadwaita = { workspace = true, optional = true }
 glib = { workspace = true, optional = true }
 ksni = { workspace = true, optional = true }
+uniffi = { workspace = true, optional = true }

@@ -63,6 +63,11 @@ pub trait FileExplorerBackend: Clone + 'static {
     /// Batch prefetches thumbnails for multiple remote paths concurrently in background.
     fn prefetch_thumbnails(&self, paths: Vec<String>, size: u32);
 
+    /// Subscribes to broadcast desktop engine events.
+    fn subscribe_events(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<nextcloud_desktop_core::events::DesktopEvent>;
+
     /// Returns `true` if backward history navigation is available.
     fn can_go_back(&self) -> impl Future<Output = bool>;
 
