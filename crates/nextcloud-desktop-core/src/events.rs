@@ -1,5 +1,6 @@
 //! Asynchronous event bus and notification model for desktop updates.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 
@@ -66,6 +67,13 @@ pub enum DesktopEvent {
     NodeDehydrated {
         /// Remote path of the dehydrated node.
         path: String,
+    },
+    /// A thumbnail preview was downloaded and cached on disk.
+    ThumbnailReady {
+        /// Remote path of the file.
+        path: String,
+        /// Local cached thumbnail path.
+        cached_path: PathBuf,
     },
     /// Virtual file tree was refreshed from remote WebDAV.
     VfsTreeUpdated {

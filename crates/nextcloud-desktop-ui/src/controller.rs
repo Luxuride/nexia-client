@@ -117,6 +117,11 @@ impl DesktopUiController {
             .flatten()
     }
 
+    /// Batch prefetches thumbnails in the background.
+    pub fn prefetch_thumbnails(&self, paths: Vec<String>, size: u32) {
+        self.coordinator.batch_prefetch_thumbnails(paths, size);
+    }
+
     /// Returns `true` if there is a previous directory in the navigation history.
     pub async fn can_go_back(&self) -> bool {
         self.navigation.read().await.can_go_back()
@@ -504,6 +509,10 @@ impl FileExplorerBackend for DesktopUiController {
 
     async fn get_thumbnail(&self, remote_path: &str, size: u32) -> Option<PathBuf> {
         self.get_thumbnail(remote_path, size).await
+    }
+
+    fn prefetch_thumbnails(&self, paths: Vec<String>, size: u32) {
+        self.prefetch_thumbnails(paths, size);
     }
 
     async fn can_go_back(&self) -> bool {

@@ -388,7 +388,15 @@ impl DesktopSyncCoordinator {
             return Ok(Some(thumb_path));
         }
 
+        // Fast check: is low-res fallback already cached?
+        let low_filename = format!("{:016x}_64.png", path_hash);
+        let low_path = thumbs_dir.join(low_filename);
+
         let _permit = self.preview_semaphore.acquire().await.ok();
+
+        if thumb_path.exists() {
+            return Ok(Some(thumb_path));
+        }
 
         if let Some((_, client, auth)) = self.active_dav_context().await {
             let preview = client.preview(&auth);
@@ -408,17 +416,15 @@ impl DesktopSyncCoordinator {
                 return Ok(Some(thumb_path));
             }
 
-            // Fallback to super low-res if higher-res preview returned server error
-            if size > 32 {
-                let low_opts = nextcloud_rust_sdk::PreviewOptions::new()
-                    .dimensions(32, 32)
-                    .mode(nextcloud_rust_sdk::PreviewMode::Cover);
-                let low_filename = format!("{:016x}_32.png", path_hash);
-                let low_path = thumbs_dir.join(low_filename);
-
+            // Fallback to 64x64 if higher-res preview returned server error
+            if size != 64 {
                 if low_path.exists() {
                     return Ok(Some(low_path));
                 }
+
+                let low_opts = nextcloud_rust_sdk::PreviewOptions::new()
+                    .dimensions(64, 64)
+                    .mode(nextcloud_rust_sdk::PreviewMode::Cover);
 
                 if let Ok(bytes) = preview.get_by_path(&preview_path, &low_opts).await
                     && tokio::fs::write(&low_path, &bytes).await.is_ok()
@@ -428,6 +434,39 @@ impl DesktopSyncCoordinator {
             }
         }
 
+        if low_path.exists() {
+            return Ok(Some(low_path));
+        }
+
         Ok(None)
+    }
+
+    /// Batch prefetches thumbnails for multiple remote paths concurrently in background tasks.
+    pub fn batch_prefetch_thumbnails(&self, paths: Vec<String>, size: u32) {
+        if paths.is_empty() {
+            return;
+        }
+
+        let coord = self.clone();
+        tokio::spawn(async move {
+            let mut tasks = Vec::new();
+            for path in paths {
+                let c = coord.clone();
+                let p = path.clone();
+                tasks.push(tokio::spawn(async move {
+                    if let Ok(Some(cached_path)) = c.fetch_thumbnail(&p, size).await {
+                        c.event_bus.emit(
+                            nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
+                                path: p,
+                                cached_path,
+                            },
+                        );
+                    }
+                }));
+            }
+            for task in tasks {
+                let _ = task.await;
+            }
+        });
     }
 }

@@ -160,6 +160,33 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
 
         let mode = self.backend.view_mode().await;
         let zoom = self.backend.zoom_level().await;
+        let thumb_dim = zoom.grid_icon_size() as u32;
+
+        let thumb_candidates: Vec<String> = items
+            .iter()
+            .filter(|it| {
+                !it.is_directory
+                    && (it.icon_category == crate::model::ResourceIconCategory::Image
+                        || it
+                            .mime_type
+                            .as_deref()
+                            .is_some_and(|m| m.starts_with("image/"))
+                        || it.name.ends_with(".png")
+                        || it.name.ends_with(".jpg")
+                        || it.name.ends_with(".jpeg")
+                        || it.name.ends_with(".webp")
+                        || it.name.ends_with(".gif")
+                        || it.name.ends_with(".svg")
+                        || it.name.ends_with(".pdf"))
+            })
+            .map(|it| it.path.clone())
+            .collect();
+
+        if !thumb_candidates.is_empty() {
+            self.backend
+                .prefetch_thumbnails(thumb_candidates, thumb_dim);
+        }
+
         match mode {
             FileViewMode::Grid => {
                 self.grid_view.populate(

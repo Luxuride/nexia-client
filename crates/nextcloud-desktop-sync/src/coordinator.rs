@@ -50,7 +50,7 @@ impl DesktopSyncCoordinator {
             orchestrator: Arc::new(std::sync::Mutex::new(orch)),
             orchestrator_handle: Arc::new(RwLock::new(handle.clone())),
             default_mount_id: Arc::new(RwLock::new(None)),
-            preview_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
+            preview_semaphore: Arc::new(tokio::sync::Semaphore::new(8)),
         };
 
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {

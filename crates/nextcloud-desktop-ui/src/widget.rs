@@ -42,6 +42,9 @@ pub trait FileExplorerBackend: Clone + 'static {
     /// Returns or fetches thumbnail path for a remote file at the given dimensions.
     fn get_thumbnail(&self, remote_path: &str, size: u32) -> impl Future<Output = Option<PathBuf>>;
 
+    /// Batch prefetches thumbnails for multiple remote paths concurrently in background.
+    fn prefetch_thumbnails(&self, paths: Vec<String>, size: u32);
+
     /// Returns `true` if backward history navigation is available.
     fn can_go_back(&self) -> impl Future<Output = bool>;
 
