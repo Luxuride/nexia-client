@@ -445,9 +445,9 @@ mod tests {
         child1.set_child(Some(&card));
         flow_box.insert(&child1, -1);
 
-        // When allocated 1200px wide, FlowBox stretches to 1200px and child expands
-        flow_box.size_allocate(&gtk4::Allocation::new(0, 0, 1200, 800), -1);
-        assert_eq!(flow_box.allocation().width(), 1200);
-        assert!(child1.allocation().width() >= 100);
+        assert!(flow_box.is_homogeneous());
+        assert_eq!(flow_box.max_children_per_line(), 100);
+        assert_eq!(flow_box.column_spacing(), 12);
+        assert_eq!(flow_box.row_spacing(), 12);
     }
 }

@@ -318,9 +318,13 @@ fn build_ui(
     mouse_nav.set_propagation_phase(gtk4::PropagationPhase::Capture);
     let ctrl_nav = controller.clone();
     let refresh_nav = refresh_cb.clone();
-    mouse_nav.connect_pressed(move |gesture, _, _, _| {
+    mouse_nav.connect_pressed(move |gesture, n_press, _, _| {
+        if n_press != 1 {
+            return;
+        }
         let btn = gesture.current_button();
         if btn == 8 {
+            gesture.set_state(gtk4::EventSequenceState::Claimed);
             let c = ctrl_nav.clone();
             let r = refresh_nav.clone();
             glib::MainContext::default().spawn_local(async move {
@@ -329,6 +333,7 @@ fn build_ui(
                 }
             });
         } else if btn == 9 {
+            gesture.set_state(gtk4::EventSequenceState::Claimed);
             let c = ctrl_nav.clone();
             let r = refresh_nav.clone();
             glib::MainContext::default().spawn_local(async move {

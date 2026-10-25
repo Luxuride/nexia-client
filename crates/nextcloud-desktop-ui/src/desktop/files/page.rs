@@ -113,34 +113,6 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
         // 3. Bottom status bar
         page_box.append(status_bar.root_widget());
 
-        // Support hardware mouse forward (Button 9) and back (Button 8) buttons
-        let mouse_nav = gtk4::GestureClick::new();
-        mouse_nav.set_button(0);
-        mouse_nav.set_propagation_phase(gtk4::PropagationPhase::Capture);
-        let b_nav = backend.clone();
-        let cb_nav = on_refresh_request.clone();
-        mouse_nav.connect_pressed(move |gesture, _, _, _| {
-            let btn = gesture.current_button();
-            if btn == 8 {
-                let b = b_nav.clone();
-                let cb = cb_nav.clone();
-                glib::MainContext::default().spawn_local(async move {
-                    if b.go_back().await {
-                        cb();
-                    }
-                });
-            } else if btn == 9 {
-                let b = b_nav.clone();
-                let cb = cb_nav.clone();
-                glib::MainContext::default().spawn_local(async move {
-                    if b.go_forward().await {
-                        cb();
-                    }
-                });
-            }
-        });
-        page_box.add_controller(mouse_nav);
-
         toast_overlay.set_child(Some(&page_box));
 
         Self {
