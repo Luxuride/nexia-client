@@ -30,6 +30,8 @@ impl RubberbandOverlay {
     /// Creates a new rubberband overlay wrapping the given `child` scroll window.
     pub fn new(child: &ScrolledWindow) -> Self {
         let overlay = Overlay::new();
+        overlay.set_hexpand(true);
+        overlay.set_vexpand(true);
         overlay.set_child(Some(child));
 
         let drawing_area = DrawingArea::new();

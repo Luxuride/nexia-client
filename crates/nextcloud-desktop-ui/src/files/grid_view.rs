@@ -42,16 +42,17 @@ impl FileGridView {
         flow_box.set_selection_mode(SelectionMode::Multiple);
         flow_box.set_activate_on_single_click(false);
         flow_box.set_homogeneous(true);
-        flow_box.set_max_children_per_line(8);
-        flow_box.set_min_children_per_line(2);
+        flow_box.set_max_children_per_line(100);
+        flow_box.set_min_children_per_line(1);
         flow_box.set_column_spacing(12);
         flow_box.set_row_spacing(12);
         flow_box.set_margin_top(16);
         flow_box.set_margin_bottom(16);
         flow_box.set_margin_start(16);
         flow_box.set_margin_end(16);
-        flow_box.set_halign(Align::Start);
+        flow_box.set_halign(Align::Fill);
         flow_box.set_valign(Align::Start);
+        flow_box.set_hexpand(true);
         strip_flowbox_linear_drag(&flow_box);
 
         let items = Rc::new(RefCell::new(Vec::new()));
@@ -232,12 +233,14 @@ impl FileGridTile {
         let child = FlowBoxChild::new();
         child.set_focusable(false);
         child.set_focus_on_click(false);
+        child.set_hexpand(true);
         let card = GtkBox::new(Orientation::Vertical, 4);
         let item_width = zoom.grid_item_width();
         let item_height = (item_width as f32 * 1.1) as i32;
         card.set_size_request(item_width, item_height);
-        card.set_halign(Align::Center);
-        card.set_valign(Align::Center);
+        card.set_halign(Align::Fill);
+        card.set_hexpand(true);
+        card.set_valign(Align::Start);
         card.add_css_class("file-tile");
 
         // Hover suggestion tooltip displaying full item metadata
@@ -304,6 +307,8 @@ impl FileGridTile {
         name.set_wrap(true);
         name.set_wrap_mode(pango::WrapMode::WordChar);
         name.set_justify(Justification::Center);
+        name.set_halign(Align::Fill);
+        name.set_hexpand(true);
         name.set_max_width_chars(match zoom {
             ZoomLevel::Small => 10,
             ZoomLevel::Medium => 14,
@@ -335,5 +340,53 @@ impl ViewComponent for FileGridTile {
 
     fn root_widget(&self) -> &Self::RootWidget {
         &self.child
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_flowbox_stretches_and_allocates_dynamically() {
+        if gtk4::init().is_err() {
+            return;
+        }
+        let flow_box = FlowBox::new();
+        flow_box.set_homogeneous(true);
+        flow_box.set_max_children_per_line(100);
+        flow_box.set_min_children_per_line(1);
+        flow_box.set_column_spacing(12);
+        flow_box.set_row_spacing(12);
+        flow_box.set_halign(Align::Fill);
+        flow_box.set_valign(Align::Start);
+        flow_box.set_hexpand(true);
+
+        let child1 = FlowBoxChild::new();
+        child1.set_hexpand(true);
+        let card = GtkBox::new(Orientation::Vertical, 4);
+        card.set_size_request(100, 110);
+        card.set_halign(Align::Fill);
+        card.set_hexpand(true);
+
+        let label = Label::new(Some(
+            "A very long filename for testing stretch behavior.png",
+        ));
+        label.set_wrap(true);
+        label.set_wrap_mode(pango::WrapMode::WordChar);
+        label.set_justify(Justification::Center);
+        label.set_lines(2);
+        label.set_ellipsize(pango::EllipsizeMode::End);
+        label.set_max_width_chars(14);
+        label.set_hexpand(true);
+        card.append(&label);
+
+        child1.set_child(Some(&card));
+        flow_box.insert(&child1, -1);
+
+        // When allocated 1200px wide, FlowBox stretches to 1200px and child expands
+        flow_box.size_allocate(&gtk4::Allocation::new(0, 0, 1200, 800), -1);
+        assert_eq!(flow_box.allocation().width(), 1200);
+        assert!(child1.allocation().width() >= 100);
     }
 }

@@ -209,7 +209,9 @@ fn build_ui(
     paned.set_shrink_start_child(false);
     paned.set_shrink_end_child(false);
     paned.set_resize_start_child(false);
+    paned.set_resize_end_child(true);
     paned.set_vexpand(true);
+    paned.set_hexpand(true);
 
     let stack_for_nav = content_stack.clone();
     let header_for_nav = header_bar.clone();
@@ -222,6 +224,8 @@ fn build_ui(
     paned.set_end_child(Some(&content_stack));
 
     let root_box = GtkBox::new(Orientation::Vertical, 0);
+    root_box.set_vexpand(true);
+    root_box.set_hexpand(true);
     root_box.append(header_bar.root_widget());
     root_box.append(&paned);
     toast_overlay.set_child(Some(&root_box));

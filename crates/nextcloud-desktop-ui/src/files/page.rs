@@ -32,6 +32,8 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
     /// Constructs the Cloud Files explorer page view.
     pub fn new(backend: &B, on_refresh_request: Rc<dyn Fn()>) -> Self {
         let toast_overlay = adw::ToastOverlay::new();
+        toast_overlay.set_hexpand(true);
+        toast_overlay.set_vexpand(true);
 
         let search_query = Rc::new(RefCell::new(None));
         let sq_clone = search_query.clone();

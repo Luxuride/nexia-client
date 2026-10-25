@@ -84,6 +84,7 @@ impl FileListView {
         list_box.set_focus_on_click(false);
         list_box.set_selection_mode(SelectionMode::Multiple);
         list_box.set_activate_on_single_click(false);
+        list_box.set_hexpand(true);
         list_box.add_css_class("file-list-view");
         strip_listbox_linear_drag(&list_box);
 
@@ -137,6 +138,7 @@ impl FileListView {
         let scroll = ScrolledWindow::new();
         scroll.set_hscrollbar_policy(PolicyType::Never);
         scroll.set_vexpand(true);
+        scroll.set_hexpand(true);
         scroll.set_child(Some(&list_box));
 
         // Wire visual rubberband selection marquee and empty-space deselection
@@ -266,7 +268,9 @@ impl FileListRow {
         let row = ListBoxRow::new();
         row.set_focusable(false);
         row.set_focus_on_click(false);
+        row.set_hexpand(true);
         let hbox = GtkBox::new(Orientation::Horizontal, 12);
+        hbox.set_hexpand(true);
         hbox.set_margin_top(6);
         hbox.set_margin_bottom(6);
         hbox.set_margin_start(16);
