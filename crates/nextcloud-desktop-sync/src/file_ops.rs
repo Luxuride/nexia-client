@@ -1435,17 +1435,27 @@ async fn fetch_preview_bytes<
     clean_no_slash: &str,
     opts: &nextcloud_rust_sdk::PreviewOptions,
 ) -> Option<Vec<u8>> {
-    // 1. Primary: fetch by path (standard and reliable across all Nextcloud versions)
-    if let Ok(bytes) = preview.get_by_path(clean_no_slash, opts).await {
-        return Some(bytes);
-    }
-    // 2. Secondary: fetch by numeric file ID if known
+    // 1. Primary: fetch by numeric file ID if known (fastest and most reliable in Nextcloud)
     if let Some(fid) = file_id
         && let Ok(bytes) = preview.get_by_file_id(fid, opts).await
     {
         return Some(bytes);
     }
-    None
+    // 2. Secondary: fetch by path
+    if let Ok(bytes) = preview.get_by_path(clean_no_slash, opts).await {
+        return Some(bytes);
+    }
+    // 3. Fallback without mode (Nextcloud rejects mode=cover for HEIC, video, and PDF formats)
+    let simple_opts = nextcloud_rust_sdk::PreviewOptions::new().dimensions(
+        opts.width_px().unwrap_or(64),
+        opts.height_px().unwrap_or(64),
+    );
+    if let Some(fid) = file_id
+        && let Ok(bytes) = preview.get_by_file_id(fid, &simple_opts).await
+    {
+        return Some(bytes);
+    }
+    preview.get_by_path(clean_no_slash, &simple_opts).await.ok()
 }
 
 fn decode_percent_str(input: &str) -> String {
