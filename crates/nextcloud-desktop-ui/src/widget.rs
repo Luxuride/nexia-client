@@ -171,6 +171,12 @@ pub trait FileExplorerBackend: Clone + 'static {
     /// Opens a file, downloading content into local cache if not yet cached.
     fn open_file(&self, remote_path: &str) -> impl Future<Output = Result<PathBuf, UiError>>;
 
+    /// Hydrates a virtual file on-demand, downloading content to local cache.
+    fn hydrate_file(&self, remote_path: &str) -> impl Future<Output = Result<PathBuf, UiError>>;
+
+    /// Dehydrates a file back to a cloud-only placeholder, freeing disk space.
+    fn dehydrate_file(&self, remote_path: &str) -> impl Future<Output = Result<(), UiError>>;
+
     /// Refreshes the virtual tree from the server or default hierarchy.
     fn refresh_virtual_tree(&self) -> impl Future<Output = Result<usize, UiError>>;
 

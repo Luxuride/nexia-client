@@ -6,7 +6,7 @@ use libadwaita::prelude::*;
 use std::rc::Rc;
 
 use crate::files::rename_dialog::RenameDialog;
-use crate::model::FileViewItem;
+use crate::model::{FileSyncStatus, FileViewItem};
 use crate::widget::FileExplorerBackend;
 
 /// Right-click context menu offering Open, Rename, Delete, and Properties actions.
@@ -91,6 +91,79 @@ impl ItemContextMenu {
             });
         }
 
+        // Hydration download / free space action for files
+        let hydration_btn = if !item.is_directory {
+            match item.status {
+                FileSyncStatus::CloudPlaceholder => {
+                    let btn = Button::with_label("Download (Keep Offline)");
+                    btn.add_css_class("flat");
+                    let pop = popover.clone();
+                    let b = backend.clone();
+                    let toast = toast_overlay.clone();
+                    let cb = on_refresh.clone();
+                    let p = item.path.clone();
+                    let n = item.name.clone();
+                    btn.connect_clicked(move |_| {
+                        pop.popdown();
+                        let b = b.clone();
+                        let toast = toast.clone();
+                        let cb = cb.clone();
+                        let p = p.clone();
+                        let n = n.clone();
+                        glib::MainContext::default().spawn_local(async move {
+                            match b.hydrate_file(&p).await {
+                                Ok(_) => {
+                                    toast.add_toast(adw::Toast::new(&format!("Downloaded “{n}”")));
+                                    cb();
+                                }
+                                Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
+                            }
+                        });
+                    });
+                    Some(btn)
+                }
+                FileSyncStatus::HydratedOffline => {
+                    let btn = Button::with_label("Free Up Space");
+                    btn.add_css_class("flat");
+                    let pop = popover.clone();
+                    let b = backend.clone();
+                    let toast = toast_overlay.clone();
+                    let cb = on_refresh.clone();
+                    let p = item.path.clone();
+                    let n = item.name.clone();
+                    btn.connect_clicked(move |_| {
+                        pop.popdown();
+                        let b = b.clone();
+                        let toast = toast.clone();
+                        let cb = cb.clone();
+                        let p = p.clone();
+                        let n = n.clone();
+                        glib::MainContext::default().spawn_local(async move {
+                            match b.dehydrate_file(&p).await {
+                                Ok(_) => {
+                                    toast.add_toast(adw::Toast::new(&format!(
+                                        "Freed space for “{n}”"
+                                    )));
+                                    cb();
+                                }
+                                Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
+                            }
+                        });
+                    });
+                    Some(btn)
+                }
+                FileSyncStatus::Syncing => {
+                    let btn = Button::with_label("Syncing…");
+                    btn.add_css_class("flat");
+                    btn.set_sensitive(false);
+                    Some(btn)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         // 2. Rename action (opens Nautilus modal Rename dialog)
         let rename_btn = Button::with_label("Rename…");
         rename_btn.add_css_class("flat");
@@ -155,6 +228,9 @@ impl ItemContextMenu {
         }
 
         menu_box.append(&open_btn);
+        if let Some(ref btn) = hydration_btn {
+            menu_box.append(btn);
+        }
         menu_box.append(&Separator::new(Orientation::Horizontal));
         menu_box.append(&rename_btn);
         menu_box.append(&delete_btn);

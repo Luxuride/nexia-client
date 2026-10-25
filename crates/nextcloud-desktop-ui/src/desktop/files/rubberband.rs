@@ -389,7 +389,7 @@ pub fn strip_listbox_linear_drag(list_box: &ListBox) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 

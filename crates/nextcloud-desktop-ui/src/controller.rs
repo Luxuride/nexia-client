@@ -1,6 +1,7 @@
 //! Controller managing application state and asynchronous backend operations.
 
 use nextcloud_desktop_core::{Account, AccountId};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -23,6 +24,7 @@ pub struct DesktopUiController {
     view_mode: Arc<RwLock<FileViewMode>>,
     zoom_level: Arc<RwLock<ZoomLevel>>,
     sort_criteria: Arc<RwLock<FileSortCriteria>>,
+    active_hydrations: Arc<RwLock<HashSet<String>>>,
 }
 
 impl DesktopUiController {
@@ -34,12 +36,31 @@ impl DesktopUiController {
             view_mode: Arc::new(RwLock::new(FileViewMode::Grid)),
             zoom_level: Arc::new(RwLock::new(ZoomLevel::Medium)),
             sort_criteria: Arc::new(RwLock::new(FileSortCriteria::default())),
+            active_hydrations: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
     /// Access the underlying sync coordinator.
     pub fn coordinator(&self) -> &DesktopSyncCoordinator {
         &self.coordinator
+    }
+
+    /// Returns `true` if a virtual file is currently undergoing active hydration / download.
+    pub async fn is_hydrating(&self, remote_path: &str) -> bool {
+        let clean = format!("/{}", remote_path.trim_matches('/'));
+        self.active_hydrations.read().await.contains(&clean)
+    }
+
+    /// Marks a remote path as actively hydrating.
+    pub async fn mark_hydration_started(&self, remote_path: &str) {
+        let clean = format!("/{}", remote_path.trim_matches('/'));
+        self.active_hydrations.write().await.insert(clean);
+    }
+
+    /// Removes a remote path from active hydrations.
+    pub async fn mark_hydration_finished(&self, remote_path: &str) {
+        let clean = format!("/{}", remote_path.trim_matches('/'));
+        self.active_hydrations.write().await.remove(&clean);
     }
 
     /// Gets the current virtual directory path.
@@ -158,10 +179,15 @@ impl DesktopUiController {
             .await
             .map_err(|err| UiError::Controller(err.to_string()))?;
 
+        let active_hydrations = self.active_hydrations.read().await;
         let mut items: Vec<FileViewItem> = entries
             .into_iter()
             .map(|e| {
-                let status = if e.is_directory {
+                let clean_p = format!("/{}", e.path.trim_matches('/'));
+                let is_syncing = active_hydrations.contains(&clean_p);
+                let status = if is_syncing {
+                    FileSyncStatus::Syncing
+                } else if e.is_directory {
                     if let Some(ref dir_sum) = e.directory_summary {
                         if dir_sum.has_unhydrated && dir_sum.has_unsynced {
                             FileSyncStatus::UnhydratedAndUnsynced
@@ -308,10 +334,15 @@ impl DesktopUiController {
             .await
             .map_err(|err| UiError::Controller(err.to_string()))?;
 
+        let active_hydrations = self.active_hydrations.read().await;
         let mut items: Vec<FileViewItem> = entries
             .into_iter()
             .map(|e| {
-                let status = if e.is_directory {
+                let clean_p = format!("/{}", e.path.trim_matches('/'));
+                let is_syncing = active_hydrations.contains(&clean_p);
+                let status = if is_syncing {
+                    FileSyncStatus::Syncing
+                } else if e.is_directory {
                     if let Some(ref dir_sum) = e.directory_summary {
                         if dir_sum.has_unhydrated && dir_sum.has_unsynced {
                             FileSyncStatus::UnhydratedAndUnsynced
@@ -447,19 +478,26 @@ impl DesktopUiController {
 
     /// Opens a virtual file by hydrating it to local cache.
     pub async fn open_file(&self, remote_path: &str) -> Result<PathBuf, UiError> {
-        self.coordinator
-            .hydrate_file(remote_path)
-            .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+        self.hydrate_file(remote_path).await
     }
 
     /// Hydrates a virtual file on-demand.
     pub async fn hydrate_file(&self, remote_path: &str) -> Result<PathBuf, UiError> {
-        self.open_file(remote_path).await
+        let clean = format!("/{}", remote_path.trim_matches('/'));
+        self.mark_hydration_started(&clean).await;
+        let res = self
+            .coordinator
+            .hydrate_file(remote_path)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()));
+        self.mark_hydration_finished(&clean).await;
+        res
     }
 
     /// Dehydrates a file back to a placeholder, freeing disk space.
     pub async fn dehydrate_file(&self, remote_path: &str) -> Result<(), UiError> {
+        let clean = format!("/{}", remote_path.trim_matches('/'));
+        self.mark_hydration_finished(&clean).await;
         self.coordinator
             .dehydrate_file(remote_path)
             .await
@@ -830,6 +868,14 @@ impl FileExplorerBackend for DesktopUiController {
         self.open_file(remote_path).await
     }
 
+    async fn hydrate_file(&self, remote_path: &str) -> Result<PathBuf, UiError> {
+        self.hydrate_file(remote_path).await
+    }
+
+    async fn dehydrate_file(&self, remote_path: &str) -> Result<(), UiError> {
+        self.dehydrate_file(remote_path).await
+    }
+
     async fn refresh_virtual_tree(&self) -> Result<usize, UiError> {
         self.refresh_virtual_tree().await
     }
@@ -928,5 +974,31 @@ impl FileExplorerBackend for DesktopUiController {
         dir_path: &str,
     ) -> Option<nextcloud_rust_sdk::FileSortCriteria> {
         self.load_directory_sort(dir_path).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nextcloud_desktop_core::config::AppConfig;
+    use nextcloud_desktop_core::events::EventBus;
+
+    #[tokio::test]
+    async fn active_hydrations_tracking() {
+        let config_lock = Arc::new(RwLock::new(AppConfig::default()));
+        let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
+        let controller = DesktopUiController::new(coordinator);
+
+        assert!(!controller.is_hydrating("/Documents/test.pdf").await);
+        controller
+            .mark_hydration_started("Documents/test.pdf")
+            .await;
+        assert!(controller.is_hydrating("/Documents/test.pdf").await);
+        assert!(controller.is_hydrating("Documents/test.pdf").await);
+
+        controller
+            .mark_hydration_finished("/Documents/test.pdf")
+            .await;
+        assert!(!controller.is_hydrating("/Documents/test.pdf").await);
     }
 }

@@ -213,7 +213,7 @@ impl FileSyncStatus {
             Self::CloudPlaceholder => "folder-remote-symbolic",
             Self::HydratedOffline => "emblem-ok-symbolic",
             Self::LocalOnly => "go-up-symbolic",
-            Self::UnhydratedAndUnsynced => "emblem-synchronizing-symbolic",
+            Self::UnhydratedAndUnsynced => "folder-remote-symbolic",
             Self::Syncing => "view-refresh-symbolic",
         }
     }
@@ -395,6 +395,9 @@ mod tests {
             "emblem-ok-symbolic"
         );
         assert_eq!(FileSyncStatus::LocalOnly.icon_name(), "go-up-symbolic");
+        assert_eq!(FileSyncStatus::Syncing.icon_name(), "view-refresh-symbolic");
+        assert_eq!(FileSyncStatus::Syncing.display_label(), "Syncing…");
+        assert_eq!(FileSyncStatus::Syncing.css_class(), "accent");
     }
 
     #[test]

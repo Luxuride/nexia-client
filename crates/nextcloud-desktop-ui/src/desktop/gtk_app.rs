@@ -385,12 +385,23 @@ fn build_ui(
     // Reactive event subscriber loop for VfsTreeUpdated and sync cycle events
     let mut event_rx = controller.subscribe_events();
     let refresh_for_events = refresh_cb.clone();
+    let ctrl_for_events = controller.clone();
     glib::MainContext::default().spawn_local(async move {
         while let Ok(event) = event_rx.recv().await {
             match event {
+                nextcloud_desktop_core::events::DesktopEvent::NodeHydrationStarted { ref path } => {
+                    ctrl_for_events.mark_hydration_started(path).await;
+                    refresh_for_events();
+                }
+                nextcloud_desktop_core::events::DesktopEvent::NodeHydrated { ref path, .. } => {
+                    ctrl_for_events.mark_hydration_finished(path).await;
+                    refresh_for_events();
+                }
+                nextcloud_desktop_core::events::DesktopEvent::NodeDehydrated { ref path } => {
+                    ctrl_for_events.mark_hydration_finished(path).await;
+                    refresh_for_events();
+                }
                 nextcloud_desktop_core::events::DesktopEvent::VfsTreeUpdated { .. }
-                | nextcloud_desktop_core::events::DesktopEvent::NodeHydrated { .. }
-                | nextcloud_desktop_core::events::DesktopEvent::NodeDehydrated { .. }
                 | nextcloud_desktop_core::events::DesktopEvent::SyncCompleted { .. } => {
                     refresh_for_events();
                 }

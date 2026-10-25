@@ -56,6 +56,11 @@ pub enum DesktopEvent {
         /// Kind of transfer.
         kind: TransferKind,
     },
+    /// A virtual file node has started on-demand hydration and download.
+    NodeHydrationStarted {
+        /// Remote path of the node being hydrated.
+        path: String,
+    },
     /// A virtual file node was hydrated with content.
     NodeHydrated {
         /// Remote path of the hydrated node.

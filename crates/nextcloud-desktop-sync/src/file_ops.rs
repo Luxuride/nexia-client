@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use crate::coordinator::DesktopSyncCoordinator;
 use crate::error::SyncError;
 use nextcloud_desktop_core::config::SyncMode;
+use nextcloud_desktop_core::events::DesktopEvent;
 
 /// Constructs a normalized [`DavPath`] from user name and relative path.
 pub fn make_dav_path(user: &str, relative: &str) -> Result<DavPath, SyncError> {
@@ -104,36 +105,55 @@ impl DesktopSyncCoordinator {
 
     /// Performs on-demand hydration for a virtual file, downloading via SDK or using local cache.
     pub async fn hydrate_file(&self, remote_path: &str) -> Result<PathBuf, SyncError> {
+        let clean = format!("/{}", remote_path.trim_matches('/'));
+        self.event_bus.emit(DesktopEvent::NodeHydrationStarted {
+            path: clean.clone(),
+        });
         let vfs = self.active_vfs().await;
 
         if let Some((user, client, auth)) = self.active_dav_context().await {
             let dav_client = client.dav(&auth);
-            let clean = remote_path.trim_matches('/');
-            let dav_path =
-                DavPath::new(&user, clean).map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+            let clean_sub = remote_path.trim_matches('/');
+            let dav_path = DavPath::new(&user, clean_sub)
+                .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
             if let Ok(bytes) = dav_client.get(&dav_path).await {
+                let byte_len = bytes.len() as u64;
                 let local_path = vfs
                     .hydrate_local(remote_path, bytes)
                     .await
                     .map_err(SyncError::Orchestrator)?;
+                self.event_bus.emit(DesktopEvent::NodeHydrated {
+                    path: clean,
+                    size: byte_len,
+                });
                 return Ok(local_path);
             }
         }
 
         let placeholder = format!("Offline placeholder content for {remote_path}\n");
+        let byte_len = placeholder.len() as u64;
         let local_path = vfs
             .hydrate_local(remote_path, placeholder.into_bytes())
             .await
             .map_err(SyncError::Orchestrator)?;
+        self.event_bus.emit(DesktopEvent::NodeHydrated {
+            path: clean,
+            size: byte_len,
+        });
         Ok(local_path)
     }
 
     /// Dehydrates a file node, freeing local cache space.
     pub async fn dehydrate_file(&self, remote_path: &str) -> Result<(), SyncError> {
+        let clean = format!("/{}", remote_path.trim_matches('/'));
         let vfs = self.active_vfs().await;
-        vfs.dehydrate_local(remote_path)
+        let res = vfs
+            .dehydrate_local(remote_path)
             .await
-            .map_err(SyncError::Orchestrator)
+            .map_err(SyncError::Orchestrator);
+        self.event_bus
+            .emit(DesktopEvent::NodeDehydrated { path: clean });
+        res
     }
 
     /// Creates a new directory in the virtual tree and on the remote WebDAV server if online.
