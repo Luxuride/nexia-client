@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use crate::error::UiError;
-use crate::model::{FileViewItem, FileViewMode};
+use crate::model::{FileViewItem, FileViewMode, ZoomLevel};
 
 /// Trait implemented by every self-contained UI component or page view.
 pub trait ViewComponent {
@@ -28,6 +28,19 @@ pub trait FileExplorerBackend: Clone + 'static {
 
     /// Updates the current file layout mode.
     fn set_view_mode(&self, mode: FileViewMode) -> impl Future<Output = ()>;
+
+    /// Returns the current view zoom level.
+    fn zoom_level(&self) -> impl Future<Output = ZoomLevel>;
+
+    /// Updates the current view zoom level.
+    fn set_zoom_level(&self, zoom: ZoomLevel) -> impl Future<Output = ()>;
+
+    /// Searches files matching `query` across local VFS and server unified search.
+    fn search_items(&self, query: &str)
+    -> impl Future<Output = Result<Vec<FileViewItem>, UiError>>;
+
+    /// Returns or fetches thumbnail path for a remote file at the given dimensions.
+    fn get_thumbnail(&self, remote_path: &str, size: u32) -> impl Future<Output = Option<PathBuf>>;
 
     /// Returns `true` if backward history navigation is available.
     fn can_go_back(&self) -> impl Future<Output = bool>;
@@ -156,12 +169,13 @@ pub trait ItemCollectionView<B: FileExplorerBackend>: ViewComponent {
     /// Removes all rendered children from the collection view.
     fn clear(&self);
 
-    /// Populates the collection view with the given directory items.
+    /// Populates the collection view with the given directory items and active zoom level.
     fn populate(
         &self,
         items: &[FileViewItem],
         backend: &B,
         toast_overlay: &libadwaita::ToastOverlay,
+        zoom: ZoomLevel,
         on_refresh: Rc<dyn Fn()>,
     );
 }

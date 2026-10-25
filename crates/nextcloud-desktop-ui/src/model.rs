@@ -80,6 +80,70 @@ pub enum FileViewMode {
     List,
 }
 
+/// Nautilus-style zoom levels for the file grid and list views.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ZoomLevel {
+    /// Smallest icon presentation (48px grid icon, compact list).
+    Small,
+    /// Standard / default icon presentation (96px grid icon).
+    #[default]
+    Medium,
+    /// Large icon presentation (128px grid icon).
+    Large,
+    /// Extra large icon presentation (192px grid icon).
+    ExtraLarge,
+}
+
+impl ZoomLevel {
+    /// Returns the pixel dimension for grid view icons / thumbnails.
+    pub const fn grid_icon_size(&self) -> i32 {
+        match self {
+            Self::Small => 48,
+            Self::Medium => 96,
+            Self::Large => 128,
+            Self::ExtraLarge => 192,
+        }
+    }
+
+    /// Returns the target pixel width of the item container card in grid view.
+    pub const fn grid_item_width(&self) -> i32 {
+        match self {
+            Self::Small => 90,
+            Self::Medium => 120,
+            Self::Large => 160,
+            Self::ExtraLarge => 220,
+        }
+    }
+
+    /// Returns the pixel dimension for list view row icons.
+    pub const fn list_icon_size(&self) -> i32 {
+        match self {
+            Self::Small => 24,
+            Self::Medium => 32,
+            Self::Large => 48,
+            Self::ExtraLarge => 64,
+        }
+    }
+
+    /// Steps zoom in one level up, if not already at maximum.
+    pub const fn zoom_in(&self) -> Self {
+        match self {
+            Self::Small => Self::Medium,
+            Self::Medium => Self::Large,
+            Self::Large | Self::ExtraLarge => Self::ExtraLarge,
+        }
+    }
+
+    /// Steps zoom out one level down, if not already at minimum.
+    pub const fn zoom_out(&self) -> Self {
+        match self {
+            Self::ExtraLarge => Self::Large,
+            Self::Large => Self::Medium,
+            Self::Medium | Self::Small => Self::Small,
+        }
+    }
+}
+
 /// Status of an individual file in the virtual browser view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileSyncStatus {

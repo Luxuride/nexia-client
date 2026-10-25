@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::error::UiError;
-use crate::model::{FileSyncStatus, FileViewItem, FileViewMode};
+use crate::model::{FileSyncStatus, FileViewItem, FileViewMode, ZoomLevel};
 use crate::widget::FileExplorerBackend;
 use nextcloud_desktop_sync::{
     DesktopSyncCoordinator, MountDescriptor, MountId, MountState, SyncFileStatus,
@@ -19,6 +19,7 @@ pub struct DesktopUiController {
     coordinator: DesktopSyncCoordinator,
     navigation: Arc<RwLock<NavigationHistory>>,
     view_mode: Arc<RwLock<FileViewMode>>,
+    zoom_level: Arc<RwLock<ZoomLevel>>,
 }
 
 impl DesktopUiController {
@@ -28,6 +29,7 @@ impl DesktopUiController {
             coordinator,
             navigation: Arc::new(RwLock::new(NavigationHistory::new())),
             view_mode: Arc::new(RwLock::new(FileViewMode::Grid)),
+            zoom_level: Arc::new(RwLock::new(ZoomLevel::Medium)),
         }
     }
 
@@ -49,6 +51,70 @@ impl DesktopUiController {
     /// Sets the active Nautilus file view mode (Grid or List).
     pub async fn set_view_mode(&self, mode: FileViewMode) {
         *self.view_mode.write().await = mode;
+    }
+
+    /// Returns the current view zoom level.
+    pub async fn zoom_level(&self) -> ZoomLevel {
+        *self.zoom_level.read().await
+    }
+
+    /// Sets the active view zoom level.
+    pub async fn set_zoom_level(&self, zoom: ZoomLevel) {
+        *self.zoom_level.write().await = zoom;
+    }
+
+    /// Searches files matching `query` across local VFS and server unified search.
+    pub async fn search_items(&self, query: &str) -> Result<Vec<FileViewItem>, UiError> {
+        let entries = self
+            .coordinator
+            .search(query)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))?;
+
+        let mut items: Vec<FileViewItem> = entries
+            .into_iter()
+            .map(|e| {
+                let status = if e.is_directory {
+                    FileSyncStatus::CloudPlaceholder
+                } else if e.is_hydrated {
+                    FileSyncStatus::HydratedOffline
+                } else {
+                    FileSyncStatus::CloudPlaceholder
+                };
+
+                let size_formatted = e.display_size();
+
+                FileViewItem {
+                    path: e.path,
+                    name: e.name,
+                    is_directory: e.is_directory,
+                    size_formatted,
+                    size_bytes: e.size,
+                    status,
+                    mime_type: e.mime_type,
+                    icon_category: e.icon_category,
+                    modified_at: e.modified_at,
+                    permissions: e.permissions,
+                }
+            })
+            .collect();
+
+        items.sort_by(|a, b| {
+            b.is_directory
+                .cmp(&a.is_directory)
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
+
+        Ok(items)
+    }
+
+    /// Fetches or retrieves a cached thumbnail for `remote_path`.
+    pub async fn get_thumbnail(&self, remote_path: &str, size: u32) -> Option<PathBuf> {
+        self.coordinator
+            .fetch_thumbnail(remote_path, size)
+            .await
+            .ok()
+            .flatten()
     }
 
     /// Returns `true` if there is a previous directory in the navigation history.
@@ -422,6 +488,22 @@ impl FileExplorerBackend for DesktopUiController {
 
     async fn set_view_mode(&self, mode: FileViewMode) {
         self.set_view_mode(mode).await;
+    }
+
+    async fn zoom_level(&self) -> ZoomLevel {
+        self.zoom_level().await
+    }
+
+    async fn set_zoom_level(&self, zoom: ZoomLevel) {
+        self.set_zoom_level(zoom).await;
+    }
+
+    async fn search_items(&self, query: &str) -> Result<Vec<FileViewItem>, UiError> {
+        self.search_items(query).await
+    }
+
+    async fn get_thumbnail(&self, remote_path: &str, size: u32) -> Option<PathBuf> {
+        self.get_thumbnail(remote_path, size).await
     }
 
     async fn can_go_back(&self) -> bool {

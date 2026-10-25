@@ -3,6 +3,7 @@
 use gtk4::{Box as GtkBox, Orientation, Separator, Stack};
 use libadwaita as adw;
 use libadwaita::prelude::*;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::files::grid_view::FileGridView;
@@ -22,6 +23,8 @@ pub struct CloudFilesPage<B: FileExplorerBackend> {
     list_view: FileListView,
     status_bar: FileStatusBar,
     view_stack: Stack,
+    empty_page: adw::StatusPage,
+    search_query: Rc<RefCell<Option<String>>>,
     backend: B,
 }
 
@@ -30,7 +33,20 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
     pub fn new(backend: &B, on_refresh_request: Rc<dyn Fn()>) -> Self {
         let toast_overlay = adw::ToastOverlay::new();
 
-        let toolbar = PathToolbar::new(backend, &toast_overlay, on_refresh_request.clone());
+        let search_query = Rc::new(RefCell::new(None));
+        let sq_clone = search_query.clone();
+        let cb = on_refresh_request.clone();
+        let on_search = Rc::new(move |q: Option<String>| {
+            *sq_clone.borrow_mut() = q;
+            cb();
+        });
+
+        let toolbar = PathToolbar::new(
+            backend,
+            &toast_overlay,
+            on_refresh_request.clone(),
+            on_search,
+        );
         let status_bar = FileStatusBar::new();
 
         let status_bar_for_sel = status_bar.clone();
@@ -91,6 +107,8 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
             list_view,
             status_bar,
             view_stack,
+            empty_page,
+            search_query,
             backend: backend.clone(),
         }
     }
@@ -101,21 +119,54 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
             .sync_state(&self.backend, on_refresh_cb.clone())
             .await;
 
-        let items = self.backend.list_current_items().await.unwrap_or_default();
+        let active_search = self.search_query.borrow().clone();
+
+        let items = if let Some(ref q) = active_search {
+            if !q.is_empty() {
+                self.backend.search_items(q).await.unwrap_or_default()
+            } else {
+                self.backend.list_current_items().await.unwrap_or_default()
+            }
+        } else {
+            self.backend.list_current_items().await.unwrap_or_default()
+        };
+
         self.status_bar.update_counts(&items);
 
         if items.is_empty() {
+            if let Some(ref q) = active_search {
+                if !q.is_empty() {
+                    self.empty_page.set_title("No Results Found");
+                    self.empty_page
+                        .set_description(Some(&format!("No files match “{q}”.")));
+                    self.empty_page.set_icon_name(Some("edit-find-symbolic"));
+                } else {
+                    self.empty_page.set_title("Folder is Empty");
+                    self.empty_page.set_description(Some(
+                        "Use the New Folder button above or add files to this directory.",
+                    ));
+                    self.empty_page.set_icon_name(Some("folder-open-symbolic"));
+                }
+            } else {
+                self.empty_page.set_title("Folder is Empty");
+                self.empty_page.set_description(Some(
+                    "Use the New Folder button above or add files to this directory.",
+                ));
+                self.empty_page.set_icon_name(Some("folder-open-symbolic"));
+            }
             self.view_stack.set_visible_child_name("empty");
             return;
         }
 
         let mode = self.backend.view_mode().await;
+        let zoom = self.backend.zoom_level().await;
         match mode {
             FileViewMode::Grid => {
                 self.grid_view.populate(
                     &items,
                     &self.backend,
                     &self.toast_overlay,
+                    zoom,
                     on_refresh_cb.clone(),
                 );
                 self.view_stack.set_visible_child_name("grid");
@@ -125,6 +176,7 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
                     &items,
                     &self.backend,
                     &self.toast_overlay,
+                    zoom,
                     on_refresh_cb.clone(),
                 );
                 self.view_stack.set_visible_child_name("list");

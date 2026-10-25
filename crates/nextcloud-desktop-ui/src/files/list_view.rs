@@ -16,7 +16,7 @@ use crate::files::launcher::launch_file_externally;
 use crate::files::rename_dialog::RenameDialog;
 use crate::files::rubberband::{RubberbandOverlay, strip_listbox_linear_drag};
 use crate::files::selection::SelectionTracker;
-use crate::model::FileViewItem;
+use crate::model::{FileViewItem, ResourceIconCategory, ZoomLevel};
 use crate::widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
 
 /// Detailed columnar list view representing the active virtual directory.
@@ -234,13 +234,14 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileListView {
         items: &[FileViewItem],
         backend: &B,
         toast_overlay: &adw::ToastOverlay,
+        zoom: ZoomLevel,
         on_refresh: Rc<dyn Fn()>,
     ) {
         self.clear();
         *self.items.borrow_mut() = items.to_vec();
 
         for item in items {
-            let row = FileListRow::build(item, backend, toast_overlay, on_refresh.clone());
+            let row = FileListRow::build(item, backend, toast_overlay, zoom, on_refresh.clone());
             self.list_box.append(row.root_widget());
         }
         self.list_box.unselect_all();
@@ -259,6 +260,7 @@ impl FileListRow {
         item: &FileViewItem,
         backend: &B,
         toast_overlay: &adw::ToastOverlay,
+        zoom: ZoomLevel,
         on_refresh: Rc<dyn Fn()>,
     ) -> Self {
         let row = ListBoxRow::new();
@@ -281,8 +283,53 @@ impl FileListRow {
         hbox.set_tooltip_text(Some(&tooltip));
 
         // 1. Icon & Name
+        let icon_size = zoom.list_icon_size();
+        let icon_box = GtkBox::new(Orientation::Horizontal, 0);
+        icon_box.set_size_request(icon_size, icon_size);
+        icon_box.set_halign(Align::Center);
+        icon_box.set_valign(Align::Center);
+
         let icon = Image::from_icon_name(item.nautilus_icon_name());
-        icon.set_pixel_size(24);
+        icon.set_pixel_size(icon_size);
+        icon_box.append(&icon);
+
+        let is_thumbnail_candidate = !item.is_directory
+            && (item.icon_category == ResourceIconCategory::Image
+                || item
+                    .mime_type
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("image/"))
+                || item.name.ends_with(".png")
+                || item.name.ends_with(".jpg")
+                || item.name.ends_with(".jpeg")
+                || item.name.ends_with(".webp")
+                || item.name.ends_with(".gif")
+                || item.name.ends_with(".svg")
+                || item.name.ends_with(".pdf"));
+
+        if is_thumbnail_candidate {
+            let backend_clone = backend.clone();
+            let path_clone = item.path.clone();
+            let icon_box_clone = icon_box.clone();
+            let thumb_dim = icon_size as u32;
+
+            glib::MainContext::default().spawn_local(async move {
+                if let Some(thumb_path) = backend_clone.get_thumbnail(&path_clone, thumb_dim).await
+                {
+                    let file = gtk4::gio::File::for_path(&thumb_path);
+                    if let Ok(texture) = gdk::Texture::from_file(&file) {
+                        let picture = gtk4::Picture::for_paintable(&texture);
+                        picture.set_can_shrink(true);
+                        picture.set_keep_aspect_ratio(true);
+                        picture.set_size_request(icon_size, icon_size);
+                        while let Some(first) = icon_box_clone.first_child() {
+                            icon_box_clone.remove(&first);
+                        }
+                        icon_box_clone.append(&picture);
+                    }
+                }
+            });
+        }
 
         let name = Label::new(Some(&item.name));
         name.set_hexpand(true);

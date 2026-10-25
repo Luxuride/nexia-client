@@ -1,33 +1,39 @@
 //! In-page navigation and action toolbar for the Cloud Files view.
 
-use gtk4::{Align, Box as GtkBox, Button, Orientation, ToggleButton};
+use gtk4::{Align, Box as GtkBox, Button, Orientation, SearchEntry, ToggleButton};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::rc::Rc;
 
 use crate::files::new_folder::NewFolderPopover;
 use crate::files::path_bar::PathBar;
-use crate::model::FileViewMode;
+use crate::model::{FileViewMode, ZoomLevel};
 use crate::widget::{FileExplorerBackend, ViewComponent};
 
 /// Top toolbar panel embedded directly inside the Cloud Files page view.
 ///
 /// Houses Back/Forward navigation buttons, the interactive [`PathBar`],
-/// the [`NewFolderPopover`] button, and the Grid/List view mode toggle.
+/// search entry and toggle, zoom level adjustments, [`NewFolderPopover`],
+/// and the Grid/List view mode toggle.
 #[derive(Clone)]
 pub struct PathToolbar {
     container: GtkBox,
     back_btn: Button,
     forward_btn: Button,
     path_bar: PathBar,
+    search_entry: SearchEntry,
+    search_toggle: ToggleButton,
+    zoom_out_btn: Button,
+    zoom_in_btn: Button,
 }
 
 impl PathToolbar {
-    /// Creates a new in-page toolbar wired to `backend` and `on_change`.
+    /// Creates a new in-page toolbar wired to `backend`, `on_change`, and `on_search`.
     pub fn new<B: FileExplorerBackend>(
         backend: &B,
         toast_overlay: &adw::ToastOverlay,
         on_change: Rc<dyn Fn()>,
+        on_search: Rc<dyn Fn(Option<String>)>,
     ) -> Self {
         let container = GtkBox::new(Orientation::Horizontal, 10);
         container.set_margin_top(10);
@@ -55,6 +61,30 @@ impl PathToolbar {
         let path_bar = PathBar::new();
         path_bar.root_widget().set_hexpand(true);
 
+        // Search entry replacing breadcrumbs when search is toggled
+        let search_entry = SearchEntry::new();
+        search_entry.set_placeholder_text(Some("Search files and folders…"));
+        search_entry.set_hexpand(true);
+        search_entry.set_visible(false);
+
+        // Search toggle button
+        let search_toggle = ToggleButton::new();
+        search_toggle.set_icon_name("edit-find-symbolic");
+        search_toggle.set_tooltip_text(Some("Search files (Ctrl+F)"));
+
+        // Zoom controls
+        let zoom_box = GtkBox::new(Orientation::Horizontal, 0);
+        zoom_box.add_css_class("linked");
+
+        let zoom_out_btn = Button::from_icon_name("zoom-out-symbolic");
+        zoom_out_btn.set_tooltip_text(Some("Zoom Out (Ctrl+-)"));
+
+        let zoom_in_btn = Button::from_icon_name("zoom-in-symbolic");
+        zoom_in_btn.set_tooltip_text(Some("Zoom In (Ctrl++)"));
+
+        zoom_box.append(&zoom_out_btn);
+        zoom_box.append(&zoom_in_btn);
+
         // Right-side actions: New Folder + Grid/List Switcher
         let new_folder = NewFolderPopover::new(backend, toast_overlay, on_change.clone());
 
@@ -76,7 +106,10 @@ impl PathToolbar {
 
         container.append(&nav_box);
         container.append(path_bar.root_widget());
+        container.append(&search_entry);
         container.append(new_folder.root_widget());
+        container.append(&search_toggle);
+        container.append(&zoom_box);
         container.append(&view_mode_box);
 
         // Wire Back button
@@ -109,6 +142,75 @@ impl PathToolbar {
             });
         }
 
+        // Wire Search Toggle
+        {
+            let path_bar_widget = path_bar.root_widget().clone();
+            let entry = search_entry.clone();
+            let search_cb = on_search.clone();
+            search_toggle.connect_toggled(move |btn| {
+                if btn.is_active() {
+                    path_bar_widget.set_visible(false);
+                    entry.set_visible(true);
+                    entry.grab_focus();
+                } else {
+                    entry.set_text("");
+                    entry.set_visible(false);
+                    path_bar_widget.set_visible(true);
+                    search_cb(None);
+                }
+            });
+        }
+
+        // Wire Search Entry
+        {
+            let search_cb = on_search;
+            search_entry.connect_search_changed(move |entry| {
+                let text = entry.text().trim().to_string();
+                if text.is_empty() {
+                    search_cb(None);
+                } else {
+                    search_cb(Some(text));
+                }
+            });
+        }
+
+        {
+            let toggle = search_toggle.clone();
+            search_entry.connect_stop_search(move |_| {
+                toggle.set_active(false);
+            });
+        }
+
+        // Wire Zoom Out button
+        {
+            let b = backend.clone();
+            let cb = on_change.clone();
+            zoom_out_btn.connect_clicked(move |_| {
+                let b = b.clone();
+                let cb = cb.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    let cur = b.zoom_level().await;
+                    b.set_zoom_level(cur.zoom_out()).await;
+                    cb();
+                });
+            });
+        }
+
+        // Wire Zoom In button
+        {
+            let b = backend.clone();
+            let cb = on_change.clone();
+            zoom_in_btn.connect_clicked(move |_| {
+                let b = b.clone();
+                let cb = cb.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    let cur = b.zoom_level().await;
+                    b.set_zoom_level(cur.zoom_in()).await;
+                    cb();
+                });
+            });
+        }
+
         // Wire Grid/List toggle
         {
             let b = backend.clone();
@@ -133,16 +235,34 @@ impl PathToolbar {
             back_btn,
             forward_btn,
             path_bar,
+            search_entry,
+            search_toggle,
+            zoom_out_btn,
+            zoom_in_btn,
         }
     }
 
-    /// Synchronizes the Back/Forward button sensitivity and breadcrumb buttons with `backend`.
+    /// Synchronizes the Back/Forward button sensitivity, breadcrumbs, and zoom buttons.
     pub async fn sync_state<B: FileExplorerBackend>(&self, backend: &B, on_navigate: Rc<dyn Fn()>) {
         let cur_path = backend.current_path().await;
         self.back_btn.set_sensitive(backend.can_go_back().await);
         self.forward_btn
             .set_sensitive(backend.can_go_forward().await);
         self.path_bar.update(&cur_path, backend, on_navigate);
+
+        let zoom = backend.zoom_level().await;
+        self.zoom_out_btn.set_sensitive(zoom > ZoomLevel::Small);
+        self.zoom_in_btn.set_sensitive(zoom < ZoomLevel::ExtraLarge);
+    }
+
+    /// Access the embedded search entry.
+    pub fn search_entry(&self) -> &SearchEntry {
+        &self.search_entry
+    }
+
+    /// Access the search toggle button.
+    pub fn search_toggle(&self) -> &ToggleButton {
+        &self.search_toggle
     }
 }
 

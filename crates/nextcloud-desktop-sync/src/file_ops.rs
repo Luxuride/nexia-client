@@ -279,4 +279,134 @@ impl DesktopSyncCoordinator {
 
         Ok(())
     }
+
+    /// Recursively searches the virtual tree and server unified search for matching files/directories.
+    pub async fn search(
+        &self,
+        term: &str,
+    ) -> Result<Vec<nextcloud_rust_sdk::VirtualEntrySummary>, SyncError> {
+        let trimmed = term.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let vfs = self.active_vfs().await;
+        let mut matches = Vec::new();
+        let mut queue = vec!["/".to_string()];
+        let term_lower = trimmed.to_lowercase();
+
+        // 1. Recursive BFS over local VFS tree
+        while let Some(current_dir) = queue.pop() {
+            if let Ok(children) = vfs.list_children(&current_dir).await {
+                for child in children {
+                    if child.name.to_lowercase().contains(&term_lower)
+                        || child.path.to_lowercase().contains(&term_lower)
+                    {
+                        matches.push(child.clone());
+                    }
+                    if child.is_directory {
+                        queue.push(child.path);
+                    }
+                }
+            }
+        }
+
+        // 2. Query remote Nextcloud Unified Search API if active client exists
+        if let Some((_, client, _)) = self.active_dav_context().await
+            && let Ok(ocs) = client.ocs()
+        {
+            let search_client = client.search(&ocs);
+            if let Ok(result_set) = search_client.search("files", trimmed).await {
+                for entry in result_set.entries {
+                    let candidate_path = if let Some(sub) = entry.subline {
+                        if sub.starts_with('/') {
+                            sub
+                        } else {
+                            format!("/{sub}")
+                        }
+                    } else {
+                        format!("/{}", entry.title)
+                    };
+
+                    if !matches
+                        .iter()
+                        .any(|m| m.path == candidate_path || m.name == entry.title)
+                    {
+                        let is_dir = entry
+                            .icon
+                            .as_deref()
+                            .is_some_and(|ic| ic.contains("folder"));
+                        let summary = nextcloud_rust_sdk::VirtualEntrySummary {
+                            path: candidate_path,
+                            name: entry.title,
+                            is_directory: is_dir,
+                            size: entry
+                                .attributes
+                                .get("size")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0),
+                            etag: None,
+                            modified_at: None,
+                            permissions: None,
+                            mime_type: None,
+                            icon_category: if is_dir {
+                                nextcloud_rust_sdk::ResourceIconCategory::Folder
+                            } else {
+                                nextcloud_rust_sdk::ResourceIconCategory::Document
+                            },
+                            is_hydrated: false,
+                            cached_path: None,
+                            directory_summary: None,
+                        };
+                        matches.push(summary);
+                    }
+                }
+            }
+        }
+
+        Ok(matches)
+    }
+
+    /// Fetches or retrieves a cached thumbnail for `remote_path`.
+    pub async fn fetch_thumbnail(
+        &self,
+        remote_path: &str,
+        size: u32,
+    ) -> Result<Option<PathBuf>, SyncError> {
+        let cache_dir = self.cache_dir();
+        let thumbs_dir = cache_dir.join("thumbnails");
+        let _ = tokio::fs::create_dir_all(&thumbs_dir).await;
+
+        let clean_path = remote_path.trim_matches('/');
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&clean_path, &mut hasher);
+        let path_hash = std::hash::Hasher::finish(&hasher);
+        let thumb_filename = format!("{:016x}_{size}.png", path_hash);
+        let thumb_path = thumbs_dir.join(thumb_filename);
+
+        if thumb_path.exists() {
+            return Ok(Some(thumb_path));
+        }
+
+        if let Some((_, client, auth)) = self.active_dav_context().await {
+            let preview = client.preview(&auth);
+            let opts = nextcloud_rust_sdk::PreviewOptions::new()
+                .dimensions(size, size)
+                .mode(nextcloud_rust_sdk::PreviewMode::Cover);
+
+            let preview_path = if clean_path.starts_with('/') {
+                clean_path.to_string()
+            } else {
+                format!("/{clean_path}")
+            };
+
+            if let Ok(bytes) = preview.get_by_path(&preview_path, &opts).await
+                && tokio::fs::write(&thumb_path, &bytes).await.is_ok()
+            {
+                return Ok(Some(thumb_path));
+            }
+        }
+
+        Ok(None)
+    }
 }

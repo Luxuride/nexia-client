@@ -16,7 +16,7 @@ use crate::files::launcher::launch_file_externally;
 use crate::files::rename_dialog::RenameDialog;
 use crate::files::rubberband::{RubberbandOverlay, strip_flowbox_linear_drag};
 use crate::files::selection::SelectionTracker;
-use crate::model::FileViewItem;
+use crate::model::{FileViewItem, ResourceIconCategory, ZoomLevel};
 use crate::widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
 
 /// Icon grid representation of the active virtual directory.
@@ -200,13 +200,14 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileGridView {
         items: &[FileViewItem],
         backend: &B,
         toast_overlay: &adw::ToastOverlay,
+        zoom: ZoomLevel,
         on_refresh: Rc<dyn Fn()>,
     ) {
         self.clear();
         *self.items.borrow_mut() = items.to_vec();
 
         for item in items {
-            let tile = FileGridTile::build(item, backend, toast_overlay, on_refresh.clone());
+            let tile = FileGridTile::build(item, backend, toast_overlay, zoom, on_refresh.clone());
             self.flow_box.insert(tile.root_widget(), -1);
         }
         self.flow_box.unselect_all();
@@ -225,13 +226,16 @@ impl FileGridTile {
         item: &FileViewItem,
         backend: &B,
         toast_overlay: &adw::ToastOverlay,
+        zoom: ZoomLevel,
         on_refresh: Rc<dyn Fn()>,
     ) -> Self {
         let child = FlowBoxChild::new();
         child.set_focusable(false);
         child.set_focus_on_click(false);
         let card = GtkBox::new(Orientation::Vertical, 4);
-        card.set_size_request(114, 108);
+        let item_width = zoom.grid_item_width();
+        let item_height = (item_width as f32 * 1.1) as i32;
+        card.set_size_request(item_width, item_height);
         card.set_halign(Align::Center);
         card.set_valign(Align::Center);
         card.add_css_class("file-tile");
@@ -246,15 +250,66 @@ impl FileGridTile {
         );
         card.set_tooltip_text(Some(&tooltip));
 
+        let icon_size = zoom.grid_icon_size();
+        let icon_box = GtkBox::new(Orientation::Vertical, 0);
+        icon_box.set_size_request(icon_size, icon_size);
+        icon_box.set_halign(Align::Center);
+        icon_box.set_valign(Align::Center);
+
         let icon = Image::from_icon_name(item.nautilus_icon_name());
-        icon.set_pixel_size(48);
+        icon.set_pixel_size(icon_size);
         icon.set_halign(Align::Center);
+        icon_box.append(&icon);
+
+        // Check for thumbnail support
+        let is_thumbnail_candidate = !item.is_directory
+            && (item.icon_category == ResourceIconCategory::Image
+                || item
+                    .mime_type
+                    .as_deref()
+                    .is_some_and(|m| m.starts_with("image/"))
+                || item.name.ends_with(".png")
+                || item.name.ends_with(".jpg")
+                || item.name.ends_with(".jpeg")
+                || item.name.ends_with(".webp")
+                || item.name.ends_with(".gif")
+                || item.name.ends_with(".svg")
+                || item.name.ends_with(".pdf"));
+
+        if is_thumbnail_candidate {
+            let backend_clone = backend.clone();
+            let path_clone = item.path.clone();
+            let icon_box_clone = icon_box.clone();
+            let thumb_dim = icon_size as u32;
+
+            glib::MainContext::default().spawn_local(async move {
+                if let Some(thumb_path) = backend_clone.get_thumbnail(&path_clone, thumb_dim).await
+                {
+                    let file = gtk4::gio::File::for_path(&thumb_path);
+                    if let Ok(texture) = gdk::Texture::from_file(&file) {
+                        let picture = gtk4::Picture::for_paintable(&texture);
+                        picture.set_can_shrink(true);
+                        picture.set_keep_aspect_ratio(true);
+                        picture.set_size_request(icon_size, icon_size);
+                        while let Some(first) = icon_box_clone.first_child() {
+                            icon_box_clone.remove(&first);
+                        }
+                        icon_box_clone.append(&picture);
+                    }
+                }
+            });
+        }
 
         let name = Label::new(Some(&item.name));
         name.set_wrap(true);
         name.set_wrap_mode(pango::WrapMode::WordChar);
         name.set_justify(Justification::Center);
-        name.set_max_width_chars(14);
+        name.set_max_width_chars(match zoom {
+            ZoomLevel::Small => 10,
+            ZoomLevel::Medium => 14,
+            ZoomLevel::Large => 18,
+            ZoomLevel::ExtraLarge => 24,
+        });
         name.set_lines(2);
         name.set_ellipsize(pango::EllipsizeMode::End);
 
@@ -262,7 +317,7 @@ impl FileGridTile {
         sub.add_css_class("caption");
         sub.add_css_class("dim-label");
 
-        card.append(&icon);
+        card.append(&icon_box);
         card.append(&name);
         card.append(&sub);
 
