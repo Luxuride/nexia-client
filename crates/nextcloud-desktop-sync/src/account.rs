@@ -68,7 +68,8 @@ impl DesktopSyncCoordinator {
 
             let display_name = disc
                 .display_name
-                .unwrap_or_else(|| format!("{} ({})", disc.username, disc.server_url));
+                .filter(|d| !d.contains('@') && !d.trim().is_empty())
+                .unwrap_or_else(|| disc.username.clone());
             let sso_acc = Account::system_sso_account(
                 format!(
                     "sso-{}-{}",
@@ -132,6 +133,20 @@ impl DesktopSyncCoordinator {
         }) {
             drop(clients);
             let _ = self.switch_client(pos).await;
+        } else {
+            drop(clients);
+            if let Ok(server_url) = ServerUrl::parse(&target_account.server.server_url) {
+                let secret = SecretString::new(target_account.credentials.secret());
+                if let Ok(client) = Client::builder()
+                    .server_url(server_url)
+                    .initial_credentials(&target_account.credentials.username, secret)
+                    .build()
+                    .await
+                {
+                    let pos = self.add_client(client).await;
+                    let _ = self.switch_client(pos).await;
+                }
+            }
         }
 
         // Reset default mount id so a new mount is opened for the switched account

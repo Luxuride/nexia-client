@@ -33,10 +33,13 @@ impl DesktopSyncCoordinator {
         let body = PropfindBody::all();
         let resources = match dav_client.propfind(&root_dav, Depth::Infinity, &body).await {
             Ok(r) => r,
-            Err(err) => {
-                tracing::warn!("Remote WebDAV PROPFIND failed ({err}), keeping default tree");
-                return Ok(16);
-            }
+            Err(_) => match dav_client.propfind(&root_dav, Depth::One, &body).await {
+                Ok(r) => r,
+                Err(err) => {
+                    tracing::warn!("Remote WebDAV PROPFIND failed ({err}), keeping default tree");
+                    return Ok(16);
+                }
+            },
         };
 
         let dav_prefix = format!("/remote.php/dav/files/{user}");

@@ -47,25 +47,44 @@ impl AddAccountDialog {
         header_bar.pack_end(&add_btn);
 
         let page = adw::PreferencesPage::new();
-        let group = adw::PreferencesGroup::builder()
-            .title("Connection Details")
-            .description("Enter your Nextcloud server address and login credentials.")
+
+        let oauth_group = adw::PreferencesGroup::builder()
+            .title("Browser Login (OAuth / Webflow)")
+            .description("Authorize in your web browser without entering credentials here.")
+            .build();
+
+        let oauth_server_row = adw::EntryRow::builder()
+            .title("Server URL")
+            .text("https://cloud.nextcloud.com")
+            .build();
+        oauth_group.add(&oauth_server_row);
+
+        let oauth_btn = Button::with_label("Log in via Browser…");
+        oauth_btn.add_css_class("suggested-action");
+        oauth_btn.add_css_class("pill");
+        oauth_btn.set_margin_top(8);
+        oauth_btn.set_margin_bottom(8);
+        oauth_group.add(&oauth_btn);
+
+        let manual_group = adw::PreferencesGroup::builder()
+            .title("Manual Credentials")
+            .description("Or connect directly with your username and app password.")
             .build();
 
         let server_row = adw::EntryRow::builder()
             .title("Server URL")
             .text("https://cloud.nextcloud.com")
             .build();
-        group.add(&server_row);
+        manual_group.add(&server_row);
 
         let name_row = adw::EntryRow::builder()
             .title("Account Name")
             .text("Personal")
             .build();
-        group.add(&name_row);
+        manual_group.add(&name_row);
 
         let user_row = adw::EntryRow::builder().title("Username").build();
-        group.add(&user_row);
+        manual_group.add(&user_row);
 
         let pass_row = adw::ActionRow::builder()
             .title("Password / App Token")
@@ -75,9 +94,10 @@ impl AddAccountDialog {
         pass_entry.set_hexpand(true);
         pass_entry.set_show_peek_icon(true);
         pass_row.add_suffix(&pass_entry);
-        group.add(&pass_row);
+        manual_group.add(&pass_row);
 
-        page.add(&group);
+        page.add(&oauth_group);
+        page.add(&manual_group);
 
         let content_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         content_box.append(&header_bar);
@@ -88,6 +108,82 @@ impl AddAccountDialog {
             let win = window.clone();
             cancel_btn.connect_clicked(move |_| {
                 win.close();
+            });
+        }
+
+        {
+            let win = window.clone();
+            let b = backend.clone();
+            let toast = toast_overlay.clone();
+            let cb = on_account_added.clone();
+            let btn_for_click = oauth_btn.clone();
+
+            oauth_btn.connect_clicked(move |_| {
+                let s_text = oauth_server_row.text().to_string();
+                let server_clean = s_text.trim();
+                if server_clean.is_empty() {
+                    toast.add_toast(adw::Toast::new("Please enter a valid Server URL"));
+                    return;
+                }
+                let b = b.clone();
+                let toast = toast.clone();
+                let cb = cb.clone();
+                let win = win.clone();
+                let server_url = server_clean.to_string();
+                let btn = btn_for_click.clone();
+                btn.set_sensitive(false);
+                btn.set_label("Waiting for browser authorization…");
+
+                glib::MainContext::default().spawn_local(async move {
+                    match b.start_oauth_login(&server_url).await {
+                        Ok((login_url, client)) => {
+                            let _ = gtk4::gio::AppInfo::launch_default_for_uri(
+                                &login_url,
+                                None::<&gtk4::gio::AppLaunchContext>,
+                            );
+
+                            let mut authenticated = false;
+                            for _ in 0..120 {
+                                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                                match b.poll_oauth_login(&client).await {
+                                    Ok(Some(_)) => {
+                                        authenticated = true;
+                                        break;
+                                    }
+                                    Ok(None) => continue,
+                                    Err(err) => {
+                                        toast.add_toast(adw::Toast::new(&format!(
+                                            "OAuth error: {err}"
+                                        )));
+                                        btn.set_sensitive(true);
+                                        btn.set_label("Log in via Browser…");
+                                        return;
+                                    }
+                                }
+                            }
+
+                            if authenticated {
+                                toast.add_toast(adw::Toast::new(
+                                    "Account successfully authenticated!",
+                                ));
+                                win.close();
+                                cb();
+                            } else {
+                                toast
+                                    .add_toast(adw::Toast::new("Browser authorization timed out."));
+                                btn.set_sensitive(true);
+                                btn.set_label("Log in via Browser…");
+                            }
+                        }
+                        Err(err) => {
+                            toast.add_toast(adw::Toast::new(&format!(
+                                "Failed to start login flow: {err}"
+                            )));
+                            btn.set_sensitive(true);
+                            btn.set_label("Log in via Browser…");
+                        }
+                    }
+                });
             });
         }
 

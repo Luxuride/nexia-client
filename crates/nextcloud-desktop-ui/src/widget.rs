@@ -101,6 +101,18 @@ pub trait FileExplorerBackend: Clone + 'static {
     /// Adds a new account profile to the application.
     fn add_account(&self, account: Account) -> impl Future<Output = Result<(), UiError>>;
 
+    /// Starts a browser-based OAuth login flow for the given server URL.
+    fn start_oauth_login(
+        &self,
+        server_url: &str,
+    ) -> impl Future<Output = Result<(String, nextcloud_rust_sdk::Client), UiError>>;
+
+    /// Polls a pending OAuth login flow.
+    fn poll_oauth_login(
+        &self,
+        client: &nextcloud_rust_sdk::Client,
+    ) -> impl Future<Output = Result<Option<Account>, UiError>>;
+
     /// Creates or retrieves a public share link for the given remote path.
     fn create_public_share(
         &self,

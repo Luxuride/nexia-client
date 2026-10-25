@@ -2,14 +2,15 @@
 
 use nextcloud_rust_sdk::{
     Client, HierarchySeeder, MountDescriptor, MountId, MountMode, MountsHandle,
-    NextcloudOrchestrator, OrchestratorConfig, OrchestratorHandle, StandardNextcloudSeeder,
-    VfsHandle, VirtualTree,
+    NextcloudOrchestrator, OrchestratorConfig, OrchestratorHandle, ServerUrl, SessionState,
+    StandardNextcloudSeeder, VfsHandle, VirtualTree,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::error::SyncError;
+use nextcloud_desktop_core::account::{Account, AccountCredentials, ServerConfig};
 use nextcloud_desktop_core::config::AppConfig;
 use nextcloud_desktop_core::events::EventBus;
 
@@ -167,10 +168,11 @@ impl DesktopSyncCoordinator {
             .or_else(|| clients.first().cloned())
     }
 
-    /// Appends a new [`Client`] to the list of managed clients.
-    pub async fn add_client(&self, client: Client) {
+    /// Appends a new [`Client`] to the list of managed clients, returning its index.
+    pub async fn add_client(&self, client: Client) -> usize {
         let mut clients = self.clients.write().await;
         clients.push(client);
+        clients.len() - 1
     }
 
     /// Switches the active client by index in the clients list.
@@ -183,5 +185,53 @@ impl DesktopSyncCoordinator {
         }
         *self.active_client_idx.write().await = index;
         Ok(())
+    }
+
+    /// Initiates a browser-based OAuth (Login Flow v2) session with a server.
+    pub async fn start_oauth_login(
+        &self,
+        server_url_str: &str,
+    ) -> Result<(String, Client), SyncError> {
+        let server_url =
+            ServerUrl::parse(server_url_str).map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+        let client = Client::builder()
+            .server_url(server_url)
+            .build()
+            .await
+            .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+        let flow = client
+            .start_login()
+            .await
+            .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+        Ok((flow.login_url().to_string(), client))
+    }
+
+    /// Polls a pending OAuth login flow on the provided client handle.
+    ///
+    /// If the user authorized the login in their browser, this saves the account
+    /// profile to configuration, registers the client, and returns `Ok(Some(account))`.
+    /// If authorization is still pending, returns `Ok(None)`.
+    pub async fn poll_oauth_login(&self, client: &Client) -> Result<Option<Account>, SyncError> {
+        let state = client
+            .poll_login()
+            .await
+            .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+        match state {
+            SessionState::Authenticated(acc) => {
+                let username = acc.user_id().to_string();
+                let password = acc.password().expose().to_string();
+                let server_url = acc.server().as_str().to_string();
+                let account_name = username.clone();
+                let account = Account::new(
+                    account_name,
+                    ServerConfig::new(&server_url),
+                    AccountCredentials::new(&username, password),
+                );
+                let _ = self.add_client(client.clone()).await;
+                self.add_account(account.clone()).await?;
+                Ok(Some(account))
+            }
+            _ => Ok(None),
+        }
     }
 }

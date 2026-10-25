@@ -272,6 +272,28 @@ impl DesktopUiController {
             .map_err(|err| UiError::Controller(err.to_string()))
     }
 
+    /// Starts a browser-based OAuth login flow for the given server URL.
+    pub async fn start_oauth_login(
+        &self,
+        server_url: &str,
+    ) -> Result<(String, nextcloud_rust_sdk::Client), UiError> {
+        self.coordinator
+            .start_oauth_login(server_url)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Polls a pending OAuth login flow.
+    pub async fn poll_oauth_login(
+        &self,
+        client: &nextcloud_rust_sdk::Client,
+    ) -> Result<Option<Account>, UiError> {
+        self.coordinator
+            .poll_oauth_login(client)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
     /// Creates or retrieves a public share link for a virtual file or directory.
     pub async fn create_public_share(&self, remote_path: &str) -> Result<String, UiError> {
         self.coordinator
@@ -473,6 +495,20 @@ impl FileExplorerBackend for DesktopUiController {
 
     async fn add_account(&self, account: Account) -> Result<(), UiError> {
         self.add_account(account).await
+    }
+
+    async fn start_oauth_login(
+        &self,
+        server_url: &str,
+    ) -> Result<(String, nextcloud_rust_sdk::Client), UiError> {
+        self.start_oauth_login(server_url).await
+    }
+
+    async fn poll_oauth_login(
+        &self,
+        client: &nextcloud_rust_sdk::Client,
+    ) -> Result<Option<Account>, UiError> {
+        self.poll_oauth_login(client).await
     }
 
     async fn create_public_share(&self, remote_path: &str) -> Result<String, UiError> {
