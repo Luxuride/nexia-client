@@ -62,11 +62,36 @@ pub trait FileExplorerBackend: Clone + 'static {
     /// Returns the total cached files size in bytes.
     fn cached_files_size(&self) -> impl Future<Output = u64>;
 
-    /// Cleans thumbnail cache.
-    fn clean_thumbnails(&self) -> impl Future<Output = Result<(), UiError>>;
+    /// Cleans thumbnail cache, returning the number of bytes freed.
+    fn clean_thumbnails(&self) -> impl Future<Output = Result<u64, UiError>>;
 
-    /// Cleans all caches.
-    fn clean_everything(&self) -> impl Future<Output = Result<(), UiError>>;
+    /// Cleans all caches, returning the number of bytes freed.
+    fn clean_everything(&self) -> impl Future<Output = Result<u64, UiError>>;
+
+    /// Cleans any cached thumbnails that exceed the user's max thumbnail size requirement, returning bytes freed.
+    fn clean_oversized_thumbnails(&self) -> impl Future<Output = Result<u64, UiError>> {
+        async { Ok(0) }
+    }
+
+    /// Returns the maximum allowed thumbnail dimension configured by the user.
+    fn max_thumbnail_size(&self) -> impl Future<Output = u32> {
+        async { 256 }
+    }
+
+    /// Sets the maximum allowed thumbnail dimension configured by the user.
+    fn set_max_thumbnail_size(&self, _size: u32) -> impl Future<Output = Result<(), UiError>> {
+        async { Ok(()) }
+    }
+
+    /// Returns the size in bytes of downloaded and hydrated virtual sync files.
+    fn virtual_sync_downloaded_size(&self) -> impl Future<Output = u64> {
+        async { 0 }
+    }
+
+    /// Clears downloaded virtual files for the virtual sync mount, returning bytes freed.
+    fn clear_virtual_sync_cache(&self) -> impl Future<Output = Result<u64, UiError>> {
+        async { Ok(0) }
+    }
 
     /// Checks if auto-download of smallest thumbnails is enabled.
     fn is_autodownload_thumbnails_enabled(&self) -> impl Future<Output = bool>;
@@ -184,6 +209,39 @@ pub trait FileExplorerBackend: Clone + 'static {
         &self,
         remote_path: &str,
     ) -> impl Future<Output = Result<String, UiError>>;
+
+    /// Retrieves an existing public share link for the given remote path if one exists.
+    fn get_public_share(
+        &self,
+        _remote_path: &str,
+    ) -> impl Future<Output = Result<Option<String>, UiError>> {
+        async { Ok(None) }
+    }
+
+    /// Deletes any public share link for the given remote path.
+    fn delete_public_share(
+        &self,
+        _remote_path: &str,
+    ) -> impl Future<Output = Result<bool, UiError>> {
+        async { Ok(false) }
+    }
+
+    /// Persists directory sorting preferences in the SDK.
+    fn store_directory_sort(
+        &self,
+        _dir_path: &str,
+        _criteria: nextcloud_rust_sdk::FileSortCriteria,
+    ) -> impl Future<Output = ()> {
+        async {}
+    }
+
+    /// Loads persisted directory sorting preferences from the SDK.
+    fn load_directory_sort(
+        &self,
+        _dir_path: &str,
+    ) -> impl Future<Output = Option<nextcloud_rust_sdk::FileSortCriteria>> {
+        async { None }
+    }
 
     /// Globally pauses synchronization.
     fn pause_all_sync(&self) -> impl Future<Output = Result<(), UiError>> {

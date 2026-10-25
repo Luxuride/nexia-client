@@ -143,15 +143,54 @@ impl ZoomLevel {
             Self::Medium | Self::Small => Self::Small,
         }
     }
+
+    /// Returns the zoom percentage (50%, 100%, 150%, 200%).
+    pub const fn percentage(&self) -> u32 {
+        match self {
+            Self::Small => 50,
+            Self::Medium => 100,
+            Self::Large => 150,
+            Self::ExtraLarge => 200,
+        }
+    }
+
+    /// Formatted display label (e.g. "100%").
+    pub fn display_label(&self) -> String {
+        format!("{}%", self.percentage())
+    }
+
+    /// Converts this zoom level to a static string key for configuration persistence.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Medium => "medium",
+            Self::Large => "large",
+            Self::ExtraLarge => "extra_large",
+        }
+    }
+
+    /// Parses a zoom level from a configuration string.
+    pub fn parse(s: &str) -> Self {
+        match s.to_ascii_lowercase().as_str() {
+            "small" | "50" | "50%" => Self::Small,
+            "large" | "150" | "150%" => Self::Large,
+            "extra_large" | "extralarge" | "200" | "200%" => Self::ExtraLarge,
+            _ => Self::Medium,
+        }
+    }
 }
 
-/// Status of an individual file in the virtual browser view.
+/// Status of an individual file or directory in the virtual browser view.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileSyncStatus {
-    /// Remote metadata placeholder; 0 bytes consumed on local disk.
+    /// Remote metadata placeholder; 0 bytes consumed on local disk (Virtual file / contains unhydrated files).
     CloudPlaceholder,
-    /// File content downloaded and available offline in local cache.
+    /// File content downloaded and available offline in local cache (Hydrated file).
     HydratedOffline,
+    /// Local-only file or changes waiting to sync to Nextcloud.
+    LocalOnly,
+    /// Contains both unhydrated files and unsynced local modifications.
+    UnhydratedAndUnsynced,
     /// File currently undergoing upload or download.
     Syncing,
 }
@@ -160,8 +199,10 @@ impl FileSyncStatus {
     /// Formats the status as a human-readable display string.
     pub fn display_label(&self) -> &'static str {
         match self {
-            Self::CloudPlaceholder => "Cloud Only",
-            Self::HydratedOffline => "Available Offline",
+            Self::CloudPlaceholder => "Virtual File (Cloud Only)",
+            Self::HydratedOffline => "Hydrated (Available Offline)",
+            Self::LocalOnly => "Local Only (Waiting to Sync)",
+            Self::UnhydratedAndUnsynced => "Unhydrated & Unsynced",
             Self::Syncing => "Syncing…",
         }
     }
@@ -169,9 +210,11 @@ impl FileSyncStatus {
     /// Returns the Freedesktop symbolic icon name representing this status.
     pub fn icon_name(&self) -> &'static str {
         match self {
-            Self::CloudPlaceholder => "weather-overcast-symbolic",
+            Self::CloudPlaceholder => "cloud-symbolic",
             Self::HydratedOffline => "emblem-ok-symbolic",
-            Self::Syncing => "emblem-synchronizing-symbolic",
+            Self::LocalOnly => "go-up-symbolic",
+            Self::UnhydratedAndUnsynced => "emblem-synchronizing-symbolic",
+            Self::Syncing => "view-refresh-symbolic",
         }
     }
 
@@ -180,6 +223,8 @@ impl FileSyncStatus {
         match self {
             Self::CloudPlaceholder => "dim-label",
             Self::HydratedOffline => "success",
+            Self::LocalOnly => "warning",
+            Self::UnhydratedAndUnsynced => "warning",
             Self::Syncing => "accent",
         }
     }
@@ -321,20 +366,25 @@ mod tests {
     fn status_labels() {
         assert_eq!(
             FileSyncStatus::CloudPlaceholder.display_label(),
-            "Cloud Only"
+            "Virtual File (Cloud Only)"
         );
         assert_eq!(
             FileSyncStatus::HydratedOffline.display_label(),
-            "Available Offline"
+            "Hydrated (Available Offline)"
+        );
+        assert_eq!(
+            FileSyncStatus::LocalOnly.display_label(),
+            "Local Only (Waiting to Sync)"
         );
         assert_eq!(
             FileSyncStatus::CloudPlaceholder.icon_name(),
-            "weather-overcast-symbolic"
+            "cloud-symbolic"
         );
         assert_eq!(
             FileSyncStatus::HydratedOffline.icon_name(),
             "emblem-ok-symbolic"
         );
+        assert_eq!(FileSyncStatus::LocalOnly.icon_name(), "go-up-symbolic");
     }
 
     #[test]

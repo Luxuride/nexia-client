@@ -10,6 +10,10 @@ pub enum SyncError {
     #[error("WebDAV operation error: {0}")]
     WebDav(#[from] nextcloud_rust_sdk::Error),
 
+    /// Error originating from high-level client operations.
+    #[error("SDK client error: {0}")]
+    Client(#[from] nextcloud_rust_sdk::ClientError),
+
     /// Error building HTTP transport.
     #[error("transport build error: {0}")]
     TransportBuild(#[from] nextcloud_rust_sdk::TransportBuildError),

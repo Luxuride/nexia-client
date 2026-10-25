@@ -202,30 +202,6 @@ impl DesktopSyncCoordinator {
         dir_size(&cache_dir)
     }
 
-    /// Cleans and deletes all cached thumbnails.
-    pub async fn clean_thumbnails(&self) -> Result<(), SyncError> {
-        let thumbs_dir = self.cache_dir().join("thumbnails");
-        if thumbs_dir.exists() {
-            let _ = tokio::fs::remove_dir_all(&thumbs_dir).await;
-            let _ = tokio::fs::create_dir_all(&thumbs_dir).await;
-        }
-        Ok(())
-    }
-
-    /// Cleans all caches: thumbnails, temporary hydrated files, and cache database entries.
-    pub async fn clean_everything(&self) -> Result<(), SyncError> {
-        self.clean_thumbnails().await?;
-        let hydrated_dir = self.cache_dir().join("hydrated");
-        if hydrated_dir.exists() {
-            let _ = tokio::fs::remove_dir_all(&hydrated_dir).await;
-            let _ = tokio::fs::create_dir_all(&hydrated_dir).await;
-        }
-        if let Some(client) = self.active_client().await {
-            let _ = client.clear_cache().await;
-        }
-        Ok(())
-    }
-
     /// Checks if automatic prefetching of smallest thumbnails is enabled.
     pub async fn is_autodownload_thumbnails_enabled(&self) -> bool {
         if let Some(client) = self.active_client().await

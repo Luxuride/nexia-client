@@ -62,9 +62,21 @@ impl DesktopUiController {
         *self.zoom_level.read().await
     }
 
-    /// Sets the active view zoom level.
+    /// Sets the active view zoom level and persists it to the configuration database.
     pub async fn set_zoom_level(&self, zoom: ZoomLevel) {
         *self.zoom_level.write().await = zoom;
+        if let Some(client) = self.coordinator.active_client().await {
+            let _ = client.set_setting("view_zoom_level", zoom.as_str()).await;
+        }
+    }
+
+    /// Loads persisted view zoom level from the SDK config store.
+    pub async fn load_persisted_zoom(&self) {
+        if let Some(client) = self.coordinator.active_client().await
+            && let Ok(Some(val)) = client.get_setting("view_zoom_level").await
+        {
+            *self.zoom_level.write().await = ZoomLevel::parse(&val);
+        }
     }
 
     /// Returns the current file sorting criteria.
@@ -72,9 +84,55 @@ impl DesktopUiController {
         *self.sort_criteria.read().await
     }
 
-    /// Sets the active file sorting criteria.
+    /// Sets the active file sorting criteria and persists it for the current directory in the SDK.
     pub async fn set_sort_criteria(&self, criteria: FileSortCriteria) {
         *self.sort_criteria.write().await = criteria;
+        let cur = self.current_path().await;
+        self.store_directory_sort(&cur, criteria).await;
+    }
+
+    /// Persists directory sorting preferences for `dir_path` in the SDK config store.
+    pub async fn store_directory_sort(&self, dir_path: &str, criteria: FileSortCriteria) {
+        let field_str = match criteria.field {
+            nextcloud_rust_sdk::FileSortField::Name => "name",
+            nextcloud_rust_sdk::FileSortField::Size => "size",
+            nextcloud_rust_sdk::FileSortField::Modified => "modified",
+            nextcloud_rust_sdk::FileSortField::Type => "type",
+        };
+        let order_str = match criteria.order {
+            nextcloud_rust_sdk::FileSortOrder::Ascending => "asc",
+            nextcloud_rust_sdk::FileSortOrder::Descending => "desc",
+        };
+        let _ = self
+            .coordinator
+            .store_directory_sort(dir_path, field_str, order_str)
+            .await;
+    }
+
+    /// Loads directory sorting preferences for `dir_path` from the SDK config store.
+    pub async fn load_directory_sort(&self, dir_path: &str) -> Option<FileSortCriteria> {
+        if let Some((field_str, order_str)) = self.coordinator.load_directory_sort(dir_path).await {
+            let field = match field_str.as_str() {
+                "size" => nextcloud_rust_sdk::FileSortField::Size,
+                "modified" => nextcloud_rust_sdk::FileSortField::Modified,
+                "type" => nextcloud_rust_sdk::FileSortField::Type,
+                _ => nextcloud_rust_sdk::FileSortField::Name,
+            };
+            let order = match order_str.as_str() {
+                "desc" => nextcloud_rust_sdk::FileSortOrder::Descending,
+                _ => nextcloud_rust_sdk::FileSortOrder::Ascending,
+            };
+            Some(FileSortCriteria::new(field, order, true))
+        } else {
+            None
+        }
+    }
+
+    /// Applies persisted directory sort when navigating to `dir_path`.
+    pub async fn apply_directory_sort(&self, dir_path: &str) {
+        if let Some(criteria) = self.load_directory_sort(dir_path).await {
+            *self.sort_criteria.write().await = criteria;
+        }
     }
 
     /// Fetches server visual theming metadata.
@@ -104,14 +162,44 @@ impl DesktopUiController {
             .into_iter()
             .map(|e| {
                 let status = if e.is_directory {
-                    FileSyncStatus::CloudPlaceholder
+                    if let Some(ref dir_sum) = e.directory_summary {
+                        if dir_sum.has_unhydrated && dir_sum.has_unsynced {
+                            FileSyncStatus::UnhydratedAndUnsynced
+                        } else if dir_sum.has_unhydrated {
+                            FileSyncStatus::CloudPlaceholder
+                        } else if dir_sum.has_unsynced {
+                            FileSyncStatus::LocalOnly
+                        } else if dir_sum.file_count > 0 {
+                            FileSyncStatus::HydratedOffline
+                        } else {
+                            FileSyncStatus::CloudPlaceholder
+                        }
+                    } else {
+                        FileSyncStatus::CloudPlaceholder
+                    }
+                } else if e.etag.is_none() {
+                    FileSyncStatus::LocalOnly
                 } else if e.is_hydrated {
                     FileSyncStatus::HydratedOffline
                 } else {
                     FileSyncStatus::CloudPlaceholder
                 };
 
-                let size_formatted = e.display_size();
+                let size_formatted = if e.is_directory {
+                    if let Some(ref sum) = e.directory_summary {
+                        if sum.total_items() == 1 {
+                            "1 item".to_string()
+                        } else if sum.total_items() > 1 {
+                            format!("{} items", sum.total_items())
+                        } else {
+                            "—".to_string()
+                        }
+                    } else {
+                        "—".to_string()
+                    }
+                } else {
+                    nextcloud_rust_sdk::format_bytes(e.size)
+                };
 
                 FileViewItem {
                     path: e.path,
@@ -170,27 +258,43 @@ impl DesktopUiController {
 
     /// Navigates backward in the folder history stack.
     pub async fn go_back(&self) -> bool {
-        self.navigation.write().await.go_back()
+        let changed = self.navigation.write().await.go_back();
+        if changed {
+            let p = self.current_path().await;
+            self.apply_directory_sort(&p).await;
+        }
+        changed
     }
 
     /// Navigates forward in the folder history stack.
     pub async fn go_forward(&self) -> bool {
-        self.navigation.write().await.go_forward()
+        let changed = self.navigation.write().await.go_forward();
+        if changed {
+            let p = self.current_path().await;
+            self.apply_directory_sort(&p).await;
+        }
+        changed
     }
 
     /// Navigates the file view into a child directory, recording history via `NavigationHistory`.
     pub async fn navigate_into(&self, folder_name: &str) {
         self.navigation.write().await.navigate_into(folder_name);
+        let p = self.current_path().await;
+        self.apply_directory_sort(&p).await;
     }
 
     /// Navigates up to the parent directory, recording history via `NavigationHistory`.
     pub async fn navigate_up(&self) {
         self.navigation.write().await.navigate_up();
+        let p = self.current_path().await;
+        self.apply_directory_sort(&p).await;
     }
 
     /// Sets the current virtual directory directly (e.g. from a breadcrumb click), recording history.
     pub async fn set_current_path(&self, path: &str) {
         self.navigation.write().await.navigate_to(path);
+        let p = self.current_path().await;
+        self.apply_directory_sort(&p).await;
     }
 
     /// Lists items in the current virtual directory for display in the file view.
@@ -208,14 +312,44 @@ impl DesktopUiController {
             .into_iter()
             .map(|e| {
                 let status = if e.is_directory {
-                    FileSyncStatus::CloudPlaceholder
+                    if let Some(ref dir_sum) = e.directory_summary {
+                        if dir_sum.has_unhydrated && dir_sum.has_unsynced {
+                            FileSyncStatus::UnhydratedAndUnsynced
+                        } else if dir_sum.has_unhydrated {
+                            FileSyncStatus::CloudPlaceholder
+                        } else if dir_sum.has_unsynced {
+                            FileSyncStatus::LocalOnly
+                        } else if dir_sum.file_count > 0 {
+                            FileSyncStatus::HydratedOffline
+                        } else {
+                            FileSyncStatus::CloudPlaceholder
+                        }
+                    } else {
+                        FileSyncStatus::CloudPlaceholder
+                    }
+                } else if e.etag.is_none() {
+                    FileSyncStatus::LocalOnly
                 } else if e.is_hydrated {
                     FileSyncStatus::HydratedOffline
                 } else {
                     FileSyncStatus::CloudPlaceholder
                 };
 
-                let size_formatted = e.display_size();
+                let size_formatted = if e.is_directory {
+                    if let Some(ref sum) = e.directory_summary {
+                        if sum.total_items() == 1 {
+                            "1 item".to_string()
+                        } else if sum.total_items() > 1 {
+                            format!("{} items", sum.total_items())
+                        } else {
+                            "—".to_string()
+                        }
+                    } else {
+                        "—".to_string()
+                    }
+                } else {
+                    nextcloud_rust_sdk::format_bytes(e.size)
+                };
 
                 FileViewItem {
                     path: e.path,
@@ -568,16 +702,45 @@ impl FileExplorerBackend for DesktopUiController {
         self.coordinator.cached_files_size().await
     }
 
-    async fn clean_thumbnails(&self) -> Result<(), UiError> {
+    async fn clean_thumbnails(&self) -> Result<u64, UiError> {
         self.coordinator
             .clean_thumbnails()
             .await
             .map_err(|e| UiError::Controller(e.to_string()))
     }
 
-    async fn clean_everything(&self) -> Result<(), UiError> {
+    async fn clean_everything(&self) -> Result<u64, UiError> {
         self.coordinator
             .clean_everything()
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn clean_oversized_thumbnails(&self) -> Result<u64, UiError> {
+        self.coordinator
+            .clean_oversized_thumbnails()
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn max_thumbnail_size(&self) -> u32 {
+        self.coordinator.max_thumbnail_size().await
+    }
+
+    async fn set_max_thumbnail_size(&self, size: u32) -> Result<(), UiError> {
+        self.coordinator
+            .set_max_thumbnail_size(size)
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn virtual_sync_downloaded_size(&self) -> u64 {
+        self.coordinator.virtual_sync_downloaded_size().await
+    }
+
+    async fn clear_virtual_sync_cache(&self) -> Result<u64, UiError> {
+        self.coordinator
+            .clear_virtual_sync_cache()
             .await
             .map_err(|e| UiError::Controller(e.to_string()))
     }
@@ -736,5 +899,34 @@ impl FileExplorerBackend for DesktopUiController {
     async fn is_mount_paused(&self, mount_id: &str) -> Result<bool, UiError> {
         self.is_mount_paused(MountId::from(mount_id.to_string()))
             .await
+    }
+
+    async fn get_public_share(&self, remote_path: &str) -> Result<Option<String>, UiError> {
+        self.coordinator
+            .get_public_share(remote_path)
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn delete_public_share(&self, remote_path: &str) -> Result<bool, UiError> {
+        self.coordinator
+            .delete_public_share(remote_path)
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn store_directory_sort(
+        &self,
+        dir_path: &str,
+        criteria: nextcloud_rust_sdk::FileSortCriteria,
+    ) {
+        self.store_directory_sort(dir_path, criteria).await;
+    }
+
+    async fn load_directory_sort(
+        &self,
+        dir_path: &str,
+    ) -> Option<nextcloud_rust_sdk::FileSortCriteria> {
+        self.load_directory_sort(dir_path).await
     }
 }

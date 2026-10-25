@@ -314,12 +314,142 @@ impl DesktopSyncCoordinator {
             share_client
                 .delete_public_link(&clean_path)
                 .await
-                .map_err(|e| SyncError::Other(format!("Failed to delete public share link: {e}")))
+                .map_err(SyncError::WebDav)
         } else {
-            Err(SyncError::Other(
+            Err(SyncError::NotFound(
                 "No active Nextcloud account configured".to_string(),
             ))
         }
+    }
+
+    /// Persists directory sorting preferences for a specific directory in the permanent SDK config store.
+    pub async fn store_directory_sort(
+        &self,
+        dir_path: &str,
+        sort_field: &str,
+        sort_order: &str,
+    ) -> Result<(), SyncError> {
+        if let Some(client) = self.active_client().await {
+            client
+                .store_directory_sort(dir_path, sort_field, sort_order)
+                .await
+                .map_err(SyncError::Client)?;
+        }
+        Ok(())
+    }
+
+    /// Loads persisted directory sorting preferences for a specific directory from the permanent SDK config store.
+    pub async fn load_directory_sort(&self, dir_path: &str) -> Option<(String, String)> {
+        if let Some(client) = self.active_client().await
+            && let Ok(Some(pair)) = client.load_directory_sort(dir_path).await
+        {
+            return Some(pair);
+        }
+        None
+    }
+
+    /// Returns the size in bytes of downloaded and hydrated virtual sync files.
+    pub async fn virtual_sync_downloaded_size(&self) -> u64 {
+        let hydrated_dir = self.cache_dir().join("hydrated");
+        fn dir_size(path: &std::path::Path) -> u64 {
+            let mut total = 0;
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        total += dir_size(&p);
+                    } else if let Ok(meta) = entry.metadata() {
+                        total += meta.len();
+                    }
+                }
+            }
+            total
+        }
+        dir_size(&hydrated_dir)
+    }
+
+    /// Clears downloaded virtual files for the virtual sync mount, returning bytes freed.
+    pub async fn clear_virtual_sync_cache(&self) -> Result<u64, SyncError> {
+        let before_size = self.virtual_sync_downloaded_size().await;
+        let hydrated_dir = self.cache_dir().join("hydrated");
+        if hydrated_dir.exists() {
+            let _ = tokio::fs::remove_dir_all(&hydrated_dir).await;
+            let _ = tokio::fs::create_dir_all(&hydrated_dir).await;
+        }
+        Ok(before_size)
+    }
+
+    /// Cleans and deletes cached thumbnails, returning bytes freed.
+    pub async fn clean_thumbnails(&self) -> Result<u64, SyncError> {
+        let thumbs_dir = self.cache_dir().join("thumbnails");
+        let mut freed = 0;
+        if let Ok(entries) = std::fs::read_dir(&thumbs_dir) {
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata() {
+                    freed += meta.len();
+                }
+            }
+        }
+        if thumbs_dir.exists() {
+            let _ = tokio::fs::remove_dir_all(&thumbs_dir).await;
+            let _ = tokio::fs::create_dir_all(&thumbs_dir).await;
+        }
+        Ok(freed)
+    }
+
+    /// Cleans all caches: thumbnails, temporary hydrated files, and cache database, returning total bytes freed.
+    pub async fn clean_everything(&self) -> Result<u64, SyncError> {
+        let thumbs_freed = self.clean_thumbnails().await.unwrap_or(0);
+        let vfs_freed = self.clear_virtual_sync_cache().await.unwrap_or(0);
+        if let Some(client) = self.active_client().await {
+            let _ = client.clear_cache().await;
+        }
+        Ok(thumbs_freed + vfs_freed)
+    }
+
+    /// Removes cached thumbnails that exceed the configured maximum thumbnail size, returning bytes freed.
+    pub async fn clean_oversized_thumbnails(&self) -> Result<u64, SyncError> {
+        let max_size = self.max_thumbnail_size().await;
+        let thumbs_dir = self.cache_dir().join("thumbnails");
+        let mut freed = 0;
+        if let Ok(entries) = std::fs::read_dir(&thumbs_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let filename = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+                if let Some(rest) = filename.strip_suffix(".png")
+                    && let Some((_, size_str)) = rest.rsplit_once('_')
+                    && let Ok(size) = size_str.parse::<u32>()
+                    && size > max_size
+                {
+                    if let Ok(meta) = entry.metadata() {
+                        freed += meta.len();
+                    }
+                    let _ = tokio::fs::remove_file(&path).await;
+                }
+            }
+        }
+        Ok(freed)
+    }
+
+    /// Returns the maximum allowed thumbnail dimension configured by the user.
+    pub async fn max_thumbnail_size(&self) -> u32 {
+        if let Some(client) = self.active_client().await
+            && let Ok(Some(val)) = client.get_setting("max_thumbnail_size").await
+        {
+            val.parse::<u32>().unwrap_or(256)
+        } else {
+            256
+        }
+    }
+
+    /// Sets the maximum allowed thumbnail dimension configured by the user.
+    pub async fn set_max_thumbnail_size(&self, size: u32) -> Result<(), SyncError> {
+        if let Some(client) = self.active_client().await {
+            let _ = client
+                .set_setting("max_thumbnail_size", size.to_string())
+                .await;
+        }
+        Ok(())
     }
 
     /// Runs synchronization on all enabled two-way sync folder pairs via SDK `FolderSyncRunner`.
@@ -486,6 +616,9 @@ impl DesktopSyncCoordinator {
         remote_path: &str,
         size: u32,
     ) -> Result<Option<PathBuf>, SyncError> {
+        let max_size = self.max_thumbnail_size().await;
+        let effective_size = size.min(max_size).max(64);
+
         let cache_dir = self.cache_dir();
         let thumbs_dir = cache_dir.join("thumbnails");
         let _ = tokio::fs::create_dir_all(&thumbs_dir).await;
@@ -494,7 +627,7 @@ impl DesktopSyncCoordinator {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         std::hash::Hash::hash(&clean_path, &mut hasher);
         let path_hash = std::hash::Hasher::finish(&hasher);
-        let thumb_filename = format!("{:016x}_{size}.png", path_hash);
+        let thumb_filename = format!("{:016x}_{effective_size}.png", path_hash);
         let thumb_path = thumbs_dir.join(thumb_filename);
 
         if thumb_path.exists() {
@@ -510,9 +643,21 @@ impl DesktopSyncCoordinator {
             return Ok(None);
         }
 
+        self.event_bus.emit(
+            nextcloud_desktop_core::events::DesktopEvent::ThumbnailDownloadStarted {
+                path: remote_path.to_string(),
+            },
+        );
+
         let _permit = self.preview_semaphore.acquire().await.ok();
 
         if thumb_path.exists() {
+            self.event_bus.emit(
+                nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
+                    path: remote_path.to_string(),
+                    cached_path: thumb_path.clone(),
+                },
+            );
             return Ok(Some(thumb_path));
         }
 
@@ -524,7 +669,7 @@ impl DesktopSyncCoordinator {
 
             // Progressive loading: if target size > 64 and 64px is not cached yet,
             // fetch smallest 64px thumbnail first and emit ThumbnailReady immediately!
-            if size > 64 && !low_path.exists() {
+            if effective_size > 64 && !low_path.exists() {
                 let low_opts = nextcloud_rust_sdk::PreviewOptions::new()
                     .dimensions(64, 64)
                     .mode(nextcloud_rust_sdk::PreviewMode::Cover);
@@ -543,19 +688,31 @@ impl DesktopSyncCoordinator {
             }
 
             let opts = nextcloud_rust_sdk::PreviewOptions::new()
-                .dimensions(size, size)
+                .dimensions(effective_size, effective_size)
                 .mode(nextcloud_rust_sdk::PreviewMode::Cover);
 
             if let Some(bytes) =
                 fetch_preview_bytes(&preview, clean_no_slash, &with_slash, &opts).await
                 && tokio::fs::write(&thumb_path, &bytes).await.is_ok()
             {
+                self.event_bus.emit(
+                    nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
+                        path: remote_path.to_string(),
+                        cached_path: thumb_path.clone(),
+                    },
+                );
                 return Ok(Some(thumb_path));
             }
 
             // Fallback to 64x64 if higher-res preview returned server error
-            if size != 64 {
+            if effective_size != 64 {
                 if low_path.exists() {
+                    self.event_bus.emit(
+                        nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
+                            path: remote_path.to_string(),
+                            cached_path: low_path.clone(),
+                        },
+                    );
                     return Ok(Some(low_path));
                 }
 
@@ -567,6 +724,12 @@ impl DesktopSyncCoordinator {
                     fetch_preview_bytes(&preview, clean_no_slash, &with_slash, &low_opts).await
                     && tokio::fs::write(&low_path, &bytes).await.is_ok()
                 {
+                    self.event_bus.emit(
+                        nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
+                            path: remote_path.to_string(),
+                            cached_path: low_path.clone(),
+                        },
+                    );
                     return Ok(Some(low_path));
                 }
             }
@@ -574,6 +737,12 @@ impl DesktopSyncCoordinator {
             // Mark as failed so client does not flood server repeatedly
             let _ = tokio::fs::write(&failed_marker, b"").await;
         }
+
+        self.event_bus.emit(
+            nextcloud_desktop_core::events::DesktopEvent::ThumbnailFailed {
+                path: remote_path.to_string(),
+            },
+        );
 
         if low_path.exists() {
             return Ok(Some(low_path));
@@ -590,20 +759,16 @@ impl DesktopSyncCoordinator {
 
         let coord = self.clone();
         tokio::spawn(async move {
+            let max_size = coord.max_thumbnail_size().await;
+            let effective_size = size.min(max_size).max(64);
+
             // 1. First prefetch smallest 64px thumbnails in fast concurrent batch
             let mut low_tasks = Vec::new();
             for path in &paths {
                 let c = coord.clone();
                 let p = path.clone();
                 low_tasks.push(tokio::spawn(async move {
-                    if let Ok(Some(cached_path)) = c.fetch_thumbnail(&p, 64).await {
-                        c.event_bus.emit(
-                            nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
-                                path: p,
-                                cached_path,
-                            },
-                        );
-                    }
+                    let _ = c.fetch_thumbnail(&p, 64).await;
                 }));
             }
             for task in low_tasks {
@@ -611,20 +776,13 @@ impl DesktopSyncCoordinator {
             }
 
             // 2. If requested size > 64, upgrade to target size in background
-            if size > 64 {
+            if effective_size > 64 {
                 let mut target_tasks = Vec::new();
                 for path in paths {
                     let c = coord.clone();
                     let p = path.clone();
                     target_tasks.push(tokio::spawn(async move {
-                        if let Ok(Some(cached_path)) = c.fetch_thumbnail(&p, size).await {
-                            c.event_bus.emit(
-                                nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
-                                    path: p,
-                                    cached_path,
-                                },
-                            );
-                        }
+                        let _ = c.fetch_thumbnail(&p, effective_size).await;
                     }));
                 }
                 for task in target_tasks {
