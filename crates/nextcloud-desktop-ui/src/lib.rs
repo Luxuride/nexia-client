@@ -25,17 +25,7 @@ pub mod desktop;
 pub mod android;
 
 #[cfg(feature = "gtk")]
-pub use desktop::account;
-#[cfg(feature = "gtk")]
-pub use desktop::files;
-#[cfg(feature = "gtk")]
-pub use desktop::gtk_app;
-#[cfg(feature = "gtk")]
-pub use desktop::header;
-#[cfg(feature = "gtk")]
-pub use desktop::pages;
-#[cfg(feature = "tray")]
-pub use desktop::tray;
+pub use desktop::*;
 
 #[cfg(feature = "android")]
 uniffi::setup_scaffolding!("nextcloud_desktop_ui");

@@ -42,17 +42,22 @@ impl DesktopSyncCoordinator {
         let cache_dir = self.cache_dir();
         let theming_dir = cache_dir.join("theming");
         let _ = tokio::fs::create_dir_all(&theming_dir).await;
-        let logo_path = theming_dir.join("server_logo.png");
-
-        if logo_path.exists() {
-            return Some(logo_path);
-        }
 
         let bytes = if let Some(auth) = client.credentials() {
             client.theming(&auth).fetch_logo_bytes().await.ok()?
         } else {
             client.anonymous_theming().fetch_logo_bytes().await.ok()?
         };
+
+        if bytes.is_empty() {
+            return None;
+        }
+
+        let is_svg = bytes.starts_with(b"<?xml")
+            || bytes.starts_with(b"<svg")
+            || bytes.windows(4).any(|w| w == b"<svg");
+        let ext = if is_svg { "svg" } else { "png" };
+        let logo_path = theming_dir.join(format!("server_logo.{ext}"));
 
         if tokio::fs::write(&logo_path, &bytes).await.is_ok() {
             Some(logo_path)

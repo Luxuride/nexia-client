@@ -91,8 +91,21 @@ impl NavigationSidebar {
                 }
             }
             if let Some(logo_path) = b.fetch_theme_logo().await {
-                let file = gtk4::gio::File::for_path(&logo_path);
-                if let Ok(texture) = gtk4::gdk::Texture::from_file(&file) {
+                let scale = icon_box_c.scale_factor().max(1);
+                // Render at high resolution (2x minimum) for sharp subpixel anti-aliasing
+                let target_w = 56 * scale.max(2);
+                let target_h = 40 * scale.max(2);
+
+                let texture = if let Ok(pixbuf) =
+                    gdk_pixbuf::Pixbuf::from_file_at_scale(&logo_path, target_w, target_h, true)
+                {
+                    Some(gtk4::gdk::Texture::for_pixbuf(&pixbuf))
+                } else {
+                    let file = gtk4::gio::File::for_path(&logo_path);
+                    gtk4::gdk::Texture::from_file(&file).ok()
+                };
+
+                if let Some(texture) = texture {
                     let picture = gtk4::Picture::for_paintable(&texture);
                     picture.set_can_shrink(true);
                     picture.set_keep_aspect_ratio(true);

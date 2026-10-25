@@ -10,7 +10,7 @@ description = "GTK 4 desktop user interface views and controllers for Nextcloud 
 [features]
 default = ["desktop"]
 desktop = ["gtk", "tray"]
-gtk = ["dep:gtk4", "dep:libadwaita", "dep:glib"]
+gtk = ["dep:gtk4", "dep:libadwaita", "dep:glib", "dep:gdk-pixbuf"]
 tray = ["dep:ksni"]
 android = ["dep:uniffi"]
 
@@ -26,3 +26,4 @@ libadwaita = { workspace = true, optional = true }
 glib = { workspace = true, optional = true }
 ksni = { workspace = true, optional = true }
 uniffi = { workspace = true, optional = true }
+gdk-pixbuf = { version = "0.22", optional = true }

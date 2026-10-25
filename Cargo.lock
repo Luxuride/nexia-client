@@ -1965,6 +1965,7 @@ dependencies = [
 name = "nextcloud-desktop-ui"
 version = "0.1.0"
 dependencies = [
+ "gdk-pixbuf",
  "glib",
  "gtk4",
  "ksni",
