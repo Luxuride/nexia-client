@@ -15,9 +15,15 @@ use crate::pages::{ActivityPage, NavigationSidebar, SettingsPage, SyncFoldersPag
 use crate::tray::{TrayAction, spawn_app_bar_tray};
 use crate::widget::ViewComponent;
 
+use std::sync::Once;
+
+static SUPPRESS_GTK_LOGS_ONCE: Once = Once::new();
+
 /// Suppresses noisy GTK and GLib logging to stderr.
 pub fn suppress_gtk_logs() {
-    glib::log_set_writer_func(|_level, _fields| glib::LogWriterOutput::Handled);
+    SUPPRESS_GTK_LOGS_ONCE.call_once(|| {
+        glib::log_set_writer_func(|_level, _fields| glib::LogWriterOutput::Handled);
+    });
 }
 
 /// Launches the Nextcloud Desktop GTK 4 / Libadwaita application.
