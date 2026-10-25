@@ -432,10 +432,11 @@ fn build_ui(
         window.present();
     }
 
-    // Background remote tree refresh & automatic subfolder preloading (runs off the UI thread)
+    // Background remote tree refresh, automatic subfolder preloading, and active folder sync
     let ctrl_for_init = controller.clone();
     tokio::spawn(async move {
         let _ = ctrl_for_init.refresh_virtual_tree().await;
+        let _ = ctrl_for_init.sync_all_mounts().await;
     });
 
     window

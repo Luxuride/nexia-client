@@ -770,6 +770,21 @@ impl DesktopUiController {
             .map_err(|err| UiError::Controller(err.to_string()))
     }
 
+    /// Triggers an immediate folder synchronization cycle for a specific mount point.
+    pub async fn sync_mount(&self, mount_id: &str) -> Result<(), UiError> {
+        self.coordinator
+            .sync_mount_folder(mount_id)
+            .await
+            .map(|_| ())
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Triggers an immediate folder synchronization cycle across all active mount points.
+    pub async fn sync_all_mounts(&self) -> Result<(), UiError> {
+        self.coordinator.sync_all_mounts().await;
+        Ok(())
+    }
+
     /// Specifically resumes synchronization for a single mount point.
     pub async fn resume_mount(&self, id: MountId) -> Result<(), UiError> {
         self.coordinator
@@ -1170,6 +1185,14 @@ impl FileExplorerBackend for DesktopUiController {
             .remove_sync_mount(mount_id)
             .await
             .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn sync_mount(&self, mount_id: &str) -> Result<(), UiError> {
+        self.sync_mount(mount_id).await
+    }
+
+    async fn sync_all_mounts(&self) -> Result<(), UiError> {
+        self.sync_all_mounts().await
     }
 
     async fn update_sync_mount_mode(&self, mount_id: &str, new_mode: &str) -> Result<(), UiError> {

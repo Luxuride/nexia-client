@@ -303,6 +303,16 @@ pub trait FileExplorerBackend: Clone + 'static {
         async { Ok(()) }
     }
 
+    /// Triggers an immediate folder synchronization cycle for a specific mount point.
+    fn sync_mount(&self, _mount_id: &str) -> impl Future<Output = Result<(), UiError>> {
+        async { Ok(()) }
+    }
+
+    /// Triggers an immediate folder synchronization cycle across all active mount points.
+    fn sync_all_mounts(&self) -> impl Future<Output = Result<(), UiError>> {
+        async { Ok(()) }
+    }
+
     /// Updates the synchronization mode for an existing sync mount.
     fn update_sync_mount_mode(
         &self,

@@ -79,7 +79,7 @@ impl MountActivityDialog {
             .title("Current State")
             .subtitle("Checking…")
             .build();
-        status_row.add_prefix(&Image::from_icon_name("emblem-synchronizing-symbolic"));
+        status_row.add_prefix(&Image::from_icon_name("view-refresh-symbolic"));
         details_group.add(&status_row);
 
         let progress_row = adw::ActionRow::builder()
@@ -108,7 +108,7 @@ impl MountActivityDialog {
             .title("All Files Up to Date")
             .subtitle("No active file transfers in progress")
             .build();
-        empty_row.add_prefix(&Image::from_icon_name("emblem-ok-symbolic"));
+        empty_row.add_prefix(&Image::from_icon_name("object-select-symbolic"));
         active_group.add(&empty_row);
 
         let scrolled = ScrolledWindow::builder()

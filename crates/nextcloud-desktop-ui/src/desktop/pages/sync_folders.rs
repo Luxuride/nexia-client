@@ -33,7 +33,7 @@ impl SyncFoldersPage {
             .title("All Synchronization")
             .subtitle("Active")
             .build();
-        global_row.add_prefix(&Image::from_icon_name("emblem-synchronizing-symbolic"));
+        global_row.add_prefix(&Image::from_icon_name("view-refresh-symbolic"));
 
         let global_pause_btn = Button::with_label("Pause All Sync");
         global_pause_btn.set_valign(Align::Center);
@@ -165,9 +165,31 @@ impl SyncFoldersPage {
                     let icon_name = if is_vfs {
                         "folder-remote-symbolic"
                     } else {
-                        "folder-sync-symbolic"
+                        "folder-download-symbolic"
                     };
                     row.add_prefix(&Image::from_icon_name(icon_name));
+
+                    // Per-mount Sync Now button
+                    let sync_btn = Button::with_label("Sync Now");
+                    sync_btn.set_valign(Align::Center);
+                    sync_btn.add_css_class("flat");
+
+                    let b_sync = b.clone();
+                    let m_id_sync = mount.id.clone();
+                    let t_sync = toast.clone();
+
+                    sync_btn.connect_clicked(move |_| {
+                        let b = b_sync.clone();
+                        let m_id = m_id_sync.clone();
+                        let toast = t_sync.clone();
+
+                        glib::MainContext::default().spawn_local(async move {
+                            toast.add_toast(adw::Toast::new("Synchronizing folder…"));
+                            let _ = b.sync_mount(&m_id).await;
+                        });
+                    });
+
+                    row.add_suffix(&sync_btn);
 
                     // Per-mount Pause / Resume button
                     let pause_btn = Button::with_label("Pause");

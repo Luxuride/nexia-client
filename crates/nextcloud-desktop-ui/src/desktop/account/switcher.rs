@@ -180,7 +180,7 @@ impl AccountSwitcher {
                         row_box.append(&text_box);
 
                         if is_active {
-                            let check = Image::from_icon_name("emblem-ok-symbolic");
+                            let check = Image::from_icon_name("object-select-symbolic");
                             check.set_can_target(false);
                             check.add_css_class("success");
                             row_box.append(&check);

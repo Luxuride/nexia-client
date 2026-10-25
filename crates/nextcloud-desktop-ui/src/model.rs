@@ -53,7 +53,7 @@ impl NavigationPage {
     pub const fn icon_name(&self) -> &'static str {
         match self {
             Self::CloudFiles => "folder-remote-symbolic",
-            Self::SyncFolders => "emblem-synchronizing-symbolic",
+            Self::SyncFolders => "folder-download-symbolic",
             Self::Transfers => "network-transmit-receive-symbolic",
             Self::Settings => "emblem-system-symbolic",
         }
@@ -211,7 +211,7 @@ impl FileSyncStatus {
     pub fn icon_name(&self) -> &'static str {
         match self {
             Self::CloudPlaceholder => "folder-remote-symbolic",
-            Self::HydratedOffline => "emblem-ok-symbolic",
+            Self::HydratedOffline => "object-select-symbolic",
             Self::LocalOnly => "go-up-symbolic",
             Self::UnhydratedAndUnsynced => "folder-remote-symbolic",
             Self::Syncing => "view-refresh-symbolic",
@@ -396,7 +396,7 @@ mod tests {
         );
         assert_eq!(
             FileSyncStatus::HydratedOffline.icon_name(),
-            "emblem-ok-symbolic"
+            "object-select-symbolic"
         );
         assert_eq!(FileSyncStatus::LocalOnly.icon_name(), "go-up-symbolic");
         assert_eq!(FileSyncStatus::Syncing.icon_name(), "view-refresh-symbolic");

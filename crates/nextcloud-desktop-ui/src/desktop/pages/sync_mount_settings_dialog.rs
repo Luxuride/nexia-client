@@ -81,7 +81,7 @@ impl SyncMountSettingsDialog {
             .model(&mode_model)
             .selected(initial_selected)
             .build();
-        mode_combo.add_prefix(&Image::from_icon_name("emblem-synchronizing-symbolic"));
+        mode_combo.add_prefix(&Image::from_icon_name("view-refresh-symbolic"));
         details_group.add(&mode_combo);
 
         let b_mode = backend.clone();

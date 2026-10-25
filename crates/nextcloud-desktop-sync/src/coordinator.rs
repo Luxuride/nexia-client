@@ -125,10 +125,17 @@ impl DesktopSyncCoordinator {
             // Periodic background WebDAV synchronizer
             let periodic_coord = coord.clone();
             rt_handle.spawn(async move {
+                // Short delay after startup before running initial sync
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                if periodic_coord.active_client().await.is_some() {
+                    periodic_coord.sync_all_mounts().await;
+                }
+
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                     if periodic_coord.active_client().await.is_some() {
                         let _ = periodic_coord.refresh_virtual_tree().await;
+                        periodic_coord.sync_all_mounts().await;
                     }
                 }
             });
@@ -348,5 +355,17 @@ impl DesktopSyncCoordinator {
             }
             _ => Ok(None),
         }
+    }
+
+    /// Triggers an immediate folder synchronization cycle for a specific mount point.
+    pub async fn sync_mount_folder(&self, mount_id: &str) -> Result<usize, SyncError> {
+        let engine = crate::folder_sync::FolderSyncEngine::new(self.clone());
+        engine.sync_mount(mount_id).await
+    }
+
+    /// Triggers an immediate folder synchronization cycle across all active mount points.
+    pub async fn sync_all_mounts(&self) {
+        let engine = crate::folder_sync::FolderSyncEngine::new(self.clone());
+        engine.sync_all_mounts().await;
     }
 }

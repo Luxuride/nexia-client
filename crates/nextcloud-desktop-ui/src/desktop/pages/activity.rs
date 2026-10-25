@@ -37,7 +37,7 @@ impl ActivityPage {
             .title("Loading Sync Folders…")
             .subtitle("Querying configured synchronization mounts")
             .build();
-        empty_mounts_row.add_prefix(&Image::from_icon_name("folder-sync-symbolic"));
+        empty_mounts_row.add_prefix(&Image::from_icon_name("folder-download-symbolic"));
         mounts_group.add(&empty_mounts_row);
         page.add(&mounts_group);
 
@@ -374,7 +374,7 @@ impl ActivityPage {
                             .subtitle(format!("{} ({})", path, format_bytes(size)))
                             .build();
                         row.add_prefix(&Image::from_icon_name("network-transmit-receive-symbolic"));
-                        let badge = Image::from_icon_name("emblem-ok-symbolic");
+                        let badge = Image::from_icon_name("object-select-symbolic");
                         badge.add_css_class("success");
                         row.add_suffix(&badge);
                         act_grp_clone.add(&row);
@@ -401,7 +401,7 @@ impl ActivityPage {
                             .subtitle(&relative_path)
                             .build();
                         row.add_prefix(&Image::from_icon_name("document-send-symbolic"));
-                        let badge = Image::from_icon_name("emblem-ok-symbolic");
+                        let badge = Image::from_icon_name("object-select-symbolic");
                         badge.add_css_class("success");
                         row.add_suffix(&badge);
                         act_grp_clone.add(&row);
@@ -422,8 +422,8 @@ impl ActivityPage {
                                 uploaded, downloaded
                             ))
                             .build();
-                        row.add_prefix(&Image::from_icon_name("emblem-synchronizing-symbolic"));
-                        let badge = Image::from_icon_name("emblem-ok-symbolic");
+                        row.add_prefix(&Image::from_icon_name("view-refresh-symbolic"));
+                        let badge = Image::from_icon_name("object-select-symbolic");
                         badge.add_css_class("success");
                         row.add_suffix(&badge);
                         act_grp_clone.add(&row);

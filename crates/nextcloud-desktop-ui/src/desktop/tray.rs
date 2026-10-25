@@ -101,7 +101,7 @@ impl Tray for DesktopTrayItem {
 
     fn icon_name(&self) -> String {
         if self.syncing {
-            "emblem-synchronizing-symbolic".into()
+            "view-refresh-symbolic".into()
         } else {
             "folder-remote-symbolic".into()
         }
@@ -156,7 +156,7 @@ impl Tray for DesktopTrayItem {
             MenuItem::Separator,
             StandardItem {
                 label: "Sync All Folders Now".into(),
-                icon_name: "emblem-synchronizing-symbolic".into(),
+                icon_name: "view-refresh-symbolic".into(),
                 enabled: true,
                 visible: true,
                 activate: Box::new(move |_| {

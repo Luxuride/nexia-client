@@ -323,6 +323,13 @@ impl DesktopSyncCoordinator {
             let _ = h.mounts().add_mount(desc).await;
         }
 
+        // Immediately trigger initial sync for the newly registered mount
+        let coord = self.clone();
+        let mid = mount_id.clone();
+        tokio::spawn(async move {
+            let _ = coord.sync_mount_folder(&mid).await;
+        });
+
         Ok(mount_id)
     }
 

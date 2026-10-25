@@ -101,12 +101,16 @@ impl DesktopSyncCoordinator {
         let handle = self.orchestrator_handle.read().await;
         if let Some(ref h) = *handle {
             h.mounts()
-                .resume_mount(id)
+                .resume_mount(id.clone())
                 .await
-                .map_err(SyncError::Orchestrator)
-        } else {
-            Ok(())
+                .map_err(SyncError::Orchestrator)?;
         }
+        let coord = self.clone();
+        let id_str = id.to_string();
+        tokio::spawn(async move {
+            let _ = coord.sync_mount_folder(&id_str).await;
+        });
+        Ok(())
     }
 
     /// Queries whether a specific mount point is currently paused.

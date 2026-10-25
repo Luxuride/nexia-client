@@ -205,7 +205,7 @@ impl ThumbnailDownloadsDialog {
                         if let Some(entry) = rows.get(&path) {
                             entry.spinner.set_spinning(false);
                             entry.spinner.set_visible(false);
-                            entry.icon.set_icon_name(Some("emblem-ok-symbolic"));
+                            entry.icon.set_icon_name(Some("object-select-symbolic"));
                             entry.row.set_subtitle(&format!("Downloaded • {path}"));
                         }
                     }
