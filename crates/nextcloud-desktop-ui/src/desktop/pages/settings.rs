@@ -18,6 +18,64 @@ impl SettingsPage {
     pub fn new<B: FileExplorerBackend>(backend: &B, toast_overlay: &adw::ToastOverlay) -> Self {
         let page = adw::PreferencesPage::new();
 
+        // 0. Active Account Profile
+        let profile_group = adw::PreferencesGroup::builder()
+            .title("Active Account")
+            .description("Currently active Nextcloud account profile and connection.")
+            .build();
+
+        let acc_row = adw::ActionRow::builder()
+            .title("Loading account…")
+            .subtitle("")
+            .build();
+        acc_row.add_prefix(&Image::from_icon_name("avatar-default-symbolic"));
+
+        let sign_out_btn = Button::with_label("Sign Out…");
+        sign_out_btn.set_valign(gtk4::Align::Center);
+        sign_out_btn.add_css_class("destructive-action");
+        sign_out_btn.set_visible(false);
+        acc_row.add_suffix(&sign_out_btn);
+
+        profile_group.add(&acc_row);
+        page.add(&profile_group);
+
+        let b_acc = backend.clone();
+        let toast_acc = toast_overlay.clone();
+        let acc_row_clone = acc_row.clone();
+        let so_btn_clone = sign_out_btn.clone();
+
+        glib::MainContext::default().spawn_local(async move {
+            let accounts = b_acc.accounts().await;
+            let active_id = b_acc.active_account_id().await;
+            let active = accounts
+                .into_iter()
+                .find(|a| Some(&a.id) == active_id.as_ref());
+            if let Some(acc) = active {
+                acc_row_clone.set_title(&acc.name);
+                let sys_label = if acc.is_system { " (System SSO)" } else { "" };
+                acc_row_clone.set_subtitle(&format!(
+                    "{} • {}{sys_label}",
+                    acc.credentials.username, acc.server.server_url
+                ));
+                if !acc.is_system {
+                    so_btn_clone.set_visible(true);
+                    let b = b_acc.clone();
+                    let t = toast_acc.clone();
+                    let row = acc_row_clone.clone();
+                    let acc_to_sign_out = acc.clone();
+                    so_btn_clone.connect_clicked(move |_| {
+                        crate::desktop::account::SignOutAccountDialog::present(
+                            Some(&row),
+                            &b,
+                            &t,
+                            acc_to_sign_out.clone(),
+                            || {},
+                        );
+                    });
+                }
+            }
+        });
+
         // 1. Nextcloud Account & System Startup
         let account_group = adw::PreferencesGroup::builder()
             .title("Application and System Startup")

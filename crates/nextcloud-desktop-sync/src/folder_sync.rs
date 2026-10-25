@@ -238,6 +238,15 @@ impl FolderSyncEngine {
                     if let Some(parent) = dest.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
+                    let full_remote = if mount.remote_path == "/" {
+                        relative_path.clone()
+                    } else {
+                        format!(
+                            "{}/{}",
+                            mount.remote_path.trim_end_matches('/'),
+                            relative_path.trim_start_matches('/')
+                        )
+                    };
                     if is_vfs {
                         // In VirtualVfs mode, do not download bulk payload; create placeholder
                         if !dest.exists() {
@@ -263,16 +272,25 @@ impl FolderSyncEngine {
                                 relative_path: relative_path.clone(),
                                 kind: nextcloud_desktop_core::events::TransferKind::Hydration,
                             });
+
+                        // Prefetch Nextcloud thumbnail and register with FreeDesktop system thumbnail cache
+                        if is_thumbnail_candidate(&relative_path) {
+                            let coord_for_thumb = self.coordinator.clone();
+                            let full_rem_thumb = full_remote.clone();
+                            let dest_thumb = dest.clone();
+                            tokio::spawn(async move {
+                                if let Ok(Some(thumb_path)) =
+                                    coord_for_thumb.fetch_thumbnail(&full_rem_thumb, 256).await
+                                    && let Ok(bytes) = tokio::fs::read(&thumb_path).await
+                                {
+                                    crate::freedesktop_thumbs::install_freedesktop_thumbnail(
+                                        &dest_thumb,
+                                        &bytes,
+                                    );
+                                }
+                            });
+                        }
                     } else {
-                        let full_remote = if mount.remote_path == "/" {
-                            relative_path.clone()
-                        } else {
-                            format!(
-                                "{}/{}",
-                                mount.remote_path.trim_end_matches('/'),
-                                relative_path.trim_start_matches('/')
-                            )
-                        };
                         if let Ok(dav_path) = make_dav_path(&user, &full_remote) {
                             match dav_client.get(&dav_path).await {
                                 Ok(bytes) => {
@@ -504,6 +522,24 @@ fn percent_decode(s: &str) -> String {
         bytes.push(b);
     }
     String::from_utf8(bytes).unwrap_or_else(|_| s.to_string())
+}
+
+fn is_thumbnail_candidate(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.ends_with(".jpg")
+        || lower.ends_with(".jpeg")
+        || lower.ends_with(".png")
+        || lower.ends_with(".gif")
+        || lower.ends_with(".webp")
+        || lower.ends_with(".svg")
+        || lower.ends_with(".bmp")
+        || lower.ends_with(".tiff")
+        || lower.ends_with(".mp4")
+        || lower.ends_with(".mkv")
+        || lower.ends_with(".webm")
+        || lower.ends_with(".mov")
+        || lower.ends_with(".avi")
+        || lower.ends_with(".pdf")
 }
 
 #[cfg(test)]

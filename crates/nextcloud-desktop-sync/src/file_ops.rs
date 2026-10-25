@@ -266,9 +266,54 @@ impl DesktopSyncCoordinator {
             if let Ok(bytes) = dav_client.get(&dav_path).await {
                 let byte_len = bytes.len() as u64;
                 let local_path = vfs
-                    .hydrate_local(remote_path, bytes)
+                    .hydrate_local(remote_path, bytes.clone())
                     .await
                     .map_err(SyncError::Orchestrator)?;
+
+                // If this file matches a local folder sync mount, hydrate the local file directly
+                for mount in self.sync_mounts().await {
+                    if mount.id == "app-default-vfs" || !mount.enabled {
+                        continue;
+                    }
+                    let m_remote = mount.remote_path.trim_end_matches('/');
+                    let rel = if m_remote.is_empty() || m_remote == "/" {
+                        Some(clean_sub)
+                    } else {
+                        clean_sub.strip_prefix(m_remote.trim_start_matches('/'))
+                    };
+                    if let Some(rel_path) = rel {
+                        let rel_clean = rel_path.trim_start_matches('/');
+                        let target_file = PathBuf::from(&mount.local_target).join(rel_clean);
+                        if let Some(parent) = target_file.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        if std::fs::write(&target_file, &bytes).is_ok() {
+                            let journal_dir = PathBuf::from(&mount.local_target).join(".nextcloud");
+                            let _ = std::fs::create_dir_all(&journal_dir);
+                            let journal_path = journal_dir.join("journal.json");
+                            let mut journal =
+                                nextcloud_rust_sdk::SyncJournal::load_from_file(&journal_path)
+                                    .unwrap_or_else(|_| nextcloud_rust_sdk::SyncJournal::new());
+                            let mtime = std::fs::metadata(&target_file)
+                                .and_then(|m| m.modified())
+                                .unwrap_or_else(|_| std::time::SystemTime::now());
+                            journal.record(nextcloud_rust_sdk::JournalEntry::new(
+                                rel_clean, byte_len, mtime, false,
+                            ));
+                            let _ = journal.save_to_file(&journal_path);
+                            self.event_bus.emit(DesktopEvent::FileTransferCompleted {
+                                relative_path: rel_clean.to_string(),
+                                kind: nextcloud_desktop_core::events::TransferKind::Hydration,
+                            });
+                            self.event_bus.emit(DesktopEvent::NodeHydrated {
+                                path: clean,
+                                size: byte_len,
+                            });
+                            return Ok(target_file);
+                        }
+                    }
+                }
+
                 self.event_bus.emit(DesktopEvent::NodeHydrated {
                     path: clean,
                     size: byte_len,
@@ -288,6 +333,83 @@ impl DesktopSyncCoordinator {
             size: byte_len,
         });
         Ok(local_path)
+    }
+
+    /// Hydrates a local 0-byte placeholder in a sync folder by downloading its content from Nextcloud.
+    pub async fn hydrate_local_file(
+        &self,
+        local_path: &std::path::Path,
+    ) -> Result<PathBuf, SyncError> {
+        let mounts = self.sync_mounts().await;
+        let canonical = local_path
+            .canonicalize()
+            .unwrap_or_else(|_| local_path.to_path_buf());
+
+        for mount in mounts {
+            if mount.id == "app-default-vfs" || !mount.enabled {
+                continue;
+            }
+            let target_root = PathBuf::from(&mount.local_target);
+            let target_canonical = target_root
+                .canonicalize()
+                .unwrap_or_else(|_| target_root.clone());
+
+            if let Ok(rel) = canonical.strip_prefix(&target_canonical) {
+                let rel_str = rel.to_string_lossy().to_string();
+                let full_remote = if mount.remote_path == "/" {
+                    rel_str.clone()
+                } else {
+                    format!(
+                        "{}/{}",
+                        mount.remote_path.trim_end_matches('/'),
+                        rel_str.trim_start_matches('/')
+                    )
+                };
+
+                if let Some((user, client, auth)) = self.active_dav_context().await {
+                    let dav = client.dav(&auth);
+                    let dav_path = make_dav_path(&user, &full_remote)?;
+                    let bytes = dav
+                        .get(&dav_path)
+                        .await
+                        .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+                    let byte_len = bytes.len() as u64;
+
+                    std::fs::write(&canonical, &bytes)
+                        .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+
+                    let journal_dir = target_canonical.join(".nextcloud");
+                    let _ = std::fs::create_dir_all(&journal_dir);
+                    let journal_path = journal_dir.join("journal.json");
+                    let mut journal =
+                        nextcloud_rust_sdk::SyncJournal::load_from_file(&journal_path)
+                            .unwrap_or_else(|_| nextcloud_rust_sdk::SyncJournal::new());
+                    let mtime = std::fs::metadata(&canonical)
+                        .and_then(|m| m.modified())
+                        .unwrap_or_else(|_| std::time::SystemTime::now());
+                    journal.record(nextcloud_rust_sdk::JournalEntry::new(
+                        &rel_str, byte_len, mtime, false,
+                    ));
+                    let _ = journal.save_to_file(&journal_path);
+
+                    self.event_bus.emit(DesktopEvent::FileTransferCompleted {
+                        relative_path: rel_str,
+                        kind: nextcloud_desktop_core::events::TransferKind::Hydration,
+                    });
+                    self.event_bus.emit(DesktopEvent::NodeHydrated {
+                        path: full_remote,
+                        size: byte_len,
+                    });
+
+                    return Ok(canonical);
+                }
+            }
+        }
+
+        Err(SyncError::NotFound(format!(
+            "No active sync mount found for {}",
+            local_path.display()
+        )))
     }
 
     /// Dehydrates a file node, freeing local cache space.

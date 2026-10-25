@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use nextcloud_desktop_core::account::{Account, AccountId, ServerConfig};
+use nextcloud_desktop_core::events::DesktopEvent;
 use nextcloud_rust_sdk::{
     BasicAuth, CachedTheme, Client, MountDescriptor, MountId, MountMode, SecretString, ServerUrl,
     StoragePaths, StoreKey, StoredSyncMount, ThemeInfo,
@@ -566,6 +567,85 @@ impl DesktopSyncCoordinator {
 
         *self.default_mount_id.write().await = None;
         let _ = self.refresh_virtual_tree().await;
+        Ok(())
+    }
+
+    /// Signs out and removes a non-system account, optionally cleaning up synchronized files and pairings.
+    pub async fn sign_out_account(
+        &self,
+        account_id: &AccountId,
+        clean_syncs: bool,
+    ) -> Result<(), SyncError> {
+        let account = {
+            let conf = self.config.read().await;
+            conf.get_account(account_id).cloned()
+        };
+
+        let Some(acc) = account else {
+            return Err(SyncError::NotFound(format!(
+                "Account {} not found",
+                account_id.0
+            )));
+        };
+
+        if acc.is_system {
+            return Err(SyncError::OperationDisabled(
+                "System accounts cannot be signed out from the desktop application. Please manage system accounts in your OS Settings.".to_string(),
+            ));
+        }
+
+        // 1. Process all sync mounts for this account
+        let mounts = self.sync_mounts().await;
+        for m in mounts {
+            if m.account_id == acc.id.0 {
+                let local_path = PathBuf::from(&m.local_target);
+                self.unwatch_mount(&local_path).await;
+                let _ = self.remove_mount(MountId::from(m.id.clone())).await;
+
+                if clean_syncs && local_path.exists() {
+                    let _ = std::fs::remove_dir_all(&local_path);
+                }
+
+                if let Some(client) = self.active_client().await {
+                    let _ = client.remove_sync_mount(&m.id).await;
+                }
+            }
+        }
+
+        // 2. Remove account cache directory
+        let account_cache = self.cache_dir().join("accounts").join(&acc.id.0);
+        if account_cache.exists() {
+            let _ = std::fs::remove_dir_all(&account_cache);
+        }
+
+        // 3. Remove client from self.clients
+        {
+            let mut clients = self.clients.write().await;
+            clients.retain(|c| {
+                !(c.server_url().as_str() == acc.server.server_url
+                    && c.current_user_id().as_deref() == Some(&acc.credentials.username))
+            });
+        }
+
+        // 4. Remove account from self.config and determine new active account
+        let next_account_id = {
+            let mut conf = self.config.write().await;
+            conf.remove_account(account_id);
+            conf.active_account_id.clone()
+        };
+        self.persist_config().await;
+
+        // 5. Switch to remaining account if active account was removed
+        if let Some(next_id) = next_account_id {
+            let _ = self.switch_account(&next_id).await;
+        } else {
+            *self.default_mount_id.write().await = None;
+        }
+
+        self.event_bus.emit(DesktopEvent::AccountSignedOut {
+            account_id: account_id.0.clone(),
+        });
+
         Ok(())
     }
 }

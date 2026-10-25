@@ -672,6 +672,18 @@ impl DesktopUiController {
             .map_err(|err| UiError::Controller(err.to_string()))
     }
 
+    /// Signs out and removes a non-system account, optionally cleaning up synchronized files and pairings.
+    pub async fn sign_out_account(
+        &self,
+        account_id: &AccountId,
+        clean_syncs: bool,
+    ) -> Result<(), UiError> {
+        self.coordinator
+            .sign_out_account(account_id, clean_syncs)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
     /// Starts a browser-based OAuth login flow for the given server URL.
     pub async fn start_oauth_login(
         &self,
@@ -1068,6 +1080,14 @@ impl FileExplorerBackend for DesktopUiController {
 
     async fn add_account(&self, account: Account) -> Result<(), UiError> {
         self.add_account(account).await
+    }
+
+    async fn sign_out_account(
+        &self,
+        account_id: &AccountId,
+        clean_syncs: bool,
+    ) -> Result<(), UiError> {
+        self.sign_out_account(account_id, clean_syncs).await
     }
 
     async fn start_oauth_login(

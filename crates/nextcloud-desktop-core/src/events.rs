@@ -119,6 +119,11 @@ pub enum DesktopEvent {
     },
     /// Live synchronization progress update for a mount point.
     MountProgress(nextcloud_rust_sdk::MountProgressSnapshot),
+    /// An account profile was signed out and removed.
+    AccountSignedOut {
+        /// Identifier of the signed out account.
+        account_id: String,
+    },
     /// An application or sync error occurred.
     Notification {
         /// Message content.

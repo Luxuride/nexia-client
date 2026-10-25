@@ -7,6 +7,7 @@ use nextcloud_desktop_core::Account;
 use std::rc::Rc;
 
 use crate::account::add_dialog::AddAccountDialog;
+use crate::account::sign_out_dialog::SignOutAccountDialog;
 use crate::widget::FileExplorerBackend;
 
 /// Helper constructing an [`adw::Avatar`] displaying either a user's photo or their initials.
@@ -194,6 +195,7 @@ impl AccountSwitcher {
                         }
 
                         row_btn.set_child(Some(&row_box));
+                        row_btn.set_hexpand(true);
 
                         let acc_id = acc.id.clone();
                         let pop_click = pop_async.clone();
@@ -224,7 +226,36 @@ impl AccountSwitcher {
                             }
                         });
 
-                        container.append(&row_btn);
+                        let item_container = GtkBox::new(Orientation::Horizontal, 4);
+                        item_container.append(&row_btn);
+
+                        if !acc.is_system {
+                            let sign_out_btn = Button::from_icon_name("system-log-out-symbolic");
+                            sign_out_btn.add_css_class("flat");
+                            sign_out_btn.set_valign(gtk4::Align::Center);
+                            sign_out_btn.set_tooltip_text(Some("Sign out of account"));
+                            let b_so = b_async.clone();
+                            let toast_so = toast_async.clone();
+                            let pop_so = pop_async.clone();
+                            let acc_so = acc.clone();
+                            let cb_so = cb_async.clone();
+                            let parent_so = btn_async.clone();
+
+                            sign_out_btn.connect_clicked(move |_| {
+                                pop_so.popdown();
+                                let cb = cb_so.clone();
+                                SignOutAccountDialog::present(
+                                    Some(&parent_so),
+                                    &b_so,
+                                    &toast_so,
+                                    acc_so.clone(),
+                                    move || cb(),
+                                );
+                            });
+                            item_container.append(&sign_out_btn);
+                        }
+
+                        container.append(&item_container);
                     }
 
                     container.append(&Separator::new(Orientation::Horizontal));

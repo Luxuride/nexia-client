@@ -201,6 +201,13 @@ pub trait FileExplorerBackend: Clone + 'static {
     /// Adds a new account profile to the application.
     fn add_account(&self, account: Account) -> impl Future<Output = Result<(), UiError>>;
 
+    /// Signs out and removes a non-system account, optionally cleaning up synchronized files and pairings.
+    fn sign_out_account(
+        &self,
+        account_id: &AccountId,
+        clean_syncs: bool,
+    ) -> impl Future<Output = Result<(), UiError>>;
+
     /// Starts a browser-based OAuth login flow for the given server URL.
     fn start_oauth_login(
         &self,

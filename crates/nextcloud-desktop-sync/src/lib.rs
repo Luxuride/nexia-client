@@ -9,6 +9,7 @@ pub mod engine;
 pub mod error;
 pub(crate) mod file_ops;
 pub mod folder_sync;
+pub mod freedesktop_thumbs;
 pub(crate) mod mounts;
 pub mod watcher;
 

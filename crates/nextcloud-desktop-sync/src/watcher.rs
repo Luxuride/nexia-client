@@ -44,7 +44,10 @@ impl FileSystemWatcher {
             Ok(event) => {
                 if matches!(
                     event.kind,
-                    EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+                    EventKind::Create(_)
+                        | EventKind::Modify(_)
+                        | EventKind::Remove(_)
+                        | EventKind::Access(_)
                 ) {
                     for path in event.paths {
                         // Skip internal journal, temporary and hidden files
@@ -91,6 +94,19 @@ impl FileSystemWatcher {
                 // Collect events with a 750ms debounce window
                 tokio::select! {
                     Some(changed_path) = rx.recv() => {
+                        // Check if 0-byte virtual placeholder file was accessed or opened: hydrate immediately!
+                        if changed_path.is_file()
+                            && let Ok(meta) = std::fs::metadata(&changed_path)
+                            && meta.len() == 0
+                        {
+                            let c = coord.clone();
+                            let p = changed_path.clone();
+                            tokio::spawn(async move {
+                                let _ = c.hydrate_local_file(&p).await;
+                            });
+                            continue;
+                        }
+
                         if let Ok(guard) = map_for_worker.lock() {
                             for (root, mount_id) in guard.iter() {
                                 if changed_path.starts_with(root) {
