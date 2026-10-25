@@ -3,14 +3,27 @@
 use gtk4::{gdk, glib, prelude::*};
 use libadwaita as adw;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::model::FileViewItem;
 use crate::widget::FileExplorerBackend;
+
+static DND_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 /// Coordinates file drag sources and directory drop targets.
 pub struct FileDragDrop;
 
 impl FileDragDrop {
+    /// Returns true if a drag-and-drop operation is currently in progress.
+    pub fn is_dnd_active() -> bool {
+        DND_IN_PROGRESS.load(Ordering::SeqCst)
+    }
+
+    /// Sets whether a drag-and-drop operation is currently active.
+    pub fn set_dnd_active(active: bool) {
+        DND_IN_PROGRESS.store(active, Ordering::SeqCst);
+    }
+
     /// Attaches a drag source to `widget` carrying `item`'s virtual path and displaying its icon.
     pub fn attach_source(widget: &impl IsA<gtk4::Widget>, item: &FileViewItem) {
         let drag_source = gtk4::DragSource::new();
@@ -23,6 +36,7 @@ impl FileDragDrop {
 
         let icon_name = item.nautilus_icon_name().to_string();
         drag_source.connect_drag_begin(move |source, _| {
+            Self::set_dnd_active(true);
             if let Some(display) = gdk::Display::default() {
                 let theme = gtk4::IconTheme::for_display(&display);
                 let paintable = theme.lookup_icon(
@@ -35,6 +49,15 @@ impl FileDragDrop {
                 );
                 source.set_icon(Some(&paintable), 24, 24);
             }
+        });
+
+        drag_source.connect_drag_end(move |_, _, _| {
+            Self::set_dnd_active(false);
+        });
+
+        drag_source.connect_drag_cancel(move |_, _, _| {
+            Self::set_dnd_active(false);
+            false
         });
 
         widget.add_controller(drag_source);
@@ -73,6 +96,7 @@ impl FileDragDrop {
         let target_name = target_item.name.clone();
 
         drop_target.connect_drop(move |_, value, _, _| {
+            Self::set_dnd_active(false);
             widget_drop.remove_css_class("drop-hover");
             if let Ok(src_path) = value.get::<String>() {
                 if src_path == dest_path {

@@ -111,20 +111,13 @@ impl FileGridView {
         overlay.attach_flow_box(&flow_box, items.clone(), selection_tracker.clone());
 
         // Wire canvas context menu for right clicking empty space
-        let fb_for_hit = flow_box.clone();
         let overlay_for_hit = overlay.clone();
         let is_hit = Rc::new(move |x: f64, y: f64| {
-            let pt = gtk4::graphene::Point::new(x as f32, y as f32);
-            let mut idx = 0;
-            while let Some(child) = fb_for_hit.child_at_index(idx) {
-                if let Some(bounds) = child.compute_bounds(overlay_for_hit.root_widget())
-                    && bounds.contains_point(&pt)
-                {
-                    return true;
-                }
-                idx += 1;
-            }
-            false
+            overlay_for_hit
+                .root_widget()
+                .pick(x, y, gtk4::PickFlags::DEFAULT)
+                .and_then(|w| w.ancestor(FlowBoxChild::static_type()))
+                .is_some()
         });
         CanvasContextMenu::attach(
             overlay.root_widget(),

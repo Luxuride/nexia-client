@@ -1,12 +1,16 @@
 //! Visual rubberband selection overlay for icon grid and columnar list views.
 
 use gtk4::gdk;
-use gtk4::graphene::{Point, Rect};
-use gtk4::{DrawingArea, FlowBox, GestureClick, GestureDrag, ListBox, Overlay, ScrolledWindow};
+use gtk4::graphene::Rect;
+use gtk4::{
+    DrawingArea, FlowBox, FlowBoxChild, GestureClick, GestureDrag, ListBox, ListBoxRow, Overlay,
+    ScrolledWindow,
+};
 use libadwaita::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::files::dnd::FileDragDrop;
 use crate::files::selection::SelectionTracker;
 use crate::model::FileViewItem;
 use crate::widget::ViewComponent;
@@ -79,18 +83,13 @@ impl RubberbandOverlay {
         let overlay_click = overlay.clone();
         let tracker_click = tracker.clone();
         click_gesture.connect_pressed(move |_, _, x, y| {
-            let pt = Point::new(x as f32, y as f32);
-            let mut hit = false;
-            let mut idx = 0;
-            while let Some(child) = fb_click.child_at_index(idx) {
-                if let Some(bounds) = child.compute_bounds(&overlay_click)
-                    && bounds.contains_point(&pt)
-                {
-                    hit = true;
-                    break;
-                }
-                idx += 1;
+            if FileDragDrop::is_dnd_active() {
+                return;
             }
+            let hit = overlay_click
+                .pick(x, y, gtk4::PickFlags::DEFAULT)
+                .and_then(|w| w.ancestor(FlowBoxChild::static_type()))
+                .is_some();
             if !hit {
                 fb_click.unselect_all();
                 tracker_click.clear();
@@ -109,18 +108,15 @@ impl RubberbandOverlay {
         let overlay_begin = overlay_drag.clone();
         let tracker_begin = tracker.clone();
         drag_gesture.connect_drag_begin(move |gesture, start_x, start_y| {
-            let pt = Point::new(start_x as f32, start_y as f32);
-            let mut hit = false;
-            let mut idx = 0;
-            while let Some(child) = fb_begin.child_at_index(idx) {
-                if let Some(bounds) = child.compute_bounds(&overlay_begin)
-                    && bounds.contains_point(&pt)
-                {
-                    hit = true;
-                    break;
-                }
-                idx += 1;
+            if FileDragDrop::is_dnd_active() {
+                *start_pos_begin.borrow_mut() = None;
+                return;
             }
+
+            let hit = overlay_begin
+                .pick(start_x, start_y, gtk4::PickFlags::DEFAULT)
+                .and_then(|w| w.ancestor(FlowBoxChild::static_type()))
+                .is_some();
 
             if !hit {
                 *start_pos_begin.borrow_mut() = Some((start_x, start_y));
@@ -143,6 +139,12 @@ impl RubberbandOverlay {
         let rect_update = active_rect.clone();
         let da_update = drawing_area.clone();
         drag_gesture.connect_drag_update(move |gesture, offset_x, offset_y| {
+            if FileDragDrop::is_dnd_active() {
+                *start_pos_update.borrow_mut() = None;
+                *rect_update.borrow_mut() = None;
+                da_update.queue_draw();
+                return;
+            }
             if let Some((start_x, start_y)) = *start_pos_update.borrow() {
                 let min_x = start_x.min(start_x + offset_x);
                 let max_x = start_x.max(start_x + offset_x);
@@ -181,17 +183,20 @@ impl RubberbandOverlay {
         let items_end = items_ref;
         let tracker_end = tracker;
         drag_gesture.connect_drag_end(move |_, _, _| {
+            let was_dragging = start_pos_end.borrow().is_some();
             *start_pos_end.borrow_mut() = None;
             *rect_end.borrow_mut() = None;
             da_end.queue_draw();
 
-            let selected_children = fb_end.selected_children();
-            let all = items_end.borrow();
-            let selected: Vec<FileViewItem> = selected_children
-                .into_iter()
-                .filter_map(|c| all.get(c.index() as usize).cloned())
-                .collect();
-            tracker_end.set_selected(selected);
+            if was_dragging && !FileDragDrop::is_dnd_active() {
+                let selected_children = fb_end.selected_children();
+                let all = items_end.borrow();
+                let selected: Vec<FileViewItem> = selected_children
+                    .into_iter()
+                    .filter_map(|c| all.get(c.index() as usize).cloned())
+                    .collect();
+                tracker_end.set_selected(selected);
+            }
         });
 
         overlay.add_controller(drag_gesture);
@@ -215,18 +220,13 @@ impl RubberbandOverlay {
         let overlay_click = overlay.clone();
         let tracker_click = tracker.clone();
         click_gesture.connect_pressed(move |_, _, x, y| {
-            let pt = Point::new(x as f32, y as f32);
-            let mut hit = false;
-            let mut idx = 0;
-            while let Some(row) = lb_click.row_at_index(idx) {
-                if let Some(bounds) = row.compute_bounds(&overlay_click)
-                    && bounds.contains_point(&pt)
-                {
-                    hit = true;
-                    break;
-                }
-                idx += 1;
+            if FileDragDrop::is_dnd_active() {
+                return;
             }
+            let hit = overlay_click
+                .pick(x, y, gtk4::PickFlags::DEFAULT)
+                .and_then(|w| w.ancestor(ListBoxRow::static_type()))
+                .is_some();
             if !hit {
                 lb_click.unselect_all();
                 tracker_click.clear();
@@ -245,18 +245,15 @@ impl RubberbandOverlay {
         let overlay_begin = overlay_drag.clone();
         let tracker_begin = tracker.clone();
         drag_gesture.connect_drag_begin(move |gesture, start_x, start_y| {
-            let pt = Point::new(start_x as f32, start_y as f32);
-            let mut hit = false;
-            let mut idx = 0;
-            while let Some(row) = lb_begin.row_at_index(idx) {
-                if let Some(bounds) = row.compute_bounds(&overlay_begin)
-                    && bounds.contains_point(&pt)
-                {
-                    hit = true;
-                    break;
-                }
-                idx += 1;
+            if FileDragDrop::is_dnd_active() {
+                *start_pos_begin.borrow_mut() = None;
+                return;
             }
+
+            let hit = overlay_begin
+                .pick(start_x, start_y, gtk4::PickFlags::DEFAULT)
+                .and_then(|w| w.ancestor(ListBoxRow::static_type()))
+                .is_some();
 
             if !hit {
                 *start_pos_begin.borrow_mut() = Some((start_x, start_y));
@@ -279,6 +276,12 @@ impl RubberbandOverlay {
         let rect_update = active_rect.clone();
         let da_update = drawing_area.clone();
         drag_gesture.connect_drag_update(move |gesture, offset_x, offset_y| {
+            if FileDragDrop::is_dnd_active() {
+                *start_pos_update.borrow_mut() = None;
+                *rect_update.borrow_mut() = None;
+                da_update.queue_draw();
+                return;
+            }
             if let Some((start_x, start_y)) = *start_pos_update.borrow() {
                 let min_x = start_x.min(start_x + offset_x);
                 let max_x = start_x.max(start_x + offset_x);
@@ -317,17 +320,20 @@ impl RubberbandOverlay {
         let items_end = items_ref;
         let tracker_end = tracker;
         drag_gesture.connect_drag_end(move |_, _, _| {
+            let was_dragging = start_pos_end.borrow().is_some();
             *start_pos_end.borrow_mut() = None;
             *rect_end.borrow_mut() = None;
             da_end.queue_draw();
 
-            let selected_rows = lb_end.selected_rows();
-            let all = items_end.borrow();
-            let selected: Vec<FileViewItem> = selected_rows
-                .into_iter()
-                .filter_map(|r| all.get(r.index() as usize).cloned())
-                .collect();
-            tracker_end.set_selected(selected);
+            if was_dragging && !FileDragDrop::is_dnd_active() {
+                let selected_rows = lb_end.selected_rows();
+                let all = items_end.borrow();
+                let selected: Vec<FileViewItem> = selected_rows
+                    .into_iter()
+                    .filter_map(|r| all.get(r.index() as usize).cloned())
+                    .collect();
+                tracker_end.set_selected(selected);
+            }
         });
 
         overlay.add_controller(drag_gesture);

@@ -143,20 +143,13 @@ impl FileListView {
         rubberband.attach_list_box(&list_box, items.clone(), selection_tracker.clone());
 
         // Wire canvas context menu for right clicking empty space
-        let lb_for_hit = list_box.clone();
         let overlay_for_hit = rubberband.clone();
         let is_hit = Rc::new(move |x: f64, y: f64| {
-            let pt = gtk4::graphene::Point::new(x as f32, y as f32);
-            let mut idx = 0;
-            while let Some(row) = lb_for_hit.row_at_index(idx) {
-                if let Some(bounds) = row.compute_bounds(overlay_for_hit.root_widget())
-                    && bounds.contains_point(&pt)
-                {
-                    return true;
-                }
-                idx += 1;
-            }
-            false
+            overlay_for_hit
+                .root_widget()
+                .pick(x, y, gtk4::PickFlags::DEFAULT)
+                .and_then(|w| w.ancestor(ListBoxRow::static_type()))
+                .is_some()
         });
         CanvasContextMenu::attach(
             rubberband.root_widget(),
