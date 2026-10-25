@@ -157,6 +157,7 @@ impl DesktopUiController {
             cfg.set_account_preferences(account_id, prefs);
             let _ = cfg.save_user_config(account_id);
         }
+        self.coordinator.persist_config().await;
         self.coordinator
             .event_bus()
             .emit(nextcloud_desktop_core::events::DesktopEvent::DisplaySettingsChanged);
@@ -172,6 +173,7 @@ impl DesktopUiController {
             let mut cfg = self.coordinator.config().write().await;
             cfg.global.default_display = display;
         }
+        self.coordinator.persist_config().await;
         self.coordinator
             .event_bus()
             .emit(nextcloud_desktop_core::events::DesktopEvent::DisplaySettingsChanged);

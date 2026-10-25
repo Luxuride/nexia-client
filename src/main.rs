@@ -75,22 +75,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         AppConfig::default_config_path().unwrap_or_else(|_| PathBuf::from("config.json"))
     });
 
-    let mut config = AppConfig::load_from_path(&config_path).unwrap_or_default();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let _rt_guard = rt.enter();
+
+    let (storage, mut config) = match rt
+        .block_on(nextcloud_desktop_core::DesktopStorage::open_default())
+    {
+        Ok(s) => {
+            let loaded = match s.load_app_config() {
+                Ok(Some(cfg)) => cfg,
+                _ => AppConfig::load_from_path(&config_path).unwrap_or_default(),
+            };
+            (Some(Arc::new(s)), loaded)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to open encrypted desktop storage, falling back to JSON");
+            (
+                None,
+                AppConfig::load_from_path(&config_path).unwrap_or_default(),
+            )
+        }
+    };
+
     if config.cache_dir.is_none() {
         config.cache_dir = dirs::cache_dir()
             .map(|c| c.join("nextcloud-desktop"))
             .or_else(|| Some(std::env::temp_dir().join("nc_cache")));
     }
 
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    let _rt_guard = rt.enter();
-
     let event_bus = EventBus::new(256);
     let shared_config = Arc::new(RwLock::new(config));
-    let coordinator =
+    let mut coordinator =
         DesktopSyncCoordinator::new(shared_config, event_bus).with_config_path(config_path);
+    if let Some(s) = storage {
+        coordinator = coordinator.with_storage(s);
+    }
+    rt.block_on(coordinator.persist_config());
+
     let controller = DesktopUiController::new(coordinator.clone());
 
     // Register autolaunch on boot

@@ -8,6 +8,7 @@ pub mod autostart;
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod storage;
 
 pub use account::{Account, AccountCredentials, AccountId, AccountStatus, ServerConfig};
 pub use autostart::{is_autostart_enabled, register_autostart, unregister_autostart};
@@ -17,3 +18,4 @@ pub use config::{
 };
 pub use error::CoreError;
 pub use events::{DesktopEvent, EventBus, NotificationLevel, TransferKind, TransferProgress};
+pub use storage::DesktopStorage;

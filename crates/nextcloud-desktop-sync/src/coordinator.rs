@@ -43,6 +43,7 @@ pub struct DesktopSyncCoordinator {
     pub(crate) preview_semaphore: Arc<tokio::sync::Semaphore>,
     pub(crate) cached_theme_data: Arc<std::sync::RwLock<Option<nextcloud_rust_sdk::ThemeInfo>>>,
     pub(crate) thumbnail_stats: Arc<std::sync::RwLock<ThumbnailQueueSnapshot>>,
+    pub(crate) storage: Option<Arc<nextcloud_desktop_core::DesktopStorage>>,
 }
 
 impl DesktopSyncCoordinator {
@@ -78,6 +79,7 @@ impl DesktopSyncCoordinator {
             preview_semaphore: Arc::new(tokio::sync::Semaphore::new(8)),
             cached_theme_data: Arc::new(std::sync::RwLock::new(None)),
             thumbnail_stats: Arc::new(std::sync::RwLock::new(ThumbnailQueueSnapshot::default())),
+            storage: None,
         };
 
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
@@ -135,6 +137,31 @@ impl DesktopSyncCoordinator {
     pub fn with_config_path(mut self, path: PathBuf) -> Self {
         self.config_path = Some(path);
         self
+    }
+
+    /// Attaches an encrypted desktop storage database for persistent state storage.
+    #[must_use]
+    pub fn with_storage(mut self, storage: Arc<nextcloud_desktop_core::DesktopStorage>) -> Self {
+        self.storage = Some(storage);
+        self
+    }
+
+    /// Access the encrypted desktop storage database if initialized.
+    pub fn storage(&self) -> Option<&Arc<nextcloud_desktop_core::DesktopStorage>> {
+        self.storage.as_ref()
+    }
+
+    /// Persists current application configuration into the encrypted database and optionally JSON file.
+    pub async fn persist_config(&self) {
+        let conf = self.config.read().await.clone();
+        if let Some(ref storage) = self.storage
+            && let Err(e) = storage.save_app_config(&conf)
+        {
+            tracing::warn!(error = %e, "Failed to persist app config to encrypted storage");
+        }
+        if let Some(ref path) = self.config_path {
+            let _ = conf.save_to_path(path);
+        }
     }
 
     /// Access the base cache directory path.

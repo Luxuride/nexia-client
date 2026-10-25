@@ -357,6 +357,11 @@ impl DesktopSyncCoordinator {
         sort_field: &str,
         sort_order: &str,
     ) -> Result<(), SyncError> {
+        if let Some(ref storage) = self.storage {
+            let key = format!("sort:{dir_path}");
+            let val = format!("{sort_field}:{sort_order}");
+            let _ = storage.set_setting(&key, &val);
+        }
         if let Some(client) = self.active_client().await {
             client
                 .store_directory_sort(dir_path, sort_field, sort_order)
@@ -368,6 +373,13 @@ impl DesktopSyncCoordinator {
 
     /// Loads persisted directory sorting preferences for a specific directory from the permanent SDK config store.
     pub async fn load_directory_sort(&self, dir_path: &str) -> Option<(String, String)> {
+        let key = format!("sort:{dir_path}");
+        if let Some(ref storage) = self.storage
+            && let Ok(Some(val)) = storage.get_setting(&key)
+            && let Some((field, order)) = val.split_once(':')
+        {
+            return Some((field.to_string(), order.to_string()));
+        }
         if let Some(client) = self.active_client().await
             && let Ok(Some(pair)) = client.load_directory_sort(dir_path).await
         {

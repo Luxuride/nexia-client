@@ -204,6 +204,11 @@ impl DesktopSyncCoordinator {
 
     /// Checks if automatic prefetching of smallest thumbnails is enabled.
     pub async fn is_autodownload_thumbnails_enabled(&self) -> bool {
+        if let Some(ref storage) = self.storage
+            && let Ok(Some(val)) = storage.get_setting("autodownload_thumbnails")
+        {
+            return val != "false";
+        }
         if let Some(client) = self.active_client().await
             && let Ok(Some(val)) = client.get_setting("autodownload_thumbnails").await
         {
@@ -217,8 +222,11 @@ impl DesktopSyncCoordinator {
         &self,
         enabled: bool,
     ) -> Result<(), SyncError> {
+        let val = if enabled { "true" } else { "false" };
+        if let Some(ref storage) = self.storage {
+            let _ = storage.set_setting("autodownload_thumbnails", val);
+        }
         if let Some(client) = self.active_client().await {
-            let val = if enabled { "true" } else { "false" };
             let _ = client.set_setting("autodownload_thumbnails", val).await;
         }
         Ok(())
@@ -371,11 +379,11 @@ impl DesktopSyncCoordinator {
         }
 
         if !discovered_accounts.is_empty() {
-            let mut conf = self.config.write().await;
-            conf.sync_system_accounts(discovered_accounts);
-            if let Some(ref path) = self.config_path {
-                let _ = conf.save_to_path(path);
+            {
+                let mut conf = self.config.write().await;
+                conf.sync_system_accounts(discovered_accounts);
             }
+            self.persist_config().await;
         }
     }
 
@@ -405,11 +413,9 @@ impl DesktopSyncCoordinator {
                 )));
             };
             conf.active_account_id = Some(account_id.clone());
-            if let Some(ref path) = self.config_path {
-                let _ = conf.save_to_path(path);
-            }
             acc
         };
+        self.persist_config().await;
 
         // Match existing running client by server URL and username, or create it if not present
         let target_idx = {
@@ -472,10 +478,8 @@ impl DesktopSyncCoordinator {
             let mut conf = self.config.write().await;
             conf.upsert_account(account);
             conf.active_account_id = Some(account_id);
-            if let Some(ref path) = self.config_path {
-                let _ = conf.save_to_path(path);
-            }
         }
+        self.persist_config().await;
 
         *self.default_mount_id.write().await = None;
         let _ = self.refresh_virtual_tree().await;
