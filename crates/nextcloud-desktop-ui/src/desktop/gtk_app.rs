@@ -26,6 +26,9 @@ pub fn suppress_gtk_logs() {
     });
 }
 
+/// Application ID for desktop integration and single-instance coordination.
+pub const APPLICATION_ID: &str = "eu.luxuride.nextcloud-desktop";
+
 /// Launches the Nextcloud Desktop GTK 4 / Libadwaita application.
 pub fn launch_gtk_application(
     controller: DesktopUiController,
@@ -35,7 +38,7 @@ pub fn launch_gtk_application(
     suppress_gtk_logs();
 
     let app = adw::Application::builder()
-        .application_id("com.nextcloud.desktop.rs")
+        .application_id(APPLICATION_ID)
         .build();
 
     app.connect_startup(move |_| {
@@ -141,6 +144,12 @@ pub fn launch_gtk_application(
             .file-tile:hover {
                 background: none;
                 background-color: transparent;
+            }
+            .sync-emblem-badge {
+                background-color: alpha(@card_bg_color, 0.92);
+                border-radius: 9999px;
+                padding: 2px;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
             }
             .file-list-view list > row {
                 border-radius: 6px;
@@ -302,6 +311,34 @@ fn build_ui(
     root_box.append(&main_layout);
     toast_overlay.set_child(Some(&root_box));
     window.set_content(Some(&toast_overlay));
+
+    // Support hardware mouse forward (Button 9) and back (Button 8) buttons
+    let mouse_nav = gtk4::GestureClick::new();
+    mouse_nav.set_button(0);
+    mouse_nav.set_propagation_phase(gtk4::PropagationPhase::Capture);
+    let ctrl_nav = controller.clone();
+    let refresh_nav = refresh_cb.clone();
+    mouse_nav.connect_pressed(move |gesture, _, _, _| {
+        let btn = gesture.current_button();
+        if btn == 8 {
+            let c = ctrl_nav.clone();
+            let r = refresh_nav.clone();
+            glib::MainContext::default().spawn_local(async move {
+                if c.go_back().await {
+                    r();
+                }
+            });
+        } else if btn == 9 {
+            let c = ctrl_nav.clone();
+            let r = refresh_nav.clone();
+            glib::MainContext::default().spawn_local(async move {
+                if c.go_forward().await {
+                    r();
+                }
+            });
+        }
+    });
+    window.add_controller(mouse_nav);
 
     // Intercept window close (X button) to keep running in background app bar
     window.connect_close_request(move |win| {
