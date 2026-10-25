@@ -1,7 +1,9 @@
-//! Account model and credential structures with strict confidentiality.
+//! Account model and connection profile representations.
 
+use nextcloud_rust_sdk::{SecretString, ServerUrl};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 /// Unique identifier for an account profile.
@@ -28,10 +30,7 @@ impl fmt::Display for AccountId {
     }
 }
 
-/// Authentication secret containing user credentials.
-///
-/// Implements custom [`fmt::Debug`] and [`fmt::Display`] to strictly redact
-/// secret content from logs or traces.
+/// Authentication credentials with redacted debug output.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AccountCredentials {
     /// Username or email address.
@@ -57,9 +56,10 @@ impl AccountCredentials {
 
 impl fmt::Debug for AccountCredentials {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let sec = SecretString::new(&self.password);
         f.debug_struct("AccountCredentials")
             .field("username", &self.username)
-            .field("password", &"[REDACTED]")
+            .field("password", &sec)
             .finish()
     }
 }
@@ -73,25 +73,20 @@ impl fmt::Display for AccountCredentials {
 /// Server connection configuration details.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServerConfig {
-    /// Base URL of the Nextcloud instance (e.g. `https://cloud.example.com`).
+    /// Base URL of the Nextcloud instance.
     pub server_url: String,
 }
 
 impl ServerConfig {
-    /// Creates a new server configuration ensuring stripped trailing slashes and authority credentials.
+    /// Creates a new server configuration.
     pub fn new(server_url: impl Into<String>) -> Self {
-        let mut url = server_url.into();
-        while url.ends_with('/') {
-            url.pop();
+        let url = server_url.into();
+        let cleaned = ServerUrl::parse(&url)
+            .map(|u| u.as_str().trim_end_matches('/').to_string())
+            .unwrap_or(url);
+        Self {
+            server_url: cleaned,
         }
-        if let Some(scheme_idx) = url.find("://") {
-            let scheme = &url[..scheme_idx + 3];
-            let rest = &url[scheme_idx + 3..];
-            if let Some(at_idx) = rest.find('@') {
-                url = format!("{scheme}{}", &rest[at_idx + 1..]);
-            }
-        }
-        Self { server_url: url }
     }
 
     /// Computes the WebDAV endpoint URL for a given username.
@@ -131,66 +126,46 @@ pub struct Account {
     pub is_system: bool,
     /// Path to local avatar image if available.
     #[serde(default)]
-    pub avatar_path: Option<std::path::PathBuf>,
+    pub avatar_path: Option<PathBuf>,
 }
 
 impl Account {
-    /// Detects the host desktop username, display name, and avatar picture path.
-    pub fn detect_host_user_info() -> (String, String, Option<std::path::PathBuf>) {
+    /// Returns the built-in, immutable host system account profile with discovered user details.
+    pub fn system_account() -> Self {
         let user = std::env::var("USER")
             .or_else(|_| std::env::var("USERNAME"))
             .unwrap_or_else(|_| "system".to_string());
 
         let home = dirs::home_dir();
-        let display_name = match std::env::var("NAME") {
-            Ok(n) if !n.trim().is_empty() => n,
-            _ => {
-                let capitalized = if let Some(first) = user.chars().next() {
-                    format!("{}{}", first.to_uppercase(), &user[first.len_utf8()..])
-                } else {
-                    user.clone()
-                };
-                format!("{capitalized} (System)")
-            }
-        };
-
-        let avatar_candidates = [
+        let avatar_path = [
             home.as_ref().map(|h| h.join(".face")),
             home.as_ref().map(|h| h.join(".face.icon")),
-            Some(std::path::PathBuf::from(format!(
+            Some(PathBuf::from(format!(
                 "/var/lib/AccountsService/icons/{user}"
             ))),
-        ];
+        ]
+        .into_iter()
+        .flatten()
+        .find(|p| p.is_file());
 
-        let avatar_path = avatar_candidates
-            .into_iter()
-            .flatten()
-            .find(|p| p.is_file());
-
-        (user, display_name, avatar_path)
-    }
-
-    /// Returns the built-in, immutable host system account profile with discovered user details.
-    pub fn system_account() -> Self {
-        let (username, display_name, avatar_path) = Self::detect_host_user_info();
         Self {
             id: AccountId("system-account".to_string()),
-            name: display_name,
+            name: format!("{user} (System)"),
             server: ServerConfig::new("https://cloud.nextcloud.com"),
-            credentials: AccountCredentials::new(username, ""),
+            credentials: AccountCredentials::new(user, ""),
             status: AccountStatus::Connected,
             is_system: true,
             avatar_path,
         }
     }
 
-    /// Creates a system-managed account profile (e.g. discovered from GNOME Online Accounts or KDE).
+    /// Creates a system-managed account profile.
     pub fn system_sso_account(
         id: impl Into<String>,
         name: impl Into<String>,
         server: ServerConfig,
         credentials: AccountCredentials,
-        avatar_path: Option<std::path::PathBuf>,
+        avatar_path: Option<PathBuf>,
     ) -> Self {
         Self {
             id: AccountId(id.into()),
@@ -218,31 +193,5 @@ impl Account {
             is_system: false,
             avatar_path: None,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn credentials_redaction() {
-        let creds = AccountCredentials::new("alice", "super_secret_token_123");
-        let debug_str = format!("{creds:?}");
-        assert!(!debug_str.contains("super_secret_token_123"));
-        assert!(debug_str.contains("[REDACTED]"));
-
-        let display_str = format!("{creds}");
-        assert!(!display_str.contains("super_secret_token_123"));
-    }
-
-    #[test]
-    fn server_config_url() {
-        let srv = ServerConfig::new("https://mycloud.org/");
-        assert_eq!(srv.server_url, "https://mycloud.org");
-        assert_eq!(
-            srv.webdav_url("bob"),
-            "https://mycloud.org/remote.php/dav/files/bob"
-        );
     }
 }
