@@ -1119,6 +1119,8 @@ impl DesktopSyncCoordinator {
 
             self.event_bus
                 .emit(DesktopEvent::VfsTreeUpdated { node_count: count });
+
+            self.trigger_background_tree_preload();
         }
 
         Ok(count)

@@ -11,6 +11,7 @@ use std::rc::Rc;
 
 use crate::files::canvas_menu::CanvasContextMenu;
 use crate::files::context_menu::ItemContextMenu;
+use crate::files::delete_dialog::DeleteConfirmationDialog;
 use crate::files::dnd::FileDragDrop;
 use crate::files::launcher::launch_file_externally;
 use crate::files::rename_dialog::RenameDialog;
@@ -598,20 +599,23 @@ impl FileListRow {
             let cb = on_refresh.clone();
             let path = item.path.clone();
             let name = item.name.clone();
-            del_btn.connect_clicked(move |_| {
+            let is_dir = item.is_directory;
+            del_btn.connect_clicked(move |btn| {
                 let b = b.clone();
                 let toast = toast.clone();
                 let cb = cb.clone();
                 let p = path.clone();
                 let n = name.clone();
-                glib::MainContext::default().spawn_local(async move {
-                    match b.delete_item(&p).await {
-                        Ok(_) => {
-                            toast.add_toast(adw::Toast::new(&format!("Deleted “{n}”")));
-                            cb();
+                DeleteConfirmationDialog::show(Some(btn), &name, is_dir, move || {
+                    glib::MainContext::default().spawn_local(async move {
+                        match b.delete_item(&p).await {
+                            Ok(_) => {
+                                toast.add_toast(adw::Toast::new(&format!("Deleted “{n}”")));
+                                cb();
+                            }
+                            Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
                         }
-                        Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
-                    }
+                    });
                 });
             });
         }

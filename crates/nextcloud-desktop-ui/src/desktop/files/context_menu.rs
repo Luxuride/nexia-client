@@ -5,6 +5,7 @@ use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::rc::Rc;
 
+use crate::files::delete_dialog::DeleteConfirmationDialog;
 use crate::files::rename_dialog::RenameDialog;
 use crate::model::{FileSyncStatus, FileViewItem};
 use crate::widget::FileExplorerBackend;
@@ -193,21 +194,24 @@ impl ItemContextMenu {
             let cb = on_refresh;
             let path = item.path.clone();
             let name = item.name.clone();
-            delete_btn.connect_clicked(move |_| {
+            let is_dir = item.is_directory;
+            delete_btn.connect_clicked(move |btn| {
                 pop.popdown();
                 let b = b.clone();
                 let toast = toast.clone();
                 let cb = cb.clone();
                 let p = path.clone();
                 let n = name.clone();
-                glib::MainContext::default().spawn_local(async move {
-                    match b.delete_item(&p).await {
-                        Ok(_) => {
-                            toast.add_toast(adw::Toast::new(&format!("Deleted “{n}”")));
-                            cb();
+                DeleteConfirmationDialog::show(Some(btn), &name, is_dir, move || {
+                    glib::MainContext::default().spawn_local(async move {
+                        match b.delete_item(&p).await {
+                            Ok(_) => {
+                                toast.add_toast(adw::Toast::new(&format!("Deleted “{n}”")));
+                                cb();
+                            }
+                            Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
                         }
-                        Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
-                    }
+                    });
                 });
             });
         }

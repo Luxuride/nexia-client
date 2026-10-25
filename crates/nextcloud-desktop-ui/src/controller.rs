@@ -452,11 +452,17 @@ impl DesktopUiController {
             .await
             .map_err(|err| UiError::Controller(err.to_string()))?;
 
-        if !is_populated {
+        if !is_populated || (entries.is_empty() && path != "/") {
             let _ = self.coordinator.refresh_path(&path).await;
             if let Ok(fresh) = vfs.list_children(&path).await {
                 entries = fresh;
             }
+        } else if path != "/" {
+            let coord = self.coordinator.clone();
+            let p = path.clone();
+            tokio::spawn(async move {
+                let _ = coord.refresh_path(&p).await;
+            });
         }
 
         let display_cfg = self.effective_display_config().await;

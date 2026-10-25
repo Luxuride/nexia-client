@@ -2,6 +2,7 @@
 
 pub mod canvas_menu;
 pub mod context_menu;
+pub mod delete_dialog;
 pub mod dnd;
 pub mod grid_view;
 pub mod launcher;
@@ -22,6 +23,7 @@ pub mod toolbar;
 
 pub use canvas_menu::CanvasContextMenu;
 pub use context_menu::ItemContextMenu;
+pub use delete_dialog::DeleteConfirmationDialog;
 pub use dnd::FileDragDrop;
 pub use grid_view::{FileGridTile, FileGridView};
 pub use launcher::launch_file_externally;
