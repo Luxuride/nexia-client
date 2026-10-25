@@ -5,7 +5,6 @@
 
 pub mod engine;
 pub mod error;
-pub mod file_ops;
 pub mod full_sync;
 pub mod journal;
 pub mod reconciler;
@@ -14,7 +13,6 @@ pub mod vfs;
 
 pub use engine::DesktopSyncCoordinator;
 pub use error::SyncError;
-pub use file_ops::FileOperations;
 pub use full_sync::FullSyncEngine;
 pub use journal::{JournalEntry, SyncJournal};
 pub use reconciler::{SyncAction, reconcile};

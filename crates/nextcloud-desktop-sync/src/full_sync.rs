@@ -6,12 +6,12 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use crate::error::SyncError;
-use crate::file_ops::FileOperations;
 use crate::journal::{JournalEntry, SyncJournal};
 use crate::reconciler::{SyncAction, reconcile};
 use crate::scanner::{scan_local_directory, scan_remote_hierarchy};
+use crate::vfs::make_dav_path;
 use nextcloud_desktop_core::config::SyncFolderConfig;
-use nextcloud_desktop_core::events::{DesktopEvent, EventBus, NotificationLevel};
+use nextcloud_desktop_core::events::{DesktopEvent, EventBus, NotificationLevel, TransferKind};
 
 /// Execution engine for running bidirectional synchronization cycles.
 #[derive(Clone)]
@@ -47,19 +47,18 @@ impl FullSyncEngine {
             })?;
         }
 
-        // 1. Scan local filesystem
+        // 1. Scan local filesystem via SDK scanner
         let local_files = scan_local_directory(&folder_config.local_path)?;
 
         // 2. Scan remote WebDAV hierarchy
         let remote_files =
             scan_remote_hierarchy(dav_client, user, &folder_config.remote_path, dav_prefix).await?;
 
-        // 3. Load sync journal
+        // 3. Load sync journal via SDK journal
         let mut journal = SyncJournal::load_from_file(journal_path)?;
 
-        // 4. Reconcile differences
+        // 4. Reconcile differences via SDK 3-way reconciler
         let actions = reconcile(&local_files, &remote_files, &journal);
-        let file_ops = FileOperations::new(dav_client, user, self.event_bus.clone());
 
         let mut uploaded = 0;
         let mut downloaded = 0;
@@ -90,7 +89,8 @@ impl FullSyncEngine {
                         folder_config.remote_path.trim_end_matches('/'),
                         safe
                     );
-                    file_ops.create_directory(&remote_full).await?;
+                    let dav_path = make_dav_path(user, &remote_full)?;
+                    let _ = dav_client.mkcol(&dav_path).await;
                     journal.record(JournalEntry {
                         relative_path: relative_path.clone(),
                         remote_etag: None,
@@ -111,7 +111,21 @@ impl FullSyncEngine {
                         folder_config.remote_path.trim_end_matches('/'),
                         safe
                     );
-                    file_ops.download_file(&remote_full, &local_dest).await?;
+                    let dav_path = make_dav_path(user, &remote_full)?;
+                    let bytes = dav_client.get(&dav_path).await?;
+                    if let Some(parent) = local_dest.parent() {
+                        let _ = fs::create_dir_all(parent);
+                    }
+                    fs::write(&local_dest, &bytes).map_err(|err| SyncError::LocalIo {
+                        path: local_dest.clone(),
+                        context: "writing downloaded content to disk".to_string(),
+                        source: err,
+                    })?;
+
+                    self.event_bus.emit(DesktopEvent::FileTransferCompleted {
+                        relative_path: relative_path.clone(),
+                        kind: TransferKind::Download,
+                    });
                     downloaded += 1;
 
                     let mtime = fs::metadata(&local_dest)
@@ -137,7 +151,18 @@ impl FullSyncEngine {
                         folder_config.remote_path.trim_end_matches('/'),
                         safe
                     );
-                    file_ops.upload_file(local_path, &remote_full, None).await?;
+                    let bytes = fs::read(local_path).map_err(|err| SyncError::LocalIo {
+                        path: local_path.to_path_buf(),
+                        context: "reading local file for upload".to_string(),
+                        source: err,
+                    })?;
+                    let dav_path = make_dav_path(user, &remote_full)?;
+                    dav_client.put(&dav_path, bytes, None).await?;
+
+                    self.event_bus.emit(DesktopEvent::FileTransferCompleted {
+                        relative_path: relative_path.clone(),
+                        kind: TransferKind::Upload,
+                    });
                     uploaded += 1;
 
                     let mtime = fs::metadata(local_path)
@@ -174,7 +199,8 @@ impl FullSyncEngine {
                         folder_config.remote_path.trim_end_matches('/'),
                         safe
                     );
-                    file_ops.delete_resource(&remote_full).await?;
+                    let dav_path = make_dav_path(user, &remote_full)?;
+                    let _ = dav_client.delete(&dav_path).await;
                     journal.remove(relative_path);
                 }
                 SyncAction::Conflict {
@@ -183,7 +209,7 @@ impl FullSyncEngine {
                 } => {
                     conflicts += 1;
                     self.event_bus.emit(DesktopEvent::Notification {
-                        message: format!("Sync conflict on {relative_path}: {reason}"),
+                        message: format!("Conflict at {relative_path}: {reason}"),
                         level: NotificationLevel::Warning,
                     });
                 }
@@ -191,9 +217,10 @@ impl FullSyncEngine {
             }
         }
 
-        // Save updated journal
+        // 5. Persist updated journal to disk
         journal.save_to_file(journal_path)?;
 
+        let total_processed = uploaded + downloaded;
         self.event_bus.emit(DesktopEvent::SyncCompleted {
             pairing_id,
             uploaded,
@@ -201,6 +228,6 @@ impl FullSyncEngine {
             conflicts,
         });
 
-        Ok(actions.len())
+        Ok(total_processed)
     }
 }
