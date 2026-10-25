@@ -87,6 +87,8 @@ impl DesktopSyncCoordinator {
                 .into_iter()
                 .filter(|s| {
                     !s.is_collection
+                        && s.has_preview != Some(false)
+                        && !s.href.ends_with(".svg")
                         && (s.href.ends_with(".png")
                             || s.href.ends_with(".jpg")
                             || s.href.ends_with(".jpeg")
@@ -658,7 +660,15 @@ impl DesktopSyncCoordinator {
         size: u32,
     ) -> Result<Option<PathBuf>, SyncError> {
         let max_size = self.max_thumbnail_size().await;
-        let effective_size = size.min(max_size).max(64);
+        // Snap to standard Nextcloud thumbnail square sizes: 64, 128, 256, 512, 1024
+        let standard_size = match size {
+            s if s <= 64 => 64,
+            s if s <= 128 => 128,
+            s if s <= 256 => 256,
+            s if s <= 512 => 512,
+            _ => 1024,
+        };
+        let effective_size = standard_size.min(max_size).max(64);
 
         let cache_dir = self.cache_dir();
         let thumbs_dir = cache_dir.join("thumbnails");
@@ -883,7 +893,15 @@ impl DesktopSyncCoordinator {
         let coord = self.clone();
         tokio::spawn(async move {
             let max_size = coord.max_thumbnail_size().await;
-            let effective_size = size.min(max_size).max(64);
+            // Snap to standard Nextcloud thumbnail square sizes: 64, 128, 256, 512, 1024
+            let standard_size = match size {
+                s if s <= 64 => 64,
+                s if s <= 128 => 128,
+                s if s <= 256 => 256,
+                s if s <= 512 => 512,
+                _ => 1024,
+            };
+            let effective_size = standard_size.min(max_size).max(64);
 
             // Progressive size tiers: start with smallest (64px), then intermediate, up to target_size
             let mut tiers = vec![64u32];
@@ -927,15 +945,16 @@ async fn fetch_preview_bytes<
     with_slash: &str,
     opts: &nextcloud_rust_sdk::PreviewOptions,
 ) -> Option<Vec<u8>> {
+    let simple_opts = nextcloud_rust_sdk::PreviewOptions::new().dimensions(
+        opts.width_px().unwrap_or(64),
+        opts.height_px().unwrap_or(64),
+    );
+
     if let Some(fid) = file_id {
         if let Ok(b) = preview.get_by_file_id(fid, opts).await {
             return Some(b);
         }
         // Fallback without mode in case the server rejects 'mode=cover' parameter
-        let simple_opts = nextcloud_rust_sdk::PreviewOptions::new().dimensions(
-            opts.width_px().unwrap_or(64),
-            opts.height_px().unwrap_or(64),
-        );
         if let Ok(b) = preview.get_by_file_id(fid, &simple_opts).await {
             return Some(b);
         }
@@ -943,5 +962,11 @@ async fn fetch_preview_bytes<
     if let Ok(b) = preview.get_by_path(clean_no_slash, opts).await {
         return Some(b);
     }
-    preview.get_by_path(with_slash, opts).await.ok()
+    if let Ok(b) = preview.get_by_path(with_slash, opts).await {
+        return Some(b);
+    }
+    if let Ok(b) = preview.get_by_path(clean_no_slash, &simple_opts).await {
+        return Some(b);
+    }
+    preview.get_by_path(with_slash, &simple_opts).await.ok()
 }

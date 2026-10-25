@@ -111,6 +111,9 @@ impl DesktopSyncCoordinator {
                                     conflicts: 0,
                                 });
                             }
+                            OrchestratorEvent::MountProgress(snapshot) => {
+                                bus.emit(DesktopEvent::MountProgress(snapshot));
+                            }
                             _ => {}
                         }
                     }
@@ -204,7 +207,7 @@ impl DesktopSyncCoordinator {
         let mount_id = if let Some(ref id) = *mount_lock {
             id.clone()
         } else {
-            let initial_id = MountId::new();
+            let initial_id = MountId::from("app-default-vfs".to_string());
             let vfs_dir = self
                 .cache_dir()
                 .join("mounts")
@@ -221,6 +224,7 @@ impl DesktopSyncCoordinator {
 
             let mut desc = MountDescriptor::new(&active_user, "/", vfs_dir, MountMode::VirtualVfs);
             desc.id = initial_id.clone();
+            desc.display_name = Some("Application Virtual Drive".to_string());
             let registered = handle
                 .mounts()
                 .add_mount(desc)

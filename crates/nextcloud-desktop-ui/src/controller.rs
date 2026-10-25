@@ -1116,6 +1116,71 @@ impl FileExplorerBackend for DesktopUiController {
     ) -> Result<(), UiError> {
         self.set_global_display_config(display).await
     }
+
+    async fn sync_mounts(&self) -> Vec<nextcloud_rust_sdk::StoredSyncMount> {
+        self.coordinator.sync_mounts().await
+    }
+
+    async fn add_sync_mount(
+        &self,
+        remote_path: String,
+        local_target: PathBuf,
+        mode: String,
+        display_name: Option<String>,
+    ) -> Result<String, UiError> {
+        self.coordinator
+            .add_sync_mount(remote_path, local_target, &mode, display_name)
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn remove_sync_mount(&self, mount_id: &str) -> Result<(), UiError> {
+        self.coordinator
+            .remove_sync_mount(mount_id)
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn mount_storage_usage(
+        &self,
+        mount_id: &str,
+    ) -> Result<nextcloud_rust_sdk::MountStorageUsage, UiError> {
+        self.coordinator
+            .mount_storage_usage(nextcloud_rust_sdk::MountId::from(mount_id.to_string()))
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn clear_mount_cache(
+        &self,
+        mount_id: &str,
+        clear_hydrated: bool,
+    ) -> Result<u64, UiError> {
+        self.coordinator
+            .clear_mount_cache(
+                nextcloud_rust_sdk::MountId::from(mount_id.to_string()),
+                clear_hydrated,
+            )
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn clear_shared_thumbnails(&self) -> Result<u64, UiError> {
+        self.coordinator
+            .clear_thumbnail_cache()
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn mount_progress(
+        &self,
+        mount_id: &str,
+    ) -> Result<nextcloud_rust_sdk::MountProgressSnapshot, UiError> {
+        self.coordinator
+            .mount_progress(nextcloud_rust_sdk::MountId::from(mount_id.to_string()))
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
 }
 
 #[cfg(test)]

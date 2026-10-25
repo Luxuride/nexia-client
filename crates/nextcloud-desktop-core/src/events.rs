@@ -117,6 +117,8 @@ pub enum DesktopEvent {
         /// Number of conflicts encountered.
         conflicts: usize,
     },
+    /// Live synchronization progress update for a mount point.
+    MountProgress(nextcloud_rust_sdk::MountProgressSnapshot),
     /// An application or sync error occurred.
     Notification {
         /// Message content.

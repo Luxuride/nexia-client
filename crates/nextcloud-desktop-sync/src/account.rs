@@ -232,14 +232,44 @@ impl DesktopSyncCoordinator {
         Ok(())
     }
 
-    /// Lists all sync mounts stored in the SDK database for the active account.
+    /// Lists all sync mounts stored in the SDK database for the active account, ensuring the application virtual drive is registered.
     pub async fn sync_mounts(&self) -> Vec<StoredSyncMount> {
-        if let Some(client) = self.active_client().await
-            && let Ok(mounts) = client.list_sync_mounts().await
+        let mut mounts = if let Some(client) = self.active_client().await
+            && let Ok(list) = client.list_sync_mounts().await
         {
-            return mounts;
+            list
+        } else {
+            Vec::new()
+        };
+
+        if let Some(account) = self.active_account().await {
+            let has_app_vfs = mounts.iter().any(|m| {
+                m.id == "app-default-vfs" || (m.remote_path == "/" && m.mode == "VirtualVfs")
+            });
+            if !has_app_vfs {
+                let vfs_dir = self
+                    .cache_dir()
+                    .join("mounts")
+                    .join("app-default-vfs")
+                    .join("vfs");
+                let default_app_mount = StoredSyncMount {
+                    id: "app-default-vfs".to_string(),
+                    account_id: account.id.0.clone(),
+                    remote_path: "/".to_string(),
+                    local_target: vfs_dir.to_string_lossy().to_string(),
+                    mode: "VirtualVfs".to_string(),
+                    display_name: Some("Application Virtual Drive".to_string()),
+                    enabled: true,
+                    created_at: 0,
+                    updated_at: 0,
+                };
+                if let Some(client) = self.active_client().await {
+                    let _ = client.store_sync_mount(default_app_mount.clone()).await;
+                }
+                mounts.insert(0, default_app_mount);
+            }
         }
-        Vec::new()
+        mounts
     }
 
     /// Stores a new sync mount in the SDK database and registers it with the orchestrator.
@@ -248,6 +278,7 @@ impl DesktopSyncCoordinator {
         remote_path: impl Into<String>,
         local_target: impl Into<PathBuf>,
         mode: &str,
+        display_name: Option<String>,
     ) -> Result<String, SyncError> {
         let Some(client) = self.active_client().await else {
             return Err(SyncError::NotFound("No active account".to_string()));
@@ -266,7 +297,7 @@ impl DesktopSyncCoordinator {
             remote_path: remote_str.clone(),
             local_target: local_buf.to_string_lossy().to_string(),
             mode: mode.to_string(),
-            display_name: None,
+            display_name: display_name.clone(),
             enabled: true,
             created_at: 0,
             updated_at: 0,
@@ -282,8 +313,11 @@ impl DesktopSyncCoordinator {
             _ => MountMode::VirtualVfs,
         };
 
-        let desc = MountDescriptor::new(&account.id.0, &remote_str, &local_buf, mount_mode)
+        let mut desc = MountDescriptor::new(&account.id.0, &remote_str, &local_buf, mount_mode)
             .with_id(MountId::from(mount_id.clone()));
+        if let Some(name) = display_name {
+            desc = desc.with_display_name(name);
+        }
 
         if let Some(ref h) = *self.orchestrator_handle.read().await {
             let _ = h.mounts().add_mount(desc).await;

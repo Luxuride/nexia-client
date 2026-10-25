@@ -151,4 +151,74 @@ impl DesktopSyncCoordinator {
             Ok(false)
         }
     }
+
+    /// Queries the disk storage usage report for a mount point from the SDK orchestrator.
+    pub async fn mount_storage_usage(
+        &self,
+        id: MountId,
+    ) -> Result<nextcloud_rust_sdk::MountStorageUsage, SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.mounts()
+                .storage_usage(id)
+                .await
+                .map_err(SyncError::Orchestrator)
+        } else {
+            Err(SyncError::NotFound(
+                "Orchestrator not initialized".to_string(),
+            ))
+        }
+    }
+
+    /// Clears cached files for a mount point via the SDK, returning the number of bytes freed.
+    pub async fn clear_mount_cache(
+        &self,
+        id: MountId,
+        clear_hydrated: bool,
+    ) -> Result<u64, SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.mounts()
+                .clear_cache(id, clear_hydrated)
+                .await
+                .map_err(SyncError::Orchestrator)
+        } else {
+            Err(SyncError::NotFound(
+                "Orchestrator not initialized".to_string(),
+            ))
+        }
+    }
+
+    /// Clears shared thumbnail cache via the SDK orchestrator, returning the number of bytes freed.
+    pub async fn clear_thumbnail_cache(&self) -> Result<u64, SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.mounts()
+                .clear_thumbnail_cache()
+                .await
+                .map_err(SyncError::Orchestrator)
+        } else {
+            Err(SyncError::NotFound(
+                "Orchestrator not initialized".to_string(),
+            ))
+        }
+    }
+
+    /// Retrieves live progress metrics for a mount point from the SDK.
+    pub async fn mount_progress(
+        &self,
+        id: MountId,
+    ) -> Result<nextcloud_rust_sdk::MountProgressSnapshot, SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.mounts()
+                .progress(id)
+                .await
+                .map_err(SyncError::Orchestrator)
+        } else {
+            Err(SyncError::NotFound(
+                "Orchestrator not initialized".to_string(),
+            ))
+        }
+    }
 }

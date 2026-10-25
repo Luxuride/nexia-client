@@ -208,6 +208,7 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
             .iter()
             .filter(|it| {
                 !it.is_directory
+                    && !it.name.ends_with(".svg")
                     && (it.icon_category == crate::model::ResourceIconCategory::Image
                         || it
                             .mime_type
@@ -218,8 +219,7 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
                         || it.name.ends_with(".jpeg")
                         || it.name.ends_with(".webp")
                         || it.name.ends_with(".gif")
-                        || it.name.ends_with(".bmp")
-                        || it.name.ends_with(".svg"))
+                        || it.name.ends_with(".bmp"))
             })
             .map(|it| it.path.clone())
             .collect();

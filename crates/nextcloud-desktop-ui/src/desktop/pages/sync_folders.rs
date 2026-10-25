@@ -1,10 +1,14 @@
 //! Two-way local folder synchronization page component.
 
+use std::rc::Rc;
+
+use gtk4::prelude::*;
 use gtk4::{Align, Button, Image};
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use nextcloud_rust_sdk::format_bytes;
 
+use crate::desktop::pages::add_sync_dialog::AddSyncFolderDialog;
+use crate::desktop::pages::sync_mount_settings_dialog::SyncMountSettingsDialog;
 use crate::widget::{FileExplorerBackend, ViewComponent};
 
 /// Preferences page configuring local folder synchronization pairings.
@@ -18,136 +22,254 @@ impl SyncFoldersPage {
     pub fn new<B: FileExplorerBackend>(backend: &B, toast_overlay: &adw::ToastOverlay) -> Self {
         let page = adw::PreferencesPage::new();
 
-        // 1. Virtual Sync Storage Group
-        let vfs_group = adw::PreferencesGroup::builder()
-            .title("Virtual Sync Mount")
-            .description("On-demand virtual filesystem mount cache and local hydration storage.")
+        // 1. Global Synchronization Controls Group
+        let global_group = adw::PreferencesGroup::builder()
+            .title("Global Synchronization")
+            .description("Master controls to pause, resume, or add synchronization folders across Nextcloud.")
             .build();
 
-        let vfs_size_row = adw::ActionRow::builder()
-            .title("Downloaded Virtual Files")
-            .subtitle("Calculating…")
-            .build();
-        vfs_size_row.add_prefix(&Image::from_icon_name("folder-download-symbolic"));
-
-        let clear_vfs_btn = Button::with_label("Clear Downloaded Files");
-        clear_vfs_btn.set_valign(Align::Center);
-        clear_vfs_btn.add_css_class("destructive-action");
-        vfs_size_row.add_suffix(&clear_vfs_btn);
-        vfs_group.add(&vfs_size_row);
-
-        // Populate virtual sync size & wire clear button
-        let b_vfs = backend.clone();
-        let row_vfs = vfs_size_row.clone();
-        glib::MainContext::default().spawn_local(async move {
-            let sz = b_vfs.virtual_sync_downloaded_size().await;
-            row_vfs.set_subtitle(&format_bytes(sz));
-        });
-
-        let b_clear = backend.clone();
-        let row_clear = vfs_size_row.clone();
-        let toast_clear = toast_overlay.clone();
-        clear_vfs_btn.connect_clicked(move |_| {
-            let b = b_clear.clone();
-            let row = row_clear.clone();
-            let toast = toast_clear.clone();
-            glib::MainContext::default().spawn_local(async move {
-                match b.clear_virtual_sync_cache().await {
-                    Ok(freed) => {
-                        let sz = b.virtual_sync_downloaded_size().await;
-                        row.set_subtitle(&format_bytes(sz));
-                        toast.add_toast(adw::Toast::new(&format!(
-                            "Cleared virtual sync cache (freed {})",
-                            format_bytes(freed)
-                        )));
-                    }
-                    Err(e) => {
-                        toast.add_toast(adw::Toast::new(&format!(
-                            "Failed to clear virtual sync cache: {e}"
-                        )));
-                    }
-                }
-            });
-        });
-
-        page.add(&vfs_group);
-
-        // 2. Folder Synchronization Controls
-        let group = adw::PreferencesGroup::builder()
-            .title("Local Folder Synchronization")
-            .description(
-                "Two-way synchronization keeps selected local folders reconciled with remote Nextcloud WebDAV directories.",
-            )
-            .build();
-
-        let sync_row = adw::ActionRow::builder()
-            .title("Automatic Synchronization")
+        let global_row = adw::ActionRow::builder()
+            .title("All Synchronization")
             .subtitle("Active")
             .build();
-        sync_row.add_prefix(&Image::from_icon_name("emblem-synchronizing-symbolic"));
+        global_row.add_prefix(&Image::from_icon_name("emblem-synchronizing-symbolic"));
 
-        let run_sync_btn = Button::with_label("Sync Now");
-        run_sync_btn.set_valign(Align::Center);
-        run_sync_btn.add_css_class("suggested-action");
+        let global_pause_btn = Button::with_label("Pause All Sync");
+        global_pause_btn.set_valign(Align::Center);
+        global_pause_btn.add_css_class("flat");
 
-        let backend_clone = backend.clone();
-        let toast_sync = toast_overlay.clone();
-        run_sync_btn.connect_clicked(move |_| {
-            let b = backend_clone.clone();
-            let toast = toast_sync.clone();
-            glib::MainContext::default().spawn_local(async move {
-                match b.trigger_sync().await {
-                    Ok(_) => toast.add_toast(adw::Toast::new("Synchronization triggered")),
-                    Err(e) => toast.add_toast(adw::Toast::new(&format!("Sync failed: {e}"))),
-                }
-            });
-        });
+        let add_sync_btn = Button::with_label("Add Folder Sync…");
+        add_sync_btn.set_valign(Align::Center);
+        add_sync_btn.add_css_class("suggested-action");
 
-        let pause_btn = Button::with_label("Pause Sync");
-        pause_btn.set_valign(Align::Center);
-        pause_btn.add_css_class("flat");
+        global_row.add_suffix(&global_pause_btn);
+        global_row.add_suffix(&add_sync_btn);
+        global_group.add(&global_row);
+        page.add(&global_group);
 
-        let b_pause = backend.clone();
-        let pause_btn_clone = pause_btn.clone();
-        let row_sync_clone = sync_row.clone();
-        pause_btn.connect_clicked(move |_| {
-            let b = b_pause.clone();
-            let btn = pause_btn_clone.clone();
-            let row = row_sync_clone.clone();
+        // 2. Configured Sync Folders Group
+        let syncs_group = adw::PreferencesGroup::builder()
+            .title("Synchronization Folders")
+            .description("Configured folder pairings managed by the Nextcloud SDK.")
+            .build();
+        page.add(&syncs_group);
+
+        // Wire Global Pause / Resume
+        let b_gp = backend.clone();
+        let btn_gp = global_pause_btn.clone();
+        let row_gp = global_row.clone();
+        let toast_gp = toast_overlay.clone();
+
+        global_pause_btn.connect_clicked(move |_| {
+            let b = b_gp.clone();
+            let btn = btn_gp.clone();
+            let row = row_gp.clone();
+            let toast = toast_gp.clone();
+
             glib::MainContext::default().spawn_local(async move {
                 if let Ok(paused) = b.is_sync_paused().await {
                     if paused {
                         let _ = b.resume_all_sync().await;
-                        btn.set_label("Pause Sync");
+                        btn.set_label("Pause All Sync");
                         btn.remove_css_class("destructive-action");
                         row.set_subtitle("Active");
+                        toast.add_toast(adw::Toast::new("All synchronization resumed"));
                     } else {
                         let _ = b.pause_all_sync().await;
-                        btn.set_label("Resume Sync");
+                        btn.set_label("Resume All Sync");
                         btn.add_css_class("destructive-action");
                         row.set_subtitle("Paused");
+                        toast.add_toast(adw::Toast::new("All synchronization paused"));
                     }
                 }
             });
         });
 
-        let btn_init = pause_btn.clone();
-        let row_init = sync_row.clone();
-        let b_init = backend.clone();
+        // Initialize global pause status
+        let b_init_gp = backend.clone();
+        let btn_init_gp = global_pause_btn;
+        let row_init_gp = global_row;
         glib::MainContext::default().spawn_local(async move {
-            if let Ok(true) = b_init.is_sync_paused().await {
-                btn_init.set_label("Resume Sync");
-                btn_init.add_css_class("destructive-action");
-                row_init.set_subtitle("Paused");
+            if let Ok(true) = b_init_gp.is_sync_paused().await {
+                btn_init_gp.set_label("Resume All Sync");
+                btn_init_gp.add_css_class("destructive-action");
+                row_init_gp.set_subtitle("Paused");
             } else {
-                row_init.set_subtitle("Active");
+                row_init_gp.set_subtitle("Active");
             }
         });
 
-        sync_row.add_suffix(&pause_btn);
-        sync_row.add_suffix(&run_sync_btn);
-        group.add(&sync_row);
-        page.add(&group);
+        // Dynamic list populator
+        let b_list = backend.clone();
+        let toast_list = toast_overlay.clone();
+        let grp_list = syncs_group;
+        let page_for_dialog = page.clone();
+
+        let refresh_list = Rc::new(move || {
+            let b = b_list.clone();
+            let toast = toast_list.clone();
+            let grp = grp_list.clone();
+            let pg = page_for_dialog.clone();
+
+            glib::MainContext::default().spawn_local(async move {
+                // Clear existing mount rows
+                while let Some(child) = grp.first_child() {
+                    grp.remove(&child);
+                }
+
+                let mounts = b.sync_mounts().await;
+                if mounts.is_empty() {
+                    let empty_row = adw::ActionRow::builder()
+                        .title("No Folders Configured")
+                        .subtitle(
+                            "Click “Add Folder Sync…” to configure two-way local directory sync",
+                        )
+                        .build();
+                    empty_row.add_prefix(&Image::from_icon_name("folder-symbolic"));
+                    grp.add(&empty_row);
+                    return;
+                }
+
+                for mount in mounts {
+                    let is_vfs = mount.mode == "VirtualVfs";
+                    let is_app_vfs = mount.id == "app-default-vfs";
+
+                    let title_text = mount.display_name.clone().unwrap_or_else(|| {
+                        if is_app_vfs {
+                            "Application Virtual Drive".to_string()
+                        } else {
+                            mount.remote_path.clone()
+                        }
+                    });
+
+                    let mode_badge = if is_vfs {
+                        "Virtual Filesystem"
+                    } else {
+                        "Two-Way Sync"
+                    };
+
+                    let row = adw::ActionRow::builder()
+                        .title(&title_text)
+                        .subtitle(format!(
+                            "Local: {}  •  Remote: {}  •  {}",
+                            mount.local_target, mount.remote_path, mode_badge
+                        ))
+                        .activatable(true)
+                        .build();
+
+                    let icon_name = if is_vfs {
+                        "folder-remote-symbolic"
+                    } else {
+                        "folder-sync-symbolic"
+                    };
+                    row.add_prefix(&Image::from_icon_name(icon_name));
+
+                    // Per-mount Pause / Resume button
+                    let pause_btn = Button::with_label("Pause");
+                    pause_btn.set_valign(Align::Center);
+                    pause_btn.add_css_class("flat");
+
+                    let b_p = b.clone();
+                    let m_id_p = mount.id.clone();
+                    let btn_p = pause_btn.clone();
+                    let t_p = toast.clone();
+
+                    pause_btn.connect_clicked(move |_| {
+                        let b = b_p.clone();
+                        let m_id = m_id_p.clone();
+                        let btn = btn_p.clone();
+                        let toast = t_p.clone();
+
+                        glib::MainContext::default().spawn_local(async move {
+                            if let Ok(paused) = b.is_mount_paused(&m_id).await {
+                                if paused {
+                                    let _ = b.resume_mount(&m_id).await;
+                                    btn.set_label("Pause");
+                                    btn.remove_css_class("destructive-action");
+                                    toast.add_toast(adw::Toast::new(
+                                        "Folder synchronization resumed",
+                                    ));
+                                } else {
+                                    let _ = b.pause_mount(&m_id).await;
+                                    btn.set_label("Resume");
+                                    btn.add_css_class("destructive-action");
+                                    toast.add_toast(adw::Toast::new(
+                                        "Folder synchronization paused",
+                                    ));
+                                }
+                            }
+                        });
+                    });
+
+                    // Initialize per-mount pause button status
+                    let b_init_p = b.clone();
+                    let m_id_init_p = mount.id.clone();
+                    let btn_init_p = pause_btn.clone();
+                    glib::MainContext::default().spawn_local(async move {
+                        if let Ok(true) = b_init_p.is_mount_paused(&m_id_init_p).await {
+                            btn_init_p.set_label("Resume");
+                            btn_init_p.add_css_class("destructive-action");
+                        }
+                    });
+
+                    row.add_suffix(&pause_btn);
+
+                    // Configure / Settings button
+                    let settings_btn = Button::from_icon_name("emblem-system-symbolic");
+                    settings_btn.set_valign(Align::Center);
+                    settings_btn.add_css_class("flat");
+                    settings_btn.set_tooltip_text(Some("Sync folder settings & storage cleanup"));
+
+                    let b_s = b.clone();
+                    let t_s = toast.clone();
+                    let m_s = mount.clone();
+                    let pg_s = pg.clone();
+
+                    let open_settings = Rc::new(move || {
+                        SyncMountSettingsDialog::present(
+                            Some(&pg_s),
+                            &b_s,
+                            &t_s,
+                            m_s.clone(),
+                            Rc::new(|| {}),
+                        );
+                    });
+
+                    let os1 = open_settings.clone();
+                    settings_btn.connect_clicked(move |_| {
+                        os1();
+                    });
+
+                    let os2 = open_settings;
+                    row.connect_activated(move |_| {
+                        os2();
+                    });
+
+                    row.add_suffix(&settings_btn);
+                    grp.add(&row);
+                }
+            });
+        });
+
+        refresh_list();
+
+        // Wire Add Sync Folder button
+        let b_add = backend.clone();
+        let toast_add = toast_overlay.clone();
+        let ref_add = refresh_list;
+        let pg_add = page.clone();
+
+        add_sync_btn.connect_clicked(move |_| {
+            let ref_fn = ref_add.clone();
+            AddSyncFolderDialog::present(
+                Some(&pg_add),
+                &b_add,
+                &toast_add,
+                Rc::new(move || {
+                    ref_fn();
+                }),
+            );
+        });
 
         Self { page }
     }

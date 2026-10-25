@@ -282,6 +282,69 @@ pub trait FileExplorerBackend: Clone + 'static {
         async { Ok(false) }
     }
 
+    /// Lists all configured sync mounts stored in the SDK database.
+    fn sync_mounts(&self) -> impl Future<Output = Vec<nextcloud_rust_sdk::StoredSyncMount>> {
+        async { Vec::new() }
+    }
+
+    /// Adds a new filesystem sync pairing in the SDK and orchestrator.
+    fn add_sync_mount(
+        &self,
+        _remote_path: String,
+        _local_target: PathBuf,
+        _mode: String,
+        _display_name: Option<String>,
+    ) -> impl Future<Output = Result<String, UiError>> {
+        async { Ok(String::new()) }
+    }
+
+    /// Removes a sync mount pairing by ID from both the SDK and orchestrator.
+    fn remove_sync_mount(&self, _mount_id: &str) -> impl Future<Output = Result<(), UiError>> {
+        async { Ok(()) }
+    }
+
+    /// Queries the disk storage usage report for a mount point from the SDK.
+    fn mount_storage_usage(
+        &self,
+        _mount_id: &str,
+    ) -> impl Future<Output = Result<nextcloud_rust_sdk::MountStorageUsage, UiError>> {
+        async {
+            Ok(nextcloud_rust_sdk::MountStorageUsage::new(
+                nextcloud_rust_sdk::MountId::new(),
+                0,
+                0,
+                0,
+            ))
+        }
+    }
+
+    /// Clears cached files for a mount point via the SDK, returning freed bytes.
+    fn clear_mount_cache(
+        &self,
+        _mount_id: &str,
+        _clear_hydrated: bool,
+    ) -> impl Future<Output = Result<u64, UiError>> {
+        async { Ok(0) }
+    }
+
+    /// Clears shared thumbnail previews across all mounts, returning freed bytes.
+    fn clear_shared_thumbnails(&self) -> impl Future<Output = Result<u64, UiError>> {
+        async { Ok(0) }
+    }
+
+    /// Queries real-time progress metrics for a mount point from the SDK.
+    fn mount_progress(
+        &self,
+        _mount_id: &str,
+    ) -> impl Future<Output = Result<nextcloud_rust_sdk::MountProgressSnapshot, UiError>> {
+        async {
+            Ok(nextcloud_rust_sdk::MountProgressSnapshot::new(
+                nextcloud_rust_sdk::MountId::new(),
+                nextcloud_rust_sdk::MountStatus::Idle,
+            ))
+        }
+    }
+
     /// Returns the effective additional display config for file views.
     fn effective_display_config(
         &self,
