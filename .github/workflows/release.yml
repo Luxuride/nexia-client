@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-windows:
+    name: Build Windows (x86_64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build Release Binary
+        run: cargo build --release --bin nextcloud-desktop-rs
+      - name: Package Windows Zip
+        shell: bash
+        run: |
+          mkdir -p release-pkg
+          cp target/release/nextcloud-desktop-rs.exe release-pkg/
+          cp README.md release-pkg/ || true
+          cd release-pkg && 7z a ../nextcloud-desktop-windows-x86_64.zip *
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: nextcloud-desktop-windows-x86_64.zip
+
+  build-macos:
+    name: Build macOS (Universal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install GTK4 and Libadwaita
+        run: |
+          brew install gtk4 libadwaita pkg-config openssl
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build Release Binary
+        run: cargo build --release --bin nextcloud-desktop-rs
+      - name: Package macOS Tarball
+        run: |
+          mkdir -p release-pkg
+          cp target/release/nextcloud-desktop-rs release-pkg/
+          cp README.md release-pkg/ || true
+          tar -czvf nextcloud-desktop-macos.tar.gz -C release-pkg .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: nextcloud-desktop-macos.tar.gz
+
+  build-flatpak:
+    name: Build Flatpak Bundle (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: nextcloud-desktop.flatpak
+          manifest-path: flatpak/org.nextcloud.NextcloudDesktop.yml
+          app-id: org.nextcloud.NextcloudDesktop
+          run-tests: false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak-bundle
+          path: nextcloud-desktop.flatpak
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-macos, build-flatpak]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish Release Assets
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            artifacts/windows-x86_64/nextcloud-desktop-windows-x86_64.zip
+            artifacts/macos/nextcloud-desktop-macos.tar.gz
+            artifacts/flatpak-bundle/nextcloud-desktop.flatpak
+          draft: false
+          prerelease: false

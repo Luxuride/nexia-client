@@ -559,7 +559,18 @@ impl FileListRow {
         actions.append(&rename_btn);
         actions.append(&del_btn);
 
-        hbox.append(&icon_box);
+        let icon_overlay = gtk4::Overlay::new();
+        icon_overlay.set_child(Some(&icon_box));
+
+        let sync_emblem = Image::from_icon_name(item.status.icon_name());
+        sync_emblem.set_pixel_size((icon_size / 2).clamp(12, 16));
+        sync_emblem.set_halign(Align::End);
+        sync_emblem.set_valign(Align::End);
+        sync_emblem.set_tooltip_text(Some(item.status.display_label()));
+        sync_emblem.add_css_class(item.status.css_class());
+        icon_overlay.add_overlay(&sync_emblem);
+
+        hbox.append(&icon_overlay);
         hbox.append(&name);
         hbox.append(&type_lbl);
         hbox.append(&size_lbl);

@@ -47,8 +47,35 @@ pub trait FileExplorerBackend: Clone + 'static {
     /// Fetches server visual theming metadata.
     fn server_theming(&self) -> impl Future<Output = Option<nextcloud_rust_sdk::ThemeInfo>>;
 
+    /// Returns fast in-memory cached visual theming metadata if available.
+    fn cached_theming(&self) -> Option<nextcloud_rust_sdk::ThemeInfo>;
+
+    /// Fast synchronous check returning a cached server logo path if already on disk.
+    fn cached_theme_logo(&self) -> Option<PathBuf>;
+
     /// Fetches server theme logo or favicon image path if available.
     fn fetch_theme_logo(&self) -> impl Future<Output = Option<PathBuf>>;
+
+    /// Returns the cache database size in bytes.
+    fn cache_database_size(&self) -> impl Future<Output = u64>;
+
+    /// Returns the total cached files size in bytes.
+    fn cached_files_size(&self) -> impl Future<Output = u64>;
+
+    /// Cleans thumbnail cache.
+    fn clean_thumbnails(&self) -> impl Future<Output = Result<(), UiError>>;
+
+    /// Cleans all caches.
+    fn clean_everything(&self) -> impl Future<Output = Result<(), UiError>>;
+
+    /// Checks if auto-download of smallest thumbnails is enabled.
+    fn is_autodownload_thumbnails_enabled(&self) -> impl Future<Output = bool>;
+
+    /// Sets whether auto-download of smallest thumbnails is enabled.
+    fn set_autodownload_thumbnails_enabled(
+        &self,
+        enabled: bool,
+    ) -> impl Future<Output = Result<(), UiError>>;
 
     /// Searches files matching `query` across local VFS and server unified search.
     fn search_items(&self, query: &str)

@@ -26,6 +26,7 @@ pub struct DesktopSyncCoordinator {
     pub(crate) orchestrator_handle: Arc<RwLock<Option<OrchestratorHandle>>>,
     pub(crate) default_mount_id: Arc<RwLock<Option<MountId>>>,
     pub(crate) preview_semaphore: Arc<tokio::sync::Semaphore>,
+    pub(crate) cached_theme_data: Arc<std::sync::RwLock<Option<nextcloud_rust_sdk::ThemeInfo>>>,
 }
 
 impl DesktopSyncCoordinator {
@@ -51,6 +52,7 @@ impl DesktopSyncCoordinator {
             orchestrator_handle: Arc::new(RwLock::new(handle.clone())),
             default_mount_id: Arc::new(RwLock::new(None)),
             preview_semaphore: Arc::new(tokio::sync::Semaphore::new(8)),
+            cached_theme_data: Arc::new(std::sync::RwLock::new(None)),
         };
 
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {

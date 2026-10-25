@@ -93,6 +93,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         DesktopSyncCoordinator::new(shared_config, event_bus).with_config_path(config_path);
     let controller = DesktopUiController::new(coordinator.clone());
 
+    // Register autolaunch on boot
+    let _ = nextcloud_desktop_core::register_autostart();
+
     rt.block_on(async {
         controller.ensure_discovered_accounts().await;
     });

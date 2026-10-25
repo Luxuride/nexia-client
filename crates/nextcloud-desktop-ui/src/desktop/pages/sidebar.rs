@@ -38,11 +38,42 @@ impl NavigationSidebar {
         icon_box.add_css_class("nextcloud-brand-icon");
         icon_box.set_valign(Align::Center);
         icon_box.set_halign(Align::Center);
-        let icon = Image::from_icon_name("weather-overcast-symbolic");
-        icon.set_pixel_size(28);
-        icon_box.append(&icon);
 
-        let title_label = Label::new(Some("Nextcloud"));
+        let initial_theme = backend.cached_theming();
+        let initial_logo = backend.cached_theme_logo();
+
+        // 1. Initial logo rendering: if cached on disk, render crisp high-res image immediately without placeholder!
+        if let Some(ref logo_path) = initial_logo {
+            let scale = 2;
+            let target_w = 56 * scale;
+            let target_h = 40 * scale;
+            let texture = if let Ok(pixbuf) =
+                gdk_pixbuf::Pixbuf::from_file_at_scale(logo_path, target_w, target_h, true)
+            {
+                Some(gtk4::gdk::Texture::for_pixbuf(&pixbuf))
+            } else {
+                let file = gtk4::gio::File::for_path(logo_path);
+                gtk4::gdk::Texture::from_file(&file).ok()
+            };
+
+            if let Some(texture) = texture {
+                let picture = gtk4::Picture::for_paintable(&texture);
+                picture.set_can_shrink(true);
+                picture.set_keep_aspect_ratio(true);
+                picture.set_size_request(56, 40);
+                icon_box.append(&picture);
+            }
+        } else {
+            let icon = Image::from_icon_name("folder-remote-symbolic");
+            icon.set_pixel_size(28);
+            icon_box.append(&icon);
+        }
+
+        let initial_title = initial_theme
+            .as_ref()
+            .and_then(|t| t.name.clone())
+            .unwrap_or_default();
+        let title_label = Label::new(Some(&initial_title));
         title_label.add_css_class("nextcloud-server-title");
         title_label.set_halign(Align::Start);
         title_label.set_hexpand(true);
@@ -50,10 +81,21 @@ impl NavigationSidebar {
         top_row.append(&icon_box);
         top_row.append(&title_label);
 
-        let slogan_label = Label::new(Some("A safe home for all your data"));
+        let initial_slogan = initial_theme
+            .as_ref()
+            .and_then(|t| t.slogan.clone())
+            .unwrap_or_default();
+        let slogan_label = Label::new(Some(&initial_slogan));
         slogan_label.add_css_class("nextcloud-server-slogan");
         slogan_label.set_halign(Align::Start);
         slogan_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+
+        // Apply theme color immediately if known
+        if let Some(ref theme) = initial_theme
+            && let Some(ref color) = theme.color
+        {
+            apply_server_theme_color(color, theme.color_text.as_deref());
+        }
 
         let badge_row = GtkBox::new(Orientation::Horizontal, 6);
         badge_row.set_margin_top(4);

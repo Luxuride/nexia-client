@@ -548,8 +548,49 @@ impl FileExplorerBackend for DesktopUiController {
         self.server_theming().await
     }
 
+    fn cached_theming(&self) -> Option<ThemeInfo> {
+        self.coordinator.cached_theme()
+    }
+
+    fn cached_theme_logo(&self) -> Option<PathBuf> {
+        self.coordinator.cached_theme_logo()
+    }
+
     async fn fetch_theme_logo(&self) -> Option<PathBuf> {
         self.fetch_theme_logo().await
+    }
+
+    async fn cache_database_size(&self) -> u64 {
+        self.coordinator.cache_database_size().await
+    }
+
+    async fn cached_files_size(&self) -> u64 {
+        self.coordinator.cached_files_size().await
+    }
+
+    async fn clean_thumbnails(&self) -> Result<(), UiError> {
+        self.coordinator
+            .clean_thumbnails()
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn clean_everything(&self) -> Result<(), UiError> {
+        self.coordinator
+            .clean_everything()
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn is_autodownload_thumbnails_enabled(&self) -> bool {
+        self.coordinator.is_autodownload_thumbnails_enabled().await
+    }
+
+    async fn set_autodownload_thumbnails_enabled(&self, enabled: bool) -> Result<(), UiError> {
+        self.coordinator
+            .set_autodownload_thumbnails_enabled(enabled)
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
     }
 
     async fn search_items(&self, query: &str) -> Result<Vec<FileViewItem>, UiError> {

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Nextcloud Desktop
+Comment=Nextcloud Desktop Sync Client
+Exec=nextcloud-desktop-rs
+Icon=org.nextcloud.NextcloudDesktop
+Terminal=false
+Categories=Network;FileTransfer;
+StartupNotify=true
+X-GNOME-Autostart-enabled=true

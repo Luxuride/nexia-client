@@ -63,7 +63,7 @@ impl DesktopSyncCoordinator {
 
         // Repopulate directly inside the orchestrator actor thread
         let inserted = vfs
-            .populate_from_resources(&dav_prefix, summaries)
+            .populate_from_resources(&dav_prefix, summaries.clone())
             .await
             .unwrap_or(0);
 
@@ -72,6 +72,32 @@ impl DesktopSyncCoordinator {
                 node_count: inserted,
             },
         );
+
+        if self.is_autodownload_thumbnails_enabled().await {
+            let media_paths: Vec<String> = summaries
+                .into_iter()
+                .filter(|s| {
+                    !s.is_collection
+                        && (s.href.ends_with(".png")
+                            || s.href.ends_with(".jpg")
+                            || s.href.ends_with(".jpeg")
+                            || s.href.ends_with(".webp")
+                            || s.content_type
+                                .as_deref()
+                                .is_some_and(|m| m.starts_with("image/")))
+                })
+                .map(|s| {
+                    s.href
+                        .strip_prefix(&dav_prefix)
+                        .unwrap_or(&s.href)
+                        .to_string()
+                })
+                .collect();
+
+            if !media_paths.is_empty() {
+                self.batch_prefetch_thumbnails(media_paths, 64);
+            }
+        }
 
         Ok(inserted)
     }

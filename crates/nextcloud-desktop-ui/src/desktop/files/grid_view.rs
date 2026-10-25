@@ -346,7 +346,18 @@ impl FileGridTile {
         sub.add_css_class("caption");
         sub.add_css_class("dim-label");
 
-        card.append(&icon_box);
+        let icon_overlay = gtk4::Overlay::new();
+        icon_overlay.set_child(Some(&icon_box));
+
+        let sync_emblem = Image::from_icon_name(item.status.icon_name());
+        sync_emblem.set_pixel_size((icon_size / 3).clamp(14, 20));
+        sync_emblem.set_halign(Align::End);
+        sync_emblem.set_valign(Align::End);
+        sync_emblem.set_tooltip_text(Some(item.status.display_label()));
+        sync_emblem.add_css_class(item.status.css_class());
+        icon_overlay.add_overlay(&sync_emblem);
+
+        card.append(&icon_overlay);
         card.append(&name);
         card.append(&sub);
 

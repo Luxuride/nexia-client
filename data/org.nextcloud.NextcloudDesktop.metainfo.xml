@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.nextcloud.NextcloudDesktop</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Nextcloud Desktop</name>
+  <summary>Nextcloud Desktop client written in Rust with GTK4 and Libadwaita</summary>
+  <description>
+    <p>
+      Nextcloud Desktop sync client providing virtual file sync, two-way synchronization,
+      event-driven server theming, and fast native performance.
+    </p>
+  </description>
+  <launchable type="desktop-id">org.nextcloud.NextcloudDesktop.desktop</launchable>
+  <url type="homepage">https://nextcloud.com</url>
+  <url type="bugtracker">https://github.com/Luxuride/nextcloud-desktop-rs/issues</url>
+  <provides>
+    <binary>nextcloud-desktop-rs</binary>
+  </provides>
+</component>

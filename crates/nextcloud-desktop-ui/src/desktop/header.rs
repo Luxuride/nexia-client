@@ -21,7 +21,11 @@ impl MainHeaderBar {
         on_refresh: Rc<dyn Fn()>,
     ) -> Self {
         let header_bar = adw::HeaderBar::new();
-        let window_title = adw::WindowTitle::new("Nextcloud", "Cloud Files");
+        let initial_title = backend
+            .cached_theming()
+            .and_then(|t| t.name)
+            .unwrap_or_else(|| "Nextcloud".to_string());
+        let window_title = adw::WindowTitle::new(&initial_title, "Cloud Files");
         header_bar.set_title_widget(Some(&window_title));
 
         let account_switcher = AccountSwitcher::new(backend, toast_overlay, on_refresh);
