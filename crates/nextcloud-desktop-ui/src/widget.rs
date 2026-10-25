@@ -106,6 +106,36 @@ pub trait FileExplorerBackend: Clone + 'static {
         &self,
         remote_path: &str,
     ) -> impl Future<Output = Result<String, UiError>>;
+
+    /// Globally pauses synchronization.
+    fn pause_all_sync(&self) -> impl Future<Output = Result<(), UiError>> {
+        async { Ok(()) }
+    }
+
+    /// Globally resumes synchronization.
+    fn resume_all_sync(&self) -> impl Future<Output = Result<(), UiError>> {
+        async { Ok(()) }
+    }
+
+    /// Returns `true` if synchronization is globally paused.
+    fn is_sync_paused(&self) -> impl Future<Output = Result<bool, UiError>> {
+        async { Ok(false) }
+    }
+
+    /// Pauses synchronization for a specific mount point.
+    fn pause_mount(&self, _mount_id: &str) -> impl Future<Output = Result<(), UiError>> {
+        async { Ok(()) }
+    }
+
+    /// Resumes synchronization for a specific mount point.
+    fn resume_mount(&self, _mount_id: &str) -> impl Future<Output = Result<(), UiError>> {
+        async { Ok(()) }
+    }
+
+    /// Returns `true` if a specific mount point is currently paused.
+    fn is_mount_paused(&self, _mount_id: &str) -> impl Future<Output = Result<bool, UiError>> {
+        async { Ok(false) }
+    }
 }
 
 /// Trait implemented by file collection views (such as icon grid and columnar list views).

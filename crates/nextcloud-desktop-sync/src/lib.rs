@@ -20,3 +20,9 @@ pub use scanner::{
     DiscoveredLocalFile, DiscoveredRemoteFile, scan_local_directory, scan_remote_hierarchy,
 };
 pub use vfs::{VirtualEntrySummary, VirtualSyncEngine, make_dav_path};
+
+pub use nextcloud_rust_sdk::{
+    FolderSyncRunner, MountDescriptor, MountId, MountMode, MountState, MountStatus, MountsHandle,
+    NextcloudOrchestrator, OrchestratorConfig, OrchestratorError, OrchestratorEvent,
+    OrchestratorHandle, SyncFileStatus, VfsHandle,
+};

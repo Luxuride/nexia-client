@@ -21,6 +21,7 @@ pub struct VirtualSyncEngine<S: HierarchySeeder = StandardNextcloudSeeder> {
     tree: Arc<RwLock<VirtualTree>>,
     cache_dir: PathBuf,
     event_bus: EventBus,
+    vfs_handle: Option<nextcloud_rust_sdk::VfsHandle>,
     _seeder: PhantomData<S>,
 }
 
@@ -48,8 +49,16 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
             tree: Arc::new(RwLock::new(initial_tree)),
             cache_dir,
             event_bus,
+            vfs_handle: None,
             _seeder: PhantomData,
         }
+    }
+
+    /// Attaches an orchestrator VFS handle communicating with the background worker actor.
+    #[must_use]
+    pub fn with_vfs_handle(mut self, handle: nextcloud_rust_sdk::VfsHandle) -> Self {
+        self.vfs_handle = Some(handle);
+        self
     }
 
     fn persist_tree(&self, tree: &VirtualTree) {
@@ -204,6 +213,13 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
     /// Dehydrates a file node back to a metadata placeholder, freeing local cache disk space.
     pub async fn dehydrate_file(&self, remote_path: &str) -> Result<(), SyncError> {
         let clean_path = format!("/{}", remote_path.trim_matches('/'));
+        if let Some(ref handle) = self.vfs_handle {
+            handle.dehydrate_local(&clean_path).await?;
+            self.event_bus
+                .emit(DesktopEvent::NodeDehydrated { path: clean_path });
+            return Ok(());
+        }
+
         let mut target_cached_path = None;
 
         {
@@ -234,6 +250,9 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
         dir_path: &str,
     ) -> Result<Vec<VirtualEntrySummary>, SyncError> {
         let clean_path = normalize_path(dir_path).unwrap_or_else(|_| "/".to_string());
+        if let Some(ref handle) = self.vfs_handle {
+            return Ok(handle.list_children(&clean_path).await?);
+        }
         let tree = self.tree.read().await;
         Ok(tree.children_summaries(&clean_path))
     }
@@ -241,6 +260,9 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
     /// Retrieves summary information for a single node path, computing recursive directory size.
     pub async fn get_entry(&self, path: &str) -> Result<Option<VirtualEntrySummary>, SyncError> {
         let clean_path = normalize_path(path).unwrap_or_else(|_| "/".to_string());
+        if let Some(ref handle) = self.vfs_handle {
+            return Ok(handle.entry(&clean_path).await?);
+        }
         let tree = self.tree.read().await;
         Ok(tree.entry_summary(&clean_path))
     }
@@ -252,6 +274,13 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
             return Err(SyncError::InvalidPath(
                 "cannot recreate root directory".to_string(),
             ));
+        }
+
+        if let Some(ref handle) = self.vfs_handle {
+            handle.create_directory(&clean_path).await?;
+            self.event_bus
+                .emit(DesktopEvent::VfsTreeUpdated { node_count: 1 });
+            return Ok(());
         }
 
         let mut tree = self.tree.write().await;
@@ -280,6 +309,13 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
             ));
         }
 
+        if let Some(ref handle) = self.vfs_handle {
+            let _ = handle.hydrate_local(&clean_path, content.to_vec()).await?;
+            self.event_bus
+                .emit(DesktopEvent::VfsTreeUpdated { node_count: 1 });
+            return Ok(clean_path);
+        }
+
         let local_path = self.write_cache_bytes(&clean_path, content)?;
         let meta = NodeMetadata::file(&clean_path).with_size(content.len() as u64);
 
@@ -303,6 +339,24 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
         old_remote_path: &str,
         new_name: &str,
     ) -> Result<String, SyncError> {
+        if let Some(ref handle) = self.vfs_handle {
+            handle.rename(old_remote_path, new_name).await?;
+            self.event_bus
+                .emit(DesktopEvent::VfsTreeUpdated { node_count: 1 });
+            let parent =
+                nextcloud_rust_sdk::parent_path(old_remote_path).unwrap_or_else(|| "/".to_string());
+            let new_path = if parent == "/" {
+                format!("/{}", new_name.trim_matches('/'))
+            } else {
+                format!(
+                    "{}/{}",
+                    parent.trim_end_matches('/'),
+                    new_name.trim_matches('/')
+                )
+            };
+            return Ok(new_path);
+        }
+
         let (new_path, count) = {
             let mut tree = self.tree.write().await;
             let new_path = tree.rename(old_remote_path, new_name)?;
@@ -340,6 +394,13 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
             return Err(SyncError::InvalidPath(
                 "cannot remove root directory".to_string(),
             ));
+        }
+
+        if let Some(ref handle) = self.vfs_handle {
+            handle.remove(&clean_path).await?;
+            self.event_bus
+                .emit(DesktopEvent::VfsTreeUpdated { node_count: 1 });
+            return Ok(());
         }
 
         let mut cached_to_delete = None;

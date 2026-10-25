@@ -41,6 +41,18 @@ struct CliArgs {
     #[arg(long)]
     dehydrate: Option<String>,
 
+    /// Pause synchronization globally across all mounts.
+    #[arg(long)]
+    pause_sync: bool,
+
+    /// Resume synchronization globally across all mounts.
+    #[arg(long)]
+    resume_sync: bool,
+
+    /// List active mounts managed by the orchestrator.
+    #[arg(long)]
+    list_mounts: bool,
+
     /// Path to custom configuration file.
     #[arg(long)]
     config: Option<PathBuf>,
@@ -87,8 +99,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || args.refresh_vfs
         || args.hydrate.is_some()
         || args.dehydrate.is_some()
+        || args.pause_sync
+        || args.resume_sync
+        || args.list_mounts
     {
         rt.block_on(async {
+            if args.pause_sync {
+                tracing::info!("Pausing synchronization globally...");
+                match controller.pause_all_sync().await {
+                    Ok(()) => tracing::info!("Synchronization paused successfully"),
+                    Err(e) => tracing::error!(error = %e, "Failed to pause synchronization"),
+                }
+            }
+
+            if args.resume_sync {
+                tracing::info!("Resuming synchronization globally...");
+                match controller.resume_all_sync().await {
+                    Ok(()) => tracing::info!("Synchronization resumed successfully"),
+                    Err(e) => tracing::error!(error = %e, "Failed to resume synchronization"),
+                }
+            }
+
+            if args.list_mounts {
+                tracing::info!("Listing active orchestrator mounts...");
+                match controller.list_mounts().await {
+                    Ok(mounts) => {
+                        for (desc, state) in mounts {
+                            tracing::info!(
+                                id = %desc.id,
+                                remote = %desc.remote_path,
+                                local = %desc.local_target.display(),
+                                status = ?state.status,
+                                paused = (state.status == nextcloud_desktop_sync::MountStatus::Paused),
+                                "Mount"
+                            );
+                        }
+                    }
+                    Err(e) => tracing::error!(error = %e, "Failed to list mounts"),
+                }
+            }
+
             if args.refresh_vfs {
                 tracing::info!("Refreshing virtual file hierarchy...");
                 match controller.refresh_virtual_tree().await {

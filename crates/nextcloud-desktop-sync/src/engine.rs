@@ -1,7 +1,9 @@
 //! Desktop synchronization coordinator unifying virtual and full sync engines with nextcloud-rust-sdk Client.
 
 use nextcloud_rust_sdk::{
-    BasicAuth, Client, DavPath, Depth, PropfindBody, SecretString, ServerUrl, StoreKey,
+    BasicAuth, Client, DavPath, Depth, MountDescriptor, MountId, MountMode, MountState,
+    MountsHandle, NextcloudOrchestrator, OrchestratorConfig, OrchestratorError, OrchestratorHandle,
+    PropfindBody, SecretString, ServerUrl, StoreKey, SyncFileStatus,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -21,16 +23,32 @@ pub struct DesktopSyncCoordinator {
     config_path: Option<PathBuf>,
     event_bus: EventBus,
     sdk_clients: Arc<tokio::sync::RwLock<HashMap<AccountId, Client>>>,
+    orchestrator: Arc<std::sync::Mutex<Option<NextcloudOrchestrator>>>,
+    orchestrator_handle: Arc<tokio::sync::RwLock<Option<OrchestratorHandle>>>,
+    default_mount_id: Arc<tokio::sync::RwLock<Option<MountId>>>,
 }
 
 impl DesktopSyncCoordinator {
     /// Creates a new synchronization coordinator.
     pub fn new(config: Arc<tokio::sync::RwLock<AppConfig>>, event_bus: EventBus) -> Self {
+        let cache_dir = if let Ok(conf) = config.try_read() {
+            conf.resolved_cache_dir()
+        } else {
+            AppConfig::default_cache_dir()
+        };
+
+        let orch_config = OrchestratorConfig::new(cache_dir);
+        let orch = NextcloudOrchestrator::start(orch_config).ok();
+        let handle = orch.as_ref().map(|o| o.handle());
+
         Self {
             config,
             config_path: None,
             event_bus,
             sdk_clients: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            orchestrator: Arc::new(std::sync::Mutex::new(orch)),
+            orchestrator_handle: Arc::new(tokio::sync::RwLock::new(handle)),
+            default_mount_id: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
@@ -49,6 +67,14 @@ impl DesktopSyncCoordinator {
         AppConfig::default_cache_dir()
     }
 
+    /// Returns `true` if the background orchestrator actor thread is active.
+    pub fn is_orchestrator_running(&self) -> bool {
+        self.orchestrator
+            .lock()
+            .map(|o| o.is_some())
+            .unwrap_or(false)
+    }
+
     /// Access the virtual sync engine for the active account.
     pub async fn active_vfs(&self) -> VirtualSyncEngine {
         let active_id = self
@@ -63,7 +89,180 @@ impl DesktopSyncCoordinator {
             .join(&active_id.0)
             .join("vfs");
         let _ = std::fs::create_dir_all(&account_vfs_dir);
-        VirtualSyncEngine::new(account_vfs_dir, self.event_bus.clone())
+        let vfs = VirtualSyncEngine::new(account_vfs_dir.clone(), self.event_bus.clone());
+
+        if let Some(ref handle) = *self.orchestrator_handle.read().await {
+            let mut mount_lock = self.default_mount_id.write().await;
+            let mount_id = if let Some(ref id) = *mount_lock {
+                id.clone()
+            } else {
+                let desc =
+                    MountDescriptor::new(&active_id.0, "/", account_vfs_dir, MountMode::VirtualVfs);
+                if let Ok(id) = handle.mounts().add_mount(desc).await {
+                    *mount_lock = Some(id.clone());
+                    id
+                } else {
+                    MountId::new()
+                }
+            };
+            return vfs.with_vfs_handle(handle.vfs(mount_id));
+        }
+
+        vfs
+    }
+
+    /// Access the mounts management interface.
+    pub async fn mounts(&self) -> Option<MountsHandle> {
+        self.orchestrator_handle
+            .read()
+            .await
+            .as_ref()
+            .map(|h| h.mounts())
+    }
+
+    /// Adds a new mount point to the orchestrator.
+    pub async fn add_mount(&self, descriptor: MountDescriptor) -> Result<MountId, SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.mounts()
+                .add_mount(descriptor)
+                .await
+                .map_err(SyncError::Orchestrator)
+        } else {
+            Err(SyncError::Orchestrator(OrchestratorError::WorkerShutdown(
+                "orchestrator not initialized".to_string(),
+            )))
+        }
+    }
+
+    /// Removes an existing mount point.
+    pub async fn remove_mount(&self, id: MountId) -> Result<MountDescriptor, SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.mounts()
+                .remove_mount(id)
+                .await
+                .map_err(SyncError::Orchestrator)
+        } else {
+            Err(SyncError::Orchestrator(OrchestratorError::WorkerShutdown(
+                "orchestrator not initialized".to_string(),
+            )))
+        }
+    }
+
+    /// Lists all active mounts and their runtime states.
+    pub async fn list_mounts(&self) -> Result<Vec<(MountDescriptor, MountState)>, SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.mounts()
+                .list_mounts()
+                .await
+                .map_err(SyncError::Orchestrator)
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Queries the file sync status and FreeDesktop icon name for a relative path in a mount.
+    pub async fn file_status(
+        &self,
+        mount_id: MountId,
+        path: &str,
+    ) -> Result<SyncFileStatus, SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.mounts()
+                .file_status(mount_id, path)
+                .await
+                .map_err(SyncError::Orchestrator)
+        } else {
+            Ok(SyncFileStatus::OnlineOnly)
+        }
+    }
+
+    /// Resolves the synchronization status for an arbitrary local path across all mounts.
+    pub async fn status_for_local_path(
+        &self,
+        local_path: impl Into<PathBuf>,
+    ) -> Result<Option<SyncFileStatus>, SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.mounts()
+                .status_for_local_path(local_path)
+                .await
+                .map_err(SyncError::Orchestrator)
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Specifically pauses synchronization for a single mount point.
+    pub async fn pause_mount(&self, id: MountId) -> Result<(), SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.mounts()
+                .pause_mount(id)
+                .await
+                .map_err(SyncError::Orchestrator)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Specifically resumes synchronization for a single mount point.
+    pub async fn resume_mount(&self, id: MountId) -> Result<(), SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.mounts()
+                .resume_mount(id)
+                .await
+                .map_err(SyncError::Orchestrator)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Queries whether a specific mount point is currently paused.
+    pub async fn is_mount_paused(&self, id: MountId) -> Result<bool, SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.mounts()
+                .is_paused(id)
+                .await
+                .map_err(SyncError::Orchestrator)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Globally pauses synchronization across all mounts and background queues.
+    pub async fn pause_all_sync(&self) -> Result<(), SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.pause_all_sync().await.map_err(SyncError::Orchestrator)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Globally resumes synchronization across all mounts and background queues.
+    pub async fn resume_all_sync(&self) -> Result<(), SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.resume_all_sync().await.map_err(SyncError::Orchestrator)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Queries whether synchronization is globally paused.
+    pub async fn is_sync_paused(&self) -> Result<bool, SyncError> {
+        let handle = self.orchestrator_handle.read().await;
+        if let Some(ref h) = *handle {
+            h.is_sync_paused().await.map_err(SyncError::Orchestrator)
+        } else {
+            Ok(false)
+        }
     }
 
     /// Access the full sync engine.
@@ -532,5 +731,88 @@ mod tests {
             .expect("switch succeeds");
         let active3 = coordinator.active_account().await.expect("has active");
         assert_eq!(active3.id, first_id);
+    }
+
+    #[tokio::test]
+    async fn orchestrator_mounts_pause_resume_and_file_status() {
+        let temp_dir = std::env::temp_dir().join(format!("nc_test_orch_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let mut config = AppConfig::default();
+        config.cache_dir = Some(temp_dir.clone());
+        let config_lock = Arc::new(tokio::sync::RwLock::new(config));
+        let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
+
+        assert!(coordinator.is_orchestrator_running());
+
+        // Add root mount
+        let target_root = temp_dir.join("nextcloud");
+        let desc_root = MountDescriptor::new("acc1", "/", &target_root, MountMode::VirtualVfs);
+        let root_id = coordinator
+            .add_mount(desc_root)
+            .await
+            .expect("add root mount");
+
+        // Add subdirectory mount to distinct target
+        let target_photos = temp_dir.join("photos");
+        let desc_photos = MountDescriptor::new(
+            "acc1",
+            "/Photos",
+            &target_photos,
+            MountMode::BidirectionalSync,
+        );
+        let photos_id = coordinator
+            .add_mount(desc_photos)
+            .await
+            .expect("add photos mount");
+
+        let mounts = coordinator.list_mounts().await.expect("list mounts");
+        assert_eq!(mounts.len(), 2);
+
+        // Pause specific mount
+        assert!(
+            !coordinator
+                .is_mount_paused(photos_id.clone())
+                .await
+                .unwrap()
+        );
+        coordinator
+            .pause_mount(photos_id.clone())
+            .await
+            .expect("pause mount");
+        assert!(
+            coordinator
+                .is_mount_paused(photos_id.clone())
+                .await
+                .unwrap()
+        );
+        coordinator
+            .resume_mount(photos_id.clone())
+            .await
+            .expect("resume mount");
+        assert!(
+            !coordinator
+                .is_mount_paused(photos_id.clone())
+                .await
+                .unwrap()
+        );
+
+        // Pause globally
+        assert!(!coordinator.is_sync_paused().await.unwrap());
+        coordinator.pause_all_sync().await.expect("pause all sync");
+        assert!(coordinator.is_sync_paused().await.unwrap());
+        coordinator
+            .resume_all_sync()
+            .await
+            .expect("resume all sync");
+        assert!(!coordinator.is_sync_paused().await.unwrap());
+
+        // File status and icons
+        let status = coordinator
+            .file_status(root_id, "/Document.txt")
+            .await
+            .expect("file status");
+        assert_eq!(status.icon_name(), "cloud-symbolic");
+
+        let _ = std::fs::remove_dir_all(temp_dir);
     }
 }

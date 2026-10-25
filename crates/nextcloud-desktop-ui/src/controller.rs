@@ -8,7 +8,9 @@ use tokio::sync::RwLock;
 use crate::error::UiError;
 use crate::model::{FileSyncStatus, FileViewItem, FileViewMode};
 use crate::widget::FileExplorerBackend;
-use nextcloud_desktop_sync::DesktopSyncCoordinator;
+use nextcloud_desktop_sync::{
+    DesktopSyncCoordinator, MountDescriptor, MountId, MountState, SyncFileStatus,
+};
 use nextcloud_rust_sdk::NavigationHistory;
 
 /// UI Controller bridging user actions to backend sync and VFS operations.
@@ -282,6 +284,102 @@ impl DesktopUiController {
     pub async fn ensure_discovered_accounts(&self) {
         self.coordinator.sync_discovered_accounts().await;
     }
+
+    /// Lists all active mounts and their runtime states.
+    pub async fn list_mounts(&self) -> Result<Vec<(MountDescriptor, MountState)>, UiError> {
+        self.coordinator
+            .list_mounts()
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Registers a new mount point connecting a remote directory to a local target.
+    pub async fn add_mount(&self, descriptor: MountDescriptor) -> Result<MountId, UiError> {
+        self.coordinator
+            .add_mount(descriptor)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Removes an existing mount point.
+    pub async fn remove_mount(&self, id: MountId) -> Result<(), UiError> {
+        self.coordinator
+            .remove_mount(id)
+            .await
+            .map(|_| ())
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Specifically pauses synchronization for a single mount point.
+    pub async fn pause_mount(&self, id: MountId) -> Result<(), UiError> {
+        self.coordinator
+            .pause_mount(id)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Specifically resumes synchronization for a single mount point.
+    pub async fn resume_mount(&self, id: MountId) -> Result<(), UiError> {
+        self.coordinator
+            .resume_mount(id)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Returns `true` if a specific mount point is currently paused.
+    pub async fn is_mount_paused(&self, id: MountId) -> Result<bool, UiError> {
+        self.coordinator
+            .is_mount_paused(id)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Globally pauses synchronization across all mounts and background queues.
+    pub async fn pause_all_sync(&self) -> Result<(), UiError> {
+        self.coordinator
+            .pause_all_sync()
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Globally resumes synchronization across all mounts and background queues.
+    pub async fn resume_all_sync(&self) -> Result<(), UiError> {
+        self.coordinator
+            .resume_all_sync()
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Returns `true` if synchronization is globally paused.
+    pub async fn is_sync_paused(&self) -> Result<bool, UiError> {
+        self.coordinator
+            .is_sync_paused()
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Resolves the file sync status and FreeDesktop icon name for a relative path in a mount.
+    pub async fn file_status(
+        &self,
+        mount_id: MountId,
+        path: &str,
+    ) -> Result<SyncFileStatus, UiError> {
+        self.coordinator
+            .file_status(mount_id, path)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Resolves the synchronization status for an arbitrary local path across all mounts.
+    pub async fn status_for_local_path(
+        &self,
+        local_path: impl Into<PathBuf>,
+    ) -> Result<Option<SyncFileStatus>, UiError> {
+        self.coordinator
+            .status_for_local_path(local_path)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
 }
 
 impl FileExplorerBackend for DesktopUiController {
@@ -379,5 +477,30 @@ impl FileExplorerBackend for DesktopUiController {
 
     async fn create_public_share(&self, remote_path: &str) -> Result<String, UiError> {
         self.create_public_share(remote_path).await
+    }
+
+    async fn pause_all_sync(&self) -> Result<(), UiError> {
+        self.pause_all_sync().await
+    }
+
+    async fn resume_all_sync(&self) -> Result<(), UiError> {
+        self.resume_all_sync().await
+    }
+
+    async fn is_sync_paused(&self) -> Result<bool, UiError> {
+        self.is_sync_paused().await
+    }
+
+    async fn pause_mount(&self, mount_id: &str) -> Result<(), UiError> {
+        self.pause_mount(MountId::from(mount_id.to_string())).await
+    }
+
+    async fn resume_mount(&self, mount_id: &str) -> Result<(), UiError> {
+        self.resume_mount(MountId::from(mount_id.to_string())).await
+    }
+
+    async fn is_mount_paused(&self, mount_id: &str) -> Result<bool, UiError> {
+        self.is_mount_paused(MountId::from(mount_id.to_string()))
+            .await
     }
 }

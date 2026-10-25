@@ -49,4 +49,8 @@ pub enum SyncError {
     /// An invalid WebDAV path was provided.
     #[error("invalid DAV path: {0}")]
     InvalidPath(String),
+
+    /// Error originating from background orchestrator actor.
+    #[error("orchestrator error: {0}")]
+    Orchestrator(#[from] nextcloud_rust_sdk::OrchestratorError),
 }

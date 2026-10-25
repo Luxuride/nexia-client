@@ -42,6 +42,40 @@ impl SyncFoldersPage {
             });
         });
 
+        let pause_btn = Button::with_label("Pause Sync");
+        pause_btn.set_valign(Align::Center);
+        pause_btn.add_css_class("flat");
+
+        let b_pause = backend.clone();
+        let pause_btn_clone = pause_btn.clone();
+        pause_btn.connect_clicked(move |_| {
+            let b = b_pause.clone();
+            let btn = pause_btn_clone.clone();
+            glib::MainContext::default().spawn_local(async move {
+                if let Ok(paused) = b.is_sync_paused().await {
+                    if paused {
+                        let _ = b.resume_all_sync().await;
+                        btn.set_label("Pause Sync");
+                        btn.remove_css_class("destructive-action");
+                    } else {
+                        let _ = b.pause_all_sync().await;
+                        btn.set_label("Resume Sync");
+                        btn.add_css_class("destructive-action");
+                    }
+                }
+            });
+        });
+
+        let btn_init = pause_btn.clone();
+        let b_init = backend.clone();
+        glib::MainContext::default().spawn_local(async move {
+            if let Ok(true) = b_init.is_sync_paused().await {
+                btn_init.set_label("Resume Sync");
+                btn_init.add_css_class("destructive-action");
+            }
+        });
+
+        sync_row.add_suffix(&pause_btn);
         sync_row.add_suffix(&run_sync_btn);
         group.add(&sync_row);
         page.add(&group);
