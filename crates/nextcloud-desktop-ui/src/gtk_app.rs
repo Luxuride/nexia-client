@@ -24,13 +24,7 @@ pub fn launch_gtk_application(
         .application_id("com.nextcloud.desktop.rs")
         .build();
 
-    let ctrl_for_startup = controller.clone();
     app.connect_startup(move |_| {
-        let ctrl = ctrl_for_startup.clone();
-        glib::MainContext::default().spawn_local(async move {
-            ctrl.ensure_discovered_accounts().await;
-        });
-
         if let Some(settings) = gtk4::Settings::default() {
             let cursor_size = std::env::var("XCURSOR_SIZE")
                 .ok()
@@ -268,6 +262,32 @@ fn build_ui(
                 }
             }
         }
+    });
+
+    // Reactive event subscriber loop for VfsTreeUpdated and sync cycle events
+    let mut event_rx = controller.subscribe_events();
+    let refresh_for_events = refresh_cb.clone();
+    glib::MainContext::default().spawn_local(async move {
+        while let Ok(event) = event_rx.recv().await {
+            match event {
+                nextcloud_desktop_core::events::DesktopEvent::VfsTreeUpdated { .. }
+                | nextcloud_desktop_core::events::DesktopEvent::NodeHydrated { .. }
+                | nextcloud_desktop_core::events::DesktopEvent::NodeDehydrated { .. }
+                | nextcloud_desktop_core::events::DesktopEvent::SyncCompleted { .. } => {
+                    refresh_for_events();
+                }
+                _ => {}
+            }
+        }
+    });
+
+    // Startup discovery & initial remote tree refresh
+    let ctrl_for_init = controller.clone();
+    let refresh_for_init = refresh_cb.clone();
+    glib::MainContext::default().spawn_local(async move {
+        ctrl_for_init.ensure_discovered_accounts().await;
+        let _ = ctrl_for_init.refresh_virtual_tree().await;
+        refresh_for_init();
     });
 
     // Initial render of Cloud Files view

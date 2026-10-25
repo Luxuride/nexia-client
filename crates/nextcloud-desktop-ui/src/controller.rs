@@ -302,6 +302,13 @@ impl DesktopUiController {
             .map_err(|err| UiError::Controller(err.to_string()))
     }
 
+    /// Subscribes to application desktop events (tree updates, sync status, transfer progress).
+    pub fn subscribe_events(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<nextcloud_desktop_core::events::DesktopEvent> {
+        self.coordinator.event_bus().subscribe()
+    }
+
     /// Synchronizes discovered system accounts on application startup.
     pub async fn ensure_discovered_accounts(&self) {
         self.coordinator.sync_discovered_accounts().await;
