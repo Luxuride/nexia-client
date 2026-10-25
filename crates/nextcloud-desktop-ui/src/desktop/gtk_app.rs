@@ -315,7 +315,9 @@ fn build_ui(
     sidebar.root_widget().set_size_request(220, -1);
     sidebar.root_widget().set_hexpand(false);
     sidebar.root_widget().set_halign(gtk4::Align::Start);
-    sidebar.root_widget().add_css_class("navigation-sidebar-fixed");
+    sidebar
+        .root_widget()
+        .add_css_class("navigation-sidebar-fixed");
 
     let sidebar_sep = gtk4::Separator::new(Orientation::Vertical);
 

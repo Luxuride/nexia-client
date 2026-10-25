@@ -34,14 +34,35 @@ impl DesktopSyncCoordinator {
         let store_key =
             StoreKey::from_bytes(key_bytes).unwrap_or_else(|_| StoreKey::generate().unwrap());
 
-        Client::builder()
+        let client = Client::builder()
             .server_url(server_url)
             .storage(paths)
             .store_key(store_key)
             .initial_credentials(username, secret)
             .build()
             .await
-            .map_err(|e| SyncError::InvalidPath(e.to_string()))
+            .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+
+        let mut client_events = client.subscribe_events();
+        let bus = self.event_bus.clone();
+        tokio::spawn(async move {
+            while let Ok(evt) = client_events.recv().await {
+                match evt {
+                    nextcloud_rust_sdk::ClientEvent::SyncMountAdded(m) => {
+                        bus.emit(DesktopEvent::SyncMountAdded { mount_id: m.id });
+                    }
+                    nextcloud_rust_sdk::ClientEvent::SyncMountRemoved(id) => {
+                        bus.emit(DesktopEvent::SyncMountRemoved { mount_id: id });
+                    }
+                    nextcloud_rust_sdk::ClientEvent::SyncMountUpdated(m) => {
+                        bus.emit(DesktopEvent::SyncMountUpdated { mount_id: m.id });
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        Ok(client)
     }
 
     /// Returns synchronous in-memory cached visual theming metadata if available.
@@ -368,6 +389,10 @@ impl DesktopSyncCoordinator {
         // Register with filesystem watcher to monitor for local edits & additions
         self.watch_mount(&local_buf, &mount_id).await;
 
+        self.event_bus.emit(DesktopEvent::SyncMountAdded {
+            mount_id: mount_id.clone(),
+        });
+
         // Immediately trigger initial sync for the newly registered mount
         let coord = self.clone();
         let mid = mount_id.clone();
@@ -453,6 +478,10 @@ impl DesktopSyncCoordinator {
                 }
                 let _ = h.mounts().add_mount(desc).await;
             }
+
+            self.event_bus.emit(DesktopEvent::SyncMountUpdated {
+                mount_id: id.to_string(),
+            });
         }
         Ok(())
     }

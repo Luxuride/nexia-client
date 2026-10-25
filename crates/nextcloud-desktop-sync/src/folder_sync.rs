@@ -61,8 +61,8 @@ impl FolderSyncEngine {
             let resources = match dav_client.propfind(&dav_path, Depth::One, &body).await {
                 Ok(r) => r,
                 Err(e) => {
-                    warn!(dir = %clean_current, error = %e, "WebDAV propfind failed during discovery");
-                    continue;
+                    error!(dir = %clean_current, error = %e, "WebDAV propfind failed during discovery; aborting remote scan to prevent accidental data loss");
+                    return Err(SyncError::WebDav(e));
                 }
             };
 
@@ -208,19 +208,51 @@ impl FolderSyncEngine {
             }
         };
 
-        let mount_cache_dir = self
+        let journal_path = self
             .coordinator
-            .account_mounts_dir(&mount.account_id)
-            .join(mount_id);
-        if !mount_cache_dir.exists() {
-            let _ = std::fs::create_dir_all(&mount_cache_dir);
-        }
-        let journal_path = mount_cache_dir.join("journal.json");
+            .mount_journal_path(&mount.account_id, mount_id);
         let mut journal =
             SyncJournal::load_from_file(&journal_path).unwrap_or_else(|_| SyncJournal::new());
 
         let mut actions = reconcile(&local_files, &remote_files, &journal);
         let is_vfs = mount.mode == "VirtualVfs";
+
+        let local_deletes_count = actions
+            .iter()
+            .filter(|a| matches!(a, SyncAction::DeleteLocal { .. }))
+            .count();
+
+        if local_deletes_count > 0 {
+            // Safeguard 1: Remote discovery returned 0 files while local files exist
+            if remote_files.is_empty() && !local_files.is_empty() {
+                warn!(
+                    mount_id,
+                    local_files = local_files.len(),
+                    "Mass deletion safeguard: remote listing was empty while local files exist. Aborting to prevent accidental data loss."
+                );
+                return Err(SyncError::Reconciliation(
+                    "Safety safeguard: remote listing returned 0 files; refusing to delete local files".into(),
+                ));
+            }
+
+            // Safeguard 2: Bulk deletion exceeds 50% threshold when local file count > 5
+            if local_files.len() > 5 && local_deletes_count > local_files.len() / 2 {
+                warn!(
+                    mount_id,
+                    local_deletes_count,
+                    local_files = local_files.len(),
+                    "Mass deletion safeguard: deletion count exceeds 50% threshold. Aborting sync cycle."
+                );
+                return Err(SyncError::Reconciliation(
+                    "Safety safeguard: bulk deletion of more than 50% of files requires manual review".into(),
+                ));
+            }
+
+            // Safeguard 3: In VirtualVfs mode, do not delete local files or placeholders automatically
+            if is_vfs {
+                actions.retain(|a| !matches!(a, SyncAction::DeleteLocal { .. }));
+            }
+        }
 
         // Normal sync is VFS that eagerly hydrates everything:
         // Convert any InSync placeholders (0 bytes locally but > 0 bytes remotely) to Download actions

@@ -129,6 +129,16 @@ pub enum DesktopEvent {
         /// Identifier of the signed out account.
         account_id: String,
     },
+    /// A configured sync folder mount pairing was added or registered.
+    SyncMountAdded {
+        /// Identifier of the added sync mount.
+        mount_id: String,
+    },
+    /// A configured sync folder mount pairing was updated.
+    SyncMountUpdated {
+        /// Identifier of the updated sync mount.
+        mount_id: String,
+    },
     /// A configured sync folder mount pairing was removed.
     SyncMountRemoved {
         /// Identifier of the removed sync mount.

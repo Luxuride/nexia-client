@@ -316,6 +316,8 @@ impl SyncFoldersPage {
                 match event {
                     nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. }
                     | nextcloud_desktop_core::events::DesktopEvent::AccountSignedOut { .. }
+                    | nextcloud_desktop_core::events::DesktopEvent::SyncMountAdded { .. }
+                    | nextcloud_desktop_core::events::DesktopEvent::SyncMountUpdated { .. }
                     | nextcloud_desktop_core::events::DesktopEvent::SyncMountRemoved { .. } => {
                         ref_for_events();
                     }

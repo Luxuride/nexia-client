@@ -69,7 +69,11 @@ pub struct PriorityPermit {
 
 impl Drop for PriorityPermit {
     fn drop(&mut self) {
-        if self.counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) == 1 {
+        if self
+            .counter
+            .fetch_sub(1, std::sync::atomic::Ordering::SeqCst)
+            == 1
+        {
             self.notify.notify_waiters();
         }
     }
@@ -97,9 +101,17 @@ impl DesktopSyncCoordinator {
 
     /// Asynchronously waits until all active high-priority operations have completed.
     pub async fn wait_for_priority_ops(&self) {
-        while self.priority_ops_counter.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+        while self
+            .priority_ops_counter
+            .load(std::sync::atomic::Ordering::SeqCst)
+            > 0
+        {
             let notified = self.priority_ops_notify.notified();
-            if self.priority_ops_counter.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+            if self
+                .priority_ops_counter
+                .load(std::sync::atomic::Ordering::SeqCst)
+                > 0
+            {
                 notified.await;
             }
         }
@@ -180,6 +192,16 @@ impl DesktopSyncCoordinator {
                             }
                             OrchestratorEvent::MountProgress(snapshot) => {
                                 bus.emit(DesktopEvent::MountProgress(snapshot));
+                            }
+                            OrchestratorEvent::MountAdded(desc) => {
+                                bus.emit(DesktopEvent::SyncMountAdded {
+                                    mount_id: desc.id.to_string(),
+                                });
+                            }
+                            OrchestratorEvent::MountRemoved(id) => {
+                                bus.emit(DesktopEvent::SyncMountRemoved {
+                                    mount_id: id.to_string(),
+                                });
                             }
                             _ => {}
                         }
@@ -282,6 +304,13 @@ impl DesktopSyncCoordinator {
     /// Returns the mount cache directory for a specific account.
     pub fn account_mounts_dir(&self, account_id: &str) -> PathBuf {
         self.account_dir(account_id).join("mounts")
+    }
+
+    /// Returns the canonical sync journal path for a specific mount.
+    pub fn mount_journal_path(&self, account_id: &str, mount_id: &str) -> PathBuf {
+        let dir = self.account_mounts_dir(account_id).join(mount_id);
+        let _ = std::fs::create_dir_all(&dir);
+        dir.join("journal.json")
     }
 
     /// Returns `true` if the background orchestrator actor thread is active.

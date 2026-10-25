@@ -328,21 +328,23 @@ impl DesktopSyncCoordinator {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 if std::fs::write(&target_file, &bytes).is_ok() {
-                    let journal_dir = PathBuf::from(&mount.local_target).join(".nextcloud");
-                    let _ = std::fs::create_dir_all(&journal_dir);
-                    let journal_path = journal_dir.join("journal.json");
+                    let journal_path = self.mount_journal_path(&mount.account_id, &mount.id);
                     let mut journal =
                         nextcloud_rust_sdk::SyncJournal::load_from_file(&journal_path)
                             .unwrap_or_else(|_| nextcloud_rust_sdk::SyncJournal::new());
                     let mtime = std::fs::metadata(&target_file)
                         .and_then(|m| m.modified())
                         .unwrap_or_else(|_| std::time::SystemTime::now());
+                    let canonical_rel = format!("/{}", rel_clean.trim_matches('/'));
                     journal.record(nextcloud_rust_sdk::JournalEntry::new(
-                        rel_clean, byte_len, mtime, false,
+                        &canonical_rel,
+                        byte_len,
+                        mtime,
+                        false,
                     ));
                     let _ = journal.save_to_file(&journal_path);
                     self.event_bus.emit(DesktopEvent::FileTransferCompleted {
-                        relative_path: rel_clean.to_string(),
+                        relative_path: canonical_rel,
                         kind: nextcloud_desktop_core::events::TransferKind::Hydration,
                     });
                     self.event_bus.emit(DesktopEvent::NodeHydrated {
@@ -405,22 +407,24 @@ impl DesktopSyncCoordinator {
                     std::fs::write(&canonical, &bytes)
                         .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
 
-                    let journal_dir = target_canonical.join(".nextcloud");
-                    let _ = std::fs::create_dir_all(&journal_dir);
-                    let journal_path = journal_dir.join("journal.json");
+                    let journal_path = self.mount_journal_path(&mount.account_id, &mount.id);
                     let mut journal =
                         nextcloud_rust_sdk::SyncJournal::load_from_file(&journal_path)
                             .unwrap_or_else(|_| nextcloud_rust_sdk::SyncJournal::new());
                     let mtime = std::fs::metadata(&canonical)
                         .and_then(|m| m.modified())
                         .unwrap_or_else(|_| std::time::SystemTime::now());
+                    let canonical_rel = format!("/{}", rel_str.trim_matches('/'));
                     journal.record(nextcloud_rust_sdk::JournalEntry::new(
-                        &rel_str, byte_len, mtime, false,
+                        &canonical_rel,
+                        byte_len,
+                        mtime,
+                        false,
                     ));
                     let _ = journal.save_to_file(&journal_path);
 
                     self.event_bus.emit(DesktopEvent::FileTransferCompleted {
-                        relative_path: rel_str,
+                        relative_path: canonical_rel,
                         kind: nextcloud_desktop_core::events::TransferKind::Hydration,
                     });
                     self.event_bus.emit(DesktopEvent::NodeHydrated {
@@ -1146,19 +1150,37 @@ impl DesktopSyncCoordinator {
         // 2. FUSE mountpoint (if mounted)
         if let Some(fuse_mp) = self.fuse_mountpoint().await {
             let target = fuse_mp.join(clean_path);
+            let target_mtime = target
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or_else(|_| std::time::SystemTime::now())
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(mtime_sec);
             crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
-                &target, png_bytes, mtime_sec,
+                &target,
+                png_bytes,
+                target_mtime,
             );
         }
 
         // 3. Account internal VFS directory
         if let Some(account) = self.active_account().await {
             let vfs_target = self.account_vfs_dir(&account.id.0).join(clean_path);
-            crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
-                &vfs_target,
-                png_bytes,
-                mtime_sec,
-            );
+            if vfs_target.exists() {
+                let vfs_mtime = vfs_target
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or_else(|_| std::time::SystemTime::now())
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(mtime_sec);
+                crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
+                    &vfs_target,
+                    png_bytes,
+                    vfs_mtime,
+                );
+            }
         }
 
         // 4. Any user sync folders matching remote_path
@@ -1175,11 +1197,20 @@ impl DesktopSyncCoordinator {
             if let Some(rel_path) = rel {
                 let rel_clean = rel_path.trim_start_matches('/');
                 let local_target = PathBuf::from(&mount.local_target).join(rel_clean);
-                crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
-                    &local_target,
-                    png_bytes,
-                    mtime_sec,
-                );
+                if local_target.exists() {
+                    let local_mtime = local_target
+                        .metadata()
+                        .and_then(|m| m.modified())
+                        .unwrap_or_else(|_| std::time::SystemTime::now())
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(mtime_sec);
+                    crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
+                        &local_target,
+                        png_bytes,
+                        local_mtime,
+                    );
+                }
             }
         }
     }
