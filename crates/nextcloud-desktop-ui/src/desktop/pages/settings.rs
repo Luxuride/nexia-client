@@ -15,7 +15,7 @@ pub struct SettingsPage {
 
 impl SettingsPage {
     /// Creates a new settings page bound to `backend`.
-    pub fn new<B: FileExplorerBackend>(backend: &B) -> Self {
+    pub fn new<B: FileExplorerBackend>(backend: &B, toast_overlay: &adw::ToastOverlay) -> Self {
         let page = adw::PreferencesPage::new();
 
         // 1. Nextcloud Account & System Startup
@@ -42,15 +42,6 @@ impl SettingsPage {
         autostart_row.add_suffix(&autostart_switch);
         autostart_row.set_activatable_widget(Some(&autostart_switch));
         account_group.add(&autostart_row);
-
-        let security_row = adw::ActionRow::builder()
-            .title("Credential Redaction")
-            .subtitle(
-                "App tokens and passwords are automatically redacted from logs and diagnostics",
-            )
-            .build();
-        security_row.add_prefix(&Image::from_icon_name("network-server-symbolic"));
-        account_group.add(&security_row);
 
         // 2. Virtual File System Cache & Disk Usage
         let storage_group = adw::PreferencesGroup::builder()
@@ -110,11 +101,59 @@ impl SettingsPage {
         });
         storage_group.add(&autodownload_row);
 
+        // Maximum thumbnail size option
+        let size_options = ["64 px", "128 px", "256 px", "512 px"];
+        let model = gtk4::StringList::new(&size_options);
+        let max_thumb_row = adw::ComboRow::builder()
+            .title("Maximum Thumbnail Size")
+            .subtitle("Limit preview resolution to conserve disk space and bandwidth")
+            .model(&model)
+            .build();
+
+        let b_max = backend.clone();
+        let max_row_clone = max_thumb_row.clone();
+        glib::MainContext::default().spawn_local(async move {
+            let max_val = b_max.max_thumbnail_size().await;
+            let sel = match max_val {
+                0..=64 => 0,
+                65..=128 => 1,
+                129..=256 => 2,
+                _ => 3,
+            };
+            max_row_clone.set_selected(sel);
+            let b = b_max.clone();
+            max_row_clone.connect_selected_notify(move |combo| {
+                let chosen = match combo.selected() {
+                    0 => 64,
+                    1 => 128,
+                    2 => 256,
+                    _ => 512,
+                };
+                let b = b.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    let _ = b.set_max_thumbnail_size(chosen).await;
+                });
+            });
+        });
+        storage_group.add(&max_thumb_row);
+
         // Clean actions
         let actions_group = adw::PreferencesGroup::builder()
             .title("Cache Cleanup Actions")
             .description("Free up disk space occupied by cached media and temporary files.")
             .build();
+
+        let clean_oversized_row = adw::ActionRow::builder()
+            .title("Remove Oversized Thumbnails")
+            .subtitle("Delete thumbnails larger than configured maximum size")
+            .build();
+        let clean_oversized_btn = Button::builder()
+            .label("Clean Oversized")
+            .valign(gtk4::Align::Center)
+            .build();
+        clean_oversized_btn.add_css_class("destructive-action");
+        clean_oversized_row.add_suffix(&clean_oversized_btn);
+        actions_group.add(&clean_oversized_row);
 
         let clean_thumbs_row = adw::ActionRow::builder()
             .title("Clean Thumbnails")
@@ -160,12 +199,26 @@ impl SettingsPage {
 
         {
             let b = backend.clone();
+            let toast = toast_overlay.clone();
             let ref_fn = refresh_sizes.clone();
-            clean_thumbs_btn.connect_clicked(move |_| {
+            clean_oversized_btn.connect_clicked(move |_| {
                 let b = b.clone();
+                let toast = toast.clone();
                 let ref_fn = ref_fn.clone();
                 glib::MainContext::default().spawn_local(async move {
-                    let _ = b.clean_thumbnails().await;
+                    match b.clean_oversized_thumbnails().await {
+                        Ok(freed) => {
+                            toast.add_toast(adw::Toast::new(&format!(
+                                "Removed oversized thumbnails (freed {})",
+                                format_bytes(freed)
+                            )));
+                        }
+                        Err(e) => {
+                            toast.add_toast(adw::Toast::new(&format!(
+                                "Failed to clean oversized thumbnails: {e}"
+                            )));
+                        }
+                    }
                     ref_fn();
                 });
             });
@@ -173,12 +226,53 @@ impl SettingsPage {
 
         {
             let b = backend.clone();
+            let toast = toast_overlay.clone();
+            let ref_fn = refresh_sizes.clone();
+            clean_thumbs_btn.connect_clicked(move |_| {
+                let b = b.clone();
+                let toast = toast.clone();
+                let ref_fn = ref_fn.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    match b.clean_thumbnails().await {
+                        Ok(freed) => {
+                            toast.add_toast(adw::Toast::new(&format!(
+                                "Cleaned thumbnails (freed {})",
+                                format_bytes(freed)
+                            )));
+                        }
+                        Err(e) => {
+                            toast.add_toast(adw::Toast::new(&format!(
+                                "Failed to clean thumbnails: {e}"
+                            )));
+                        }
+                    }
+                    ref_fn();
+                });
+            });
+        }
+
+        {
+            let b = backend.clone();
+            let toast = toast_overlay.clone();
             let ref_fn = refresh_sizes;
             clean_all_btn.connect_clicked(move |_| {
                 let b = b.clone();
+                let toast = toast.clone();
                 let ref_fn = ref_fn.clone();
                 glib::MainContext::default().spawn_local(async move {
-                    let _ = b.clean_everything().await;
+                    match b.clean_everything().await {
+                        Ok(freed) => {
+                            toast.add_toast(adw::Toast::new(&format!(
+                                "Cleaned all cache data (freed {})",
+                                format_bytes(freed)
+                            )));
+                        }
+                        Err(e) => {
+                            toast.add_toast(adw::Toast::new(&format!(
+                                "Failed to clean cache data: {e}"
+                            )));
+                        }
+                    }
                     ref_fn();
                 });
             });
