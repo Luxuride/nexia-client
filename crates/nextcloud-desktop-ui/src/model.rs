@@ -210,7 +210,7 @@ impl FileSyncStatus {
     /// Returns the Freedesktop symbolic icon name representing this status.
     pub fn icon_name(&self) -> &'static str {
         match self {
-            Self::CloudPlaceholder => "cloud-symbolic",
+            Self::CloudPlaceholder => "folder-remote-symbolic",
             Self::HydratedOffline => "emblem-ok-symbolic",
             Self::LocalOnly => "go-up-symbolic",
             Self::UnhydratedAndUnsynced => "emblem-synchronizing-symbolic",
@@ -262,8 +262,18 @@ impl FileViewItem {
     }
 
     /// Returns the full-color Adwaita / Nautilus icon name matching this item.
-    pub const fn nautilus_icon_name(&self) -> &'static str {
-        self.icon_category.freedesktop_icon_name()
+    pub fn nautilus_icon_name(&self) -> &'static str {
+        if self.is_directory {
+            match self.status {
+                FileSyncStatus::CloudPlaceholder | FileSyncStatus::UnhydratedAndUnsynced => {
+                    "folder-remote"
+                }
+                FileSyncStatus::LocalOnly => "folder-download",
+                FileSyncStatus::HydratedOffline | FileSyncStatus::Syncing => "folder",
+            }
+        } else {
+            self.icon_category.freedesktop_icon_name()
+        }
     }
 
     /// Sorts a slice of [`FileViewItem`] in place according to the specified criteria.
@@ -378,7 +388,7 @@ mod tests {
         );
         assert_eq!(
             FileSyncStatus::CloudPlaceholder.icon_name(),
-            "cloud-symbolic"
+            "folder-remote-symbolic"
         );
         assert_eq!(
             FileSyncStatus::HydratedOffline.icon_name(),
