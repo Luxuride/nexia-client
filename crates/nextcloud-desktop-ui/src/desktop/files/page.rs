@@ -218,8 +218,8 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
                         || it.name.ends_with(".jpeg")
                         || it.name.ends_with(".webp")
                         || it.name.ends_with(".gif")
-                        || it.name.ends_with(".svg")
-                        || it.name.ends_with(".pdf"))
+                        || it.name.ends_with(".bmp")
+                        || it.name.ends_with(".svg"))
             })
             .map(|it| it.path.clone())
             .collect();

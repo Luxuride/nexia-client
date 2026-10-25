@@ -513,8 +513,9 @@ impl FileListRow {
 
         // 3. Size column
         let size_lbl = Label::new(Some(&item.size_formatted));
-        size_lbl.set_size_request(110, -1);
+        size_lbl.set_size_request(130, -1);
         size_lbl.set_halign(Align::End);
+        size_lbl.set_justify(gtk4::Justification::Right);
         size_lbl.add_css_class("dim-label");
 
         // 4. Action buttons

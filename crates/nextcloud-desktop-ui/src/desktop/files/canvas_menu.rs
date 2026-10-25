@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use crate::files::new_item_dialog::NewItemDialog;
 use crate::files::properties_dialog::PropertiesDialog;
+use crate::files::settings_dialog::CloudFilesSettingsDialog;
 use crate::model::{FileSyncStatus, FileViewItem};
 use crate::widget::FileExplorerBackend;
 
@@ -32,18 +33,17 @@ fn make_menu_item(icon_name: &str, label_text: &str) -> Button {
     btn
 }
 
-/// Context menu shown on empty canvas right-clicks.
+/// Context menu shown on empty canvas right-clicks and top-right actions menu.
 pub struct CanvasContextMenu;
 
 impl CanvasContextMenu {
-    /// Attaches canvas right-click context menu capabilities to `target`.
-    pub fn attach<B: FileExplorerBackend>(
-        target: &impl IsA<gtk4::Widget>,
+    /// Builds the canvas context menu popover with New Folder, New Document, Refresh, Properties, and Settings.
+    pub fn create_menu_popover<B: FileExplorerBackend>(
+        parent_widget: &impl IsA<gtk4::Widget>,
         backend: &B,
         toast_overlay: &adw::ToastOverlay,
         on_refresh: Rc<dyn Fn()>,
-        is_hit_child: Rc<dyn Fn(f64, f64) -> bool>,
-    ) {
+    ) -> Popover {
         let popover = Popover::new();
         popover.set_has_arrow(false);
         let menu_box = GtkBox::new(Orientation::Vertical, 4);
@@ -54,26 +54,26 @@ impl CanvasContextMenu {
 
         // 1. New Folder button
         let new_folder_btn = make_menu_item("folder-new-symbolic", "New Folder…");
-        let target_clone = target.clone().upcast::<gtk4::Widget>();
-        let b = backend.clone();
-        let toast = toast_overlay.clone();
-        let cb = on_refresh.clone();
-        let popover_clone = popover.clone();
+        let parent_clone1 = parent_widget.clone().upcast::<gtk4::Widget>();
+        let b1 = backend.clone();
+        let toast1 = toast_overlay.clone();
+        let cb1 = on_refresh.clone();
+        let popover_clone1 = popover.clone();
         new_folder_btn.connect_clicked(move |_| {
-            popover_clone.popdown();
-            NewItemDialog::present_new_folder(Some(&target_clone), &b, &toast, cb.clone());
+            popover_clone1.popdown();
+            NewItemDialog::present_new_folder(Some(&parent_clone1), &b1, &toast1, cb1.clone());
         });
 
         // 2. New File button
         let new_file_btn = make_menu_item("document-new-symbolic", "New Document…");
-        let target_clone2 = target.clone().upcast::<gtk4::Widget>();
+        let parent_clone2 = parent_widget.clone().upcast::<gtk4::Widget>();
         let b2 = backend.clone();
         let toast2 = toast_overlay.clone();
         let cb2 = on_refresh.clone();
         let popover_clone2 = popover.clone();
         new_file_btn.connect_clicked(move |_| {
             popover_clone2.popdown();
-            NewItemDialog::present_new_file(Some(&target_clone2), &b2, &toast2, cb2.clone());
+            NewItemDialog::present_new_file(Some(&parent_clone2), &b2, &toast2, cb2.clone());
         });
 
         // 3. Refresh button
@@ -87,7 +87,7 @@ impl CanvasContextMenu {
 
         // 4. Properties button
         let prop_btn = make_menu_item("document-properties-symbolic", "Properties");
-        let target_clone4 = target.clone().upcast::<gtk4::Widget>();
+        let parent_clone4 = parent_widget.clone().upcast::<gtk4::Widget>();
         let b4 = backend.clone();
         let toast4 = toast_overlay.clone();
         let popover_clone4 = popover.clone();
@@ -95,7 +95,7 @@ impl CanvasContextMenu {
             popover_clone4.popdown();
             let b = b4.clone();
             let toast = toast4.clone();
-            let parent = target_clone4.clone();
+            let parent = parent_clone4.clone();
             glib::MainContext::default().spawn_local(async move {
                 let current_path = b.current_path().await;
                 let items = b.list_current_items().await.unwrap_or_default();
@@ -127,15 +127,38 @@ impl CanvasContextMenu {
             });
         });
 
+        // 5. Settings button
+        let settings_btn = make_menu_item("emblem-system-symbolic", "Settings…");
+        let parent_clone5 = parent_widget.clone().upcast::<gtk4::Widget>();
+        let b5 = backend.clone();
+        let popover_clone5 = popover.clone();
+        settings_btn.connect_clicked(move |_| {
+            popover_clone5.popdown();
+            CloudFilesSettingsDialog::present(Some(&parent_clone5), &b5);
+        });
+
         menu_box.append(&new_folder_btn);
         menu_box.append(&new_file_btn);
         menu_box.append(&Separator::new(Orientation::Horizontal));
         menu_box.append(&refresh_btn);
         menu_box.append(&Separator::new(Orientation::Horizontal));
         menu_box.append(&prop_btn);
+        menu_box.append(&settings_btn);
 
         popover.set_child(Some(&menu_box));
-        popover.set_parent(target);
+        popover.set_parent(parent_widget);
+        popover
+    }
+
+    /// Attaches canvas right-click context menu capabilities to `target`.
+    pub fn attach<B: FileExplorerBackend>(
+        target: &impl IsA<gtk4::Widget>,
+        backend: &B,
+        toast_overlay: &adw::ToastOverlay,
+        on_refresh: Rc<dyn Fn()>,
+        is_hit_child: Rc<dyn Fn(f64, f64) -> bool>,
+    ) {
+        let popover = Self::create_menu_popover(target, backend, toast_overlay, on_refresh);
 
         let click = GestureClick::new();
         click.set_button(3); // Secondary click

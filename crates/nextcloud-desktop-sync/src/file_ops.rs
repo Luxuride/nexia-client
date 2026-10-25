@@ -1,6 +1,6 @@
 //! High-level virtual file mutations and two-way folder synchronization.
 
-use nextcloud_rust_sdk::{DavPath, Depth, FolderSyncRunner, PropfindBody};
+use nextcloud_rust_sdk::{DavPath, DavProperty, Depth, FolderSyncRunner, PropfindBody};
 use std::path::PathBuf;
 
 use crate::coordinator::DesktopSyncCoordinator;
@@ -706,14 +706,30 @@ impl DesktopSyncCoordinator {
             return Ok(Some(thumb_path));
         }
 
-        // Look up file_id from active VFS
+        // Look up file_id from active VFS, or query WebDAV PROPFIND if not present in tree
         let vfs = self.active_vfs().await;
-        let file_id = vfs
+        let mut file_id = vfs
             .entry(remote_path)
             .await
             .ok()
             .flatten()
             .and_then(|e| e.file_id);
+
+        if file_id.is_none()
+            && let Some((user, client, auth)) = self.active_dav_context().await
+        {
+            let dav = client.dav(&auth);
+            if let Ok(dav_path) = make_dav_path(&user, remote_path) {
+                let body = PropfindBody::new([DavProperty::FileId]);
+                if let Ok(res) = dav.propfind(&dav_path, Depth::Zero, &body).await
+                    && let Some(first) = res.first()
+                    && let Some(ref fid) = first.file_id
+                    && let Ok(parsed) = fid.parse::<u64>()
+                {
+                    file_id = Some(parsed);
+                }
+            }
+        }
 
         if let Some((_, client, auth)) = self.active_dav_context().await {
             let preview = client.preview(&auth);
@@ -899,10 +915,18 @@ async fn fetch_preview_bytes<
     with_slash: &str,
     opts: &nextcloud_rust_sdk::PreviewOptions,
 ) -> Option<Vec<u8>> {
-    if let Some(fid) = file_id
-        && let Ok(b) = preview.get_by_file_id(fid, opts).await
-    {
-        return Some(b);
+    if let Some(fid) = file_id {
+        if let Ok(b) = preview.get_by_file_id(fid, opts).await {
+            return Some(b);
+        }
+        // Fallback without mode in case the server rejects 'mode=cover' parameter
+        let simple_opts = nextcloud_rust_sdk::PreviewOptions::new().dimensions(
+            opts.width_px().unwrap_or(64),
+            opts.height_px().unwrap_or(64),
+        );
+        if let Ok(b) = preview.get_by_file_id(fid, &simple_opts).await {
+            return Some(b);
+        }
     }
     if let Ok(b) = preview.get_by_path(clean_no_slash, opts).await {
         return Some(b);

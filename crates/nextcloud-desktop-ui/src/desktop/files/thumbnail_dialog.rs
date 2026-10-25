@@ -1,7 +1,7 @@
 //! Subwindow dialog displaying background thumbnail download progress and queue.
 
 use gtk4::prelude::*;
-use gtk4::{Align, Button, Image, Label, Orientation, ProgressBar, ScrolledWindow, Spinner};
+use gtk4::{Align, Image, Label, Orientation, ProgressBar, ScrolledWindow, Spinner};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::RefCell;
@@ -35,13 +35,6 @@ impl ThumbnailDownloadsDialog {
         let header_bar = adw::HeaderBar::new();
         header_bar.set_show_end_title_buttons(true);
         header_bar.set_show_start_title_buttons(false);
-
-        let win_close = window.clone();
-        let close_btn = Button::with_label("Close");
-        close_btn.connect_clicked(move |_| {
-            win_close.close();
-        });
-        header_bar.pack_end(&close_btn);
 
         let content_box = gtk4::Box::new(Orientation::Vertical, 16);
         content_box.set_margin_top(16);

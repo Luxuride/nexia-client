@@ -1,5 +1,6 @@
 //! Static top-level window header bar component.
 
+use gtk4::prelude::*;
 use libadwaita as adw;
 use std::rc::Rc;
 
@@ -28,8 +29,21 @@ impl MainHeaderBar {
         let window_title = adw::WindowTitle::new(&initial_title, "Cloud Files");
         header_bar.set_title_widget(Some(&window_title));
 
-        let account_switcher = AccountSwitcher::new(backend, toast_overlay, on_refresh);
+        let account_switcher = AccountSwitcher::new(backend, toast_overlay, on_refresh.clone());
         header_bar.pack_start(account_switcher.widget());
+
+        // Top-right window header "..." menu (opens the same canvas context menu)
+        let more_btn = gtk4::MenuButton::new();
+        more_btn.set_icon_name("view-more-symbolic");
+        more_btn.set_tooltip_text(Some("Cloud Files actions and settings"));
+        let menu_popover = crate::files::canvas_menu::CanvasContextMenu::create_menu_popover(
+            &more_btn,
+            backend,
+            toast_overlay,
+            on_refresh,
+        );
+        more_btn.set_popover(Some(&menu_popover));
+        header_bar.pack_end(&more_btn);
 
         // Asynchronously populate server title from server theming if available
         let b = backend.clone();

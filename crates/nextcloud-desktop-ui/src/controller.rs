@@ -37,35 +37,16 @@ fn format_folder_presentation(
     let direct_count = sum.direct_items();
     let total_count = sum.total_items();
 
-    if cfg.show_direct_item_count && cfg.show_total_item_count {
-        if direct_count == total_count {
-            let label = if direct_count == 1 {
-                "1 item".to_string()
-            } else {
-                format!("{direct_count} items")
-            };
-            parts.push(label);
-        } else {
-            let d_lbl = if direct_count == 1 {
-                "1 item".to_string()
-            } else {
-                format!("{direct_count} items")
-            };
-            let t_lbl = if total_count == 1 {
-                "1 total".to_string()
-            } else {
-                format!("{total_count} total")
-            };
-            parts.push(format!("{d_lbl} ({t_lbl})"));
-        }
-    } else if cfg.show_direct_item_count {
+    if cfg.show_direct_item_count {
         let label = if direct_count == 1 {
             "1 item".to_string()
         } else {
             format!("{direct_count} items")
         };
         parts.push(label);
-    } else if cfg.show_total_item_count {
+    }
+
+    if cfg.show_total_item_count {
         let label = if total_count == 1 {
             "1 total item".to_string()
         } else {
@@ -74,19 +55,11 @@ fn format_folder_presentation(
         parts.push(label);
     }
 
-    if cfg.show_direct_folder_size && cfg.show_total_folder_size {
-        if sum.direct_size == sum.total_size {
-            parts.push(nextcloud_rust_sdk::format_bytes(sum.direct_size));
-        } else {
-            parts.push(format!(
-                "{} ({} total)",
-                nextcloud_rust_sdk::format_bytes(sum.direct_size),
-                nextcloud_rust_sdk::format_bytes(sum.total_size)
-            ));
-        }
-    } else if cfg.show_direct_folder_size {
+    if cfg.show_direct_folder_size {
         parts.push(nextcloud_rust_sdk::format_bytes(sum.direct_size));
-    } else if cfg.show_total_folder_size {
+    }
+
+    if cfg.show_total_folder_size {
         parts.push(format!(
             "{} total",
             nextcloud_rust_sdk::format_bytes(sum.total_size)
@@ -102,7 +75,7 @@ fn format_folder_presentation(
     if parts.is_empty() {
         "—".to_string()
     } else {
-        parts.join(" • ")
+        parts.join("\n")
     }
 }
 
@@ -123,7 +96,7 @@ fn format_file_presentation(
     if parts.is_empty() {
         "—".to_string()
     } else {
-        parts.join(" • ")
+        parts.join("\n")
     }
 }
 
@@ -1193,7 +1166,7 @@ mod tests {
         cfg.show_direct_item_count = true;
         cfg.show_total_item_count = true;
         let both = format_folder_presentation(&sum, None, &cfg);
-        assert_eq!(both, "5 items (55 total)");
+        assert_eq!(both, "5 items\n55 total items");
 
         // Hidden item count
         cfg.show_direct_item_count = false;
