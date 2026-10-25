@@ -443,6 +443,11 @@ impl DesktopSyncCoordinator {
         let low_filename = format!("{:016x}_64.png", path_hash);
         let low_path = thumbs_dir.join(low_filename);
 
+        let failed_marker = thumbs_dir.join(format!("{:016x}.failed", path_hash));
+        if failed_marker.exists() {
+            return Ok(None);
+        }
+
         let _permit = self.preview_semaphore.acquire().await.ok();
 
         if thumb_path.exists() {
@@ -452,11 +457,8 @@ impl DesktopSyncCoordinator {
         if let Some((_, client, auth)) = self.active_dav_context().await {
             let preview = client.preview(&auth);
 
-            let preview_path = if clean_path.starts_with('/') {
-                clean_path.to_string()
-            } else {
-                format!("/{clean_path}")
-            };
+            let clean_no_slash = clean_path.trim_start_matches('/');
+            let with_slash = format!("/{clean_no_slash}");
 
             // Progressive loading: if target size > 64 and 64px is not cached yet,
             // fetch smallest 64px thumbnail first and emit ThumbnailReady immediately!
@@ -465,7 +467,8 @@ impl DesktopSyncCoordinator {
                     .dimensions(64, 64)
                     .mode(nextcloud_rust_sdk::PreviewMode::Cover);
 
-                if let Ok(bytes) = preview.get_by_path(&preview_path, &low_opts).await
+                if let Some(bytes) =
+                    fetch_preview_bytes(&preview, clean_no_slash, &with_slash, &low_opts).await
                     && tokio::fs::write(&low_path, &bytes).await.is_ok()
                 {
                     self.event_bus.emit(
@@ -481,7 +484,8 @@ impl DesktopSyncCoordinator {
                 .dimensions(size, size)
                 .mode(nextcloud_rust_sdk::PreviewMode::Cover);
 
-            if let Ok(bytes) = preview.get_by_path(&preview_path, &opts).await
+            if let Some(bytes) =
+                fetch_preview_bytes(&preview, clean_no_slash, &with_slash, &opts).await
                 && tokio::fs::write(&thumb_path, &bytes).await.is_ok()
             {
                 return Ok(Some(thumb_path));
@@ -497,12 +501,16 @@ impl DesktopSyncCoordinator {
                     .dimensions(64, 64)
                     .mode(nextcloud_rust_sdk::PreviewMode::Cover);
 
-                if let Ok(bytes) = preview.get_by_path(&preview_path, &low_opts).await
+                if let Some(bytes) =
+                    fetch_preview_bytes(&preview, clean_no_slash, &with_slash, &low_opts).await
                     && tokio::fs::write(&low_path, &bytes).await.is_ok()
                 {
                     return Ok(Some(low_path));
                 }
             }
+
+            // Mark as failed so client does not flood server repeatedly
+            let _ = tokio::fs::write(&failed_marker, b"").await;
         }
 
         if low_path.exists() {
@@ -563,4 +571,19 @@ impl DesktopSyncCoordinator {
             }
         });
     }
+}
+
+async fn fetch_preview_bytes<
+    T: nextcloud_rust_sdk::Transport,
+    A: nextcloud_rust_sdk::AuthProvider,
+>(
+    preview: &nextcloud_rust_sdk::PreviewClient<'_, T, A>,
+    clean_no_slash: &str,
+    with_slash: &str,
+    opts: &nextcloud_rust_sdk::PreviewOptions,
+) -> Option<Vec<u8>> {
+    if let Ok(b) = preview.get_by_path(clean_no_slash, opts).await {
+        return Some(b);
+    }
+    preview.get_by_path(with_slash, opts).await.ok()
 }
