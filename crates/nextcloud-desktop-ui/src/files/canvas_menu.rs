@@ -98,6 +98,8 @@ impl CanvasContextMenu {
             let parent = target_clone4.clone();
             glib::MainContext::default().spawn_local(async move {
                 let current_path = b.current_path().await;
+                let items = b.list_current_items().await.unwrap_or_default();
+                let total_size: u64 = items.iter().map(|i| i.size_bytes).sum();
                 let name = if current_path == "/" {
                     "Nextcloud".to_string()
                 } else {
@@ -111,15 +113,15 @@ impl CanvasContextMenu {
                     path: current_path,
                     name,
                     is_directory: true,
-                    size_formatted: "Folder".to_string(),
-                    size_bytes: 0,
+                    size_formatted: FileViewItem::format_bytes(total_size),
+                    size_bytes: total_size,
                     status: FileSyncStatus::CloudPlaceholder,
                     mime_type: Some("httpd/unix-directory".to_string()),
                     icon_category: nextcloud_rust_sdk::ResourceIconCategory::Folder,
                     modified_at: None,
-                    permissions: Some("Read & Write (Full)".to_string()),
+                    permissions: Some("RDNVWC".to_string()),
                 };
-                PropertiesDialog::present(Some(&parent), &folder_item, &toast);
+                PropertiesDialog::present(Some(&parent), &folder_item, &b, &toast);
             });
         });
 

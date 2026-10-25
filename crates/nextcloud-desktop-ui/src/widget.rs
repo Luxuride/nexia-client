@@ -100,6 +100,12 @@ pub trait FileExplorerBackend: Clone + 'static {
 
     /// Adds a new account profile to the application.
     fn add_account(&self, account: Account) -> impl Future<Output = Result<(), UiError>>;
+
+    /// Creates or retrieves a public share link for the given remote path.
+    fn create_public_share(
+        &self,
+        remote_path: &str,
+    ) -> impl Future<Output = Result<String, UiError>>;
 }
 
 /// Trait implemented by file collection views (such as icon grid and columnar list views).

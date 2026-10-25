@@ -69,13 +69,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let event_bus = EventBus::new(256);
     let shared_config = Arc::new(RwLock::new(config));
-    let coordinator = DesktopSyncCoordinator::new(shared_config, cache_dir, event_bus);
+    let coordinator = DesktopSyncCoordinator::new(shared_config, cache_dir, event_bus)
+        .with_config_path(config_path);
     let controller = DesktopUiController::new(coordinator.clone());
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     let _rt_guard = rt.enter();
+
+    rt.block_on(async {
+        controller.ensure_discovered_accounts().await;
+    });
 
     if args.headless
         || args.sync

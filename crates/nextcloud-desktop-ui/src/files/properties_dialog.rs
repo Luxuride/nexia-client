@@ -5,17 +5,20 @@ use gtk4::gdk;
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
+use nextcloud_rust_sdk::NextcloudPermissions;
 
 use crate::model::FileViewItem;
+use crate::widget::FileExplorerBackend;
 
 /// Dialog window presenting detailed file metadata, size, location, and share options.
 pub struct PropertiesDialog;
 
 impl PropertiesDialog {
     /// Presents the modal properties dialog for `item`.
-    pub fn present(
+    pub fn present<B: FileExplorerBackend>(
         parent: Option<&impl IsA<gtk4::Widget>>,
         item: &FileViewItem,
+        backend: &B,
         toast_overlay: &adw::ToastOverlay,
     ) {
         let root_window = parent
@@ -24,8 +27,8 @@ impl PropertiesDialog {
 
         let window = adw::Window::builder()
             .title(format!("“{}” Properties", item.name))
-            .default_width(420)
-            .default_height(460)
+            .default_width(440)
+            .default_height(480)
             .modal(true)
             .build();
 
@@ -57,11 +60,7 @@ impl PropertiesDialog {
             .build();
         general_group.add(&row_type);
 
-        let size_desc = if item.is_directory {
-            "Folder".to_string()
-        } else {
-            format!("{} ({} bytes)", item.size_formatted, item.size_bytes)
-        };
+        let size_desc = format!("{} ({} bytes)", item.size_formatted, item.size_bytes);
         let row_size = adw::ActionRow::builder()
             .title("Size")
             .subtitle(&size_desc)
@@ -92,45 +91,89 @@ impl PropertiesDialog {
             .title("Sharing & Access")
             .build();
 
-        let perms = item.permissions.as_deref().unwrap_or("Read & Write (Full)");
+        let (perms_label, perms_desc) = item
+            .permissions
+            .as_deref()
+            .map(|raw| {
+                let p = NextcloudPermissions::parse(raw);
+                (p.summary_label().to_string(), p.human_readable())
+            })
+            .unwrap_or_else(|| {
+                (
+                    "Read & Write (Full)".to_string(),
+                    "Full access (can read, write, delete, and share)".to_string(),
+                )
+            });
+
         let row_perms = adw::ActionRow::builder()
             .title("Permissions")
-            .subtitle(perms)
+            .subtitle(format!("{perms_label} — {perms_desc}"))
             .build();
         share_group.add(&row_perms);
 
-        let share_row = adw::ActionRow::builder()
-            .title("Share with Nextcloud")
-            .subtitle("Enable public link sharing and team collaboration")
-            .build();
-        let switch = gtk4::Switch::new();
-        switch.set_active(true);
-        switch.set_valign(gtk4::Align::Center);
-        share_row.add_suffix(&switch);
-        share_group.add(&share_row);
-
-        let share_link = format!(
-            "https://cloud.nextcloud.com/remote.php/dav/files/system{}",
-            item.path
-        );
         let row_share = adw::ActionRow::builder()
-            .title("Cloud Link")
-            .subtitle(&share_link)
+            .title("Public Link")
+            .subtitle("No public link generated yet")
             .build();
+
+        let share_btn = Button::with_label("Create Public Link");
+        share_btn.add_css_class("suggested-action");
+        share_btn.set_valign(gtk4::Align::Center);
 
         let copy_btn = Button::from_icon_name("edit-copy-symbolic");
         copy_btn.set_valign(gtk4::Align::Center);
-        copy_btn.set_tooltip_text(Some("Copy Cloud Link"));
+        copy_btn.set_tooltip_text(Some("Copy Public Link"));
+        copy_btn.set_visible(false);
 
-        let link_for_copy = share_link;
-        let toast = toast_overlay.clone();
+        let backend_clone = backend.clone();
+        let path_clone = item.path.clone();
+        let toast_clone = toast_overlay.clone();
+        let row_share_clone = row_share.clone();
+        let share_btn_clone = share_btn.clone();
+        let copy_btn_clone = copy_btn.clone();
+
+        share_btn.connect_clicked(move |_| {
+            share_btn_clone.set_sensitive(false);
+            share_btn_clone.set_label("Generating Link…");
+            let b = backend_clone.clone();
+            let p = path_clone.clone();
+            let t = toast_clone.clone();
+            let r = row_share_clone.clone();
+            let s_btn = share_btn_clone.clone();
+            let c_btn = copy_btn_clone.clone();
+
+            glib::MainContext::default().spawn_local(async move {
+                match b.create_public_share(&p).await {
+                    Ok(url) => {
+                        r.set_subtitle(&url);
+                        s_btn.set_visible(false);
+                        c_btn.set_visible(true);
+                        if let Some(display) = gdk::Display::default() {
+                            display.clipboard().set_text(&url);
+                        }
+                        t.add_toast(adw::Toast::new("Public link copied to clipboard"));
+                    }
+                    Err(e) => {
+                        s_btn.set_sensitive(true);
+                        s_btn.set_label("Retry Public Link");
+                        t.add_toast(adw::Toast::new(&format!("Failed to create link: {e}")));
+                    }
+                }
+            });
+        });
+
+        let row_share_for_copy = row_share.clone();
+        let toast_for_copy = toast_overlay.clone();
         copy_btn.connect_clicked(move |_| {
-            if let Some(display) = gdk::Display::default() {
-                display.clipboard().set_text(&link_for_copy);
-                toast.add_toast(adw::Toast::new("Cloud link copied to clipboard"));
+            if let Some(url) = row_share_for_copy.subtitle() {
+                if let Some(display) = gdk::Display::default() {
+                    display.clipboard().set_text(&url);
+                }
+                toast_for_copy.add_toast(adw::Toast::new("Public link copied to clipboard"));
             }
         });
 
+        row_share.add_suffix(&share_btn);
         row_share.add_suffix(&copy_btn);
         share_group.add(&row_share);
 

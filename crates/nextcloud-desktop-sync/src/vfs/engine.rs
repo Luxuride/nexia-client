@@ -214,25 +214,21 @@ impl<S: HierarchySeeder> VirtualSyncEngine<S> {
         Ok(())
     }
 
-    /// Lists direct children of a directory in the virtual tree.
+    /// Lists direct children of a directory in the virtual tree, computing recursive directory sizes.
     pub async fn list_children(
         &self,
         dir_path: &str,
     ) -> Result<Vec<VirtualEntrySummary>, SyncError> {
         let clean_path = normalize_path(dir_path).unwrap_or_else(|_| "/".to_string());
         let tree = self.tree.read().await;
-        Ok(tree
-            .children(&clean_path)
-            .into_iter()
-            .map(VirtualEntrySummary::from)
-            .collect())
+        Ok(tree.children_summaries(&clean_path))
     }
 
-    /// Retrieves summary information for a single node path.
+    /// Retrieves summary information for a single node path, computing recursive directory size.
     pub async fn get_entry(&self, path: &str) -> Result<Option<VirtualEntrySummary>, SyncError> {
         let clean_path = normalize_path(path).unwrap_or_else(|_| "/".to_string());
         let tree = self.tree.read().await;
-        Ok(tree.get(&clean_path).map(VirtualEntrySummary::from))
+        Ok(tree.entry_summary(&clean_path))
     }
 
     /// Inserts a new virtual directory node at `remote_path`.
@@ -553,6 +549,11 @@ mod tests {
             .await
             .expect("dehydrate placeholder");
         assert!(!cached.exists());
+
+        let docs_summary = vfs.get_entry("/Documents").await.unwrap().unwrap();
+        assert!(docs_summary.is_directory);
+        assert!(docs_summary.size >= 11);
+        assert!(docs_summary.directory_summary.is_some());
 
         // Rename resource
         let renamed = vfs

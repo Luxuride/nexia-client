@@ -106,6 +106,44 @@ impl AppConfig {
         }
     }
 
+    /// Synchronizes discovered desktop system accounts with persistent configuration.
+    ///
+    /// If real desktop system accounts are discovered from desktop SSO, any placeholder
+    /// dummy system account is automatically cleaned up.
+    pub fn sync_system_accounts(&mut self, system_accounts: Vec<Account>) {
+        if system_accounts.is_empty() {
+            self.ensure_system_account();
+            return;
+        }
+
+        // Remove placeholder dummy system accounts since real desktop accounts are available
+        self.accounts.retain(|acc| acc.id.0 != "system-account");
+
+        for sys in system_accounts {
+            if let Some(pos) = self.accounts.iter().position(|a| {
+                a.id == sys.id
+                    || (a.server.server_url == sys.server.server_url
+                        && a.credentials.username == sys.credentials.username)
+            }) {
+                self.accounts[pos].is_system = true;
+                if sys.avatar_path.is_some() && self.accounts[pos].avatar_path.is_none() {
+                    self.accounts[pos].avatar_path = sys.avatar_path;
+                }
+            } else {
+                self.accounts.push(sys);
+            }
+        }
+
+        let needs_fallback = self.active_account_id.is_none()
+            || !self
+                .accounts
+                .iter()
+                .any(|a| Some(&a.id) == self.active_account_id.as_ref());
+        if needs_fallback {
+            self.active_account_id = self.accounts.first().map(|a| a.id.clone());
+        }
+    }
+
     /// Saves configuration to the specified file path, creating parent directories if needed.
     pub fn save_to_path(&self, path: &Path) -> Result<(), CoreError> {
         if let Some(parent) = path.parent() {

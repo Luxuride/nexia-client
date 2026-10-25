@@ -24,7 +24,13 @@ pub fn launch_gtk_application(
         .application_id("com.nextcloud.desktop.rs")
         .build();
 
-    app.connect_startup(|_| {
+    let ctrl_for_startup = controller.clone();
+    app.connect_startup(move |_| {
+        let ctrl = ctrl_for_startup.clone();
+        glib::MainContext::default().spawn_local(async move {
+            ctrl.ensure_discovered_accounts().await;
+        });
+
         if let Some(settings) = gtk4::Settings::default() {
             let cursor_size = std::env::var("XCURSOR_SIZE")
                 .ok()

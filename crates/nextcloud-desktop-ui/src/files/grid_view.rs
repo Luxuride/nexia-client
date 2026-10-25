@@ -1,9 +1,8 @@
 //! Nautilus-style icon grid view using GTK 4 `FlowBox` with multi-selection, hover suggestions, and F2 renaming.
 
 use gtk4::{
-    Align, Box as GtkBox, EventControllerKey, FlowBox, FlowBoxChild, GestureClick, Image,
-    Justification, Label, Orientation, Overlay, PolicyType, ScrolledWindow, SelectionMode, gdk,
-    pango,
+    Align, Box as GtkBox, EventControllerKey, FlowBox, FlowBoxChild, Image, Justification, Label,
+    Orientation, Overlay, PolicyType, ScrolledWindow, SelectionMode, gdk, pango,
 };
 use libadwaita as adw;
 use libadwaita::prelude::*;
@@ -272,38 +271,6 @@ impl FileGridTile {
         card.append(&icon);
         card.append(&name);
         card.append(&sub);
-
-        // Direct primary double-click gesture to open files or navigate directories
-        let double_click = GestureClick::new();
-        double_click.set_button(1);
-        let b_click = backend.clone();
-        let toast_click = toast_overlay.clone();
-        let cb_click = on_refresh.clone();
-        let item_click = item.clone();
-        double_click.connect_pressed(move |_, n_press, _, _| {
-            if n_press == 2 {
-                let b = b_click.clone();
-                let toast = toast_click.clone();
-                let cb = cb_click.clone();
-                let item = item_click.clone();
-                glib::MainContext::default().spawn_local(async move {
-                    if item.is_directory {
-                        b.set_current_path(&item.path).await;
-                        cb();
-                    } else {
-                        match b.open_file(&item.path).await {
-                            Ok(path) => {
-                                launch_file_externally(&path);
-                                toast
-                                    .add_toast(adw::Toast::new(&format!("Opened “{}”", item.name)));
-                            }
-                            Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
-                        }
-                    }
-                });
-            }
-        });
-        card.add_controller(double_click);
 
         ItemContextMenu::attach(&card, item, backend, toast_overlay, on_refresh.clone());
         FileDragDrop::attach_source(&card, item);

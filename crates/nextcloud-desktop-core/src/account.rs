@@ -78,11 +78,18 @@ pub struct ServerConfig {
 }
 
 impl ServerConfig {
-    /// Creates a new server configuration ensuring stripped trailing slashes.
+    /// Creates a new server configuration ensuring stripped trailing slashes and authority credentials.
     pub fn new(server_url: impl Into<String>) -> Self {
         let mut url = server_url.into();
         while url.ends_with('/') {
             url.pop();
+        }
+        if let Some(scheme_idx) = url.find("://") {
+            let scheme = &url[..scheme_idx + 3];
+            let rest = &url[scheme_idx + 3..];
+            if let Some(at_idx) = rest.find('@') {
+                url = format!("{scheme}{}", &rest[at_idx + 1..]);
+            }
         }
         Self { server_url: url }
     }

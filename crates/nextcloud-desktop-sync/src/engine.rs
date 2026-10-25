@@ -3,13 +3,14 @@
 use nextcloud_rust_sdk::{
     BasicAuth, Client, DavPath, Depth, PropfindBody, SecretString, ServerUrl, StoreKey,
 };
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::error::SyncError;
 use crate::full_sync::FullSyncEngine;
 use crate::vfs::VirtualSyncEngine;
-use nextcloud_desktop_core::account::{Account, AccountId};
+use nextcloud_desktop_core::account::{Account, AccountId, ServerConfig};
 use nextcloud_desktop_core::config::{AppConfig, SyncMode};
 use nextcloud_desktop_core::events::EventBus;
 
@@ -17,10 +18,12 @@ use nextcloud_desktop_core::events::EventBus;
 #[derive(Clone)]
 pub struct DesktopSyncCoordinator {
     config: Arc<tokio::sync::RwLock<AppConfig>>,
-    vfs_engine: VirtualSyncEngine,
-    full_sync_engine: FullSyncEngine,
+    config_path: Option<PathBuf>,
+    cache_dir: PathBuf,
     event_bus: EventBus,
-    sdk_client: Arc<tokio::sync::RwLock<Option<Client>>>,
+    vfs_engines: Arc<tokio::sync::RwLock<HashMap<AccountId, VirtualSyncEngine>>>,
+    sdk_clients: Arc<tokio::sync::RwLock<HashMap<AccountId, Client>>>,
+    full_sync_engine: FullSyncEngine,
 }
 
 impl DesktopSyncCoordinator {
@@ -30,21 +33,60 @@ impl DesktopSyncCoordinator {
         cache_dir: PathBuf,
         event_bus: EventBus,
     ) -> Self {
-        let vfs_engine = VirtualSyncEngine::new(cache_dir, event_bus.clone());
         let full_sync_engine = FullSyncEngine::new(event_bus.clone());
 
         Self {
             config,
-            vfs_engine,
-            full_sync_engine,
+            config_path: None,
+            cache_dir,
             event_bus,
-            sdk_client: Arc::new(tokio::sync::RwLock::new(None)),
+            vfs_engines: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            sdk_clients: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            full_sync_engine,
         }
     }
 
-    /// Access the virtual sync engine.
-    pub fn vfs(&self) -> &VirtualSyncEngine {
-        &self.vfs_engine
+    /// Attaches a configuration file path for persistent state storage.
+    #[must_use]
+    pub fn with_config_path(mut self, path: PathBuf) -> Self {
+        self.config_path = Some(path);
+        self
+    }
+
+    /// Access the base cache directory path.
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache_dir
+    }
+
+    /// Access the virtual sync engine for the active account.
+    pub async fn active_vfs(&self) -> VirtualSyncEngine {
+        let active_id = self
+            .active_account()
+            .await
+            .map(|a| a.id)
+            .unwrap_or_else(|| AccountId("default".to_string()));
+
+        {
+            let map = self.vfs_engines.read().await;
+            if let Some(engine) = map.get(&active_id) {
+                return engine.clone();
+            }
+        }
+
+        let mut map = self.vfs_engines.write().await;
+        if let Some(engine) = map.get(&active_id) {
+            return engine.clone();
+        }
+
+        let account_vfs_dir = self
+            .cache_dir
+            .join("accounts")
+            .join(&active_id.0)
+            .join("vfs");
+        let _ = std::fs::create_dir_all(&account_vfs_dir);
+        let engine = VirtualSyncEngine::new(account_vfs_dir, self.event_bus.clone());
+        map.insert(active_id, engine.clone());
+        engine
     }
 
     /// Access the full sync engine.
@@ -57,34 +99,40 @@ impl DesktopSyncCoordinator {
         &self.event_bus
     }
 
-    /// Returns the active `nextcloud-rust-sdk` [`Client`] handle if configured.
-    pub async fn client(&self) -> Result<Option<Client>, SyncError> {
-        let account = match self.active_account().await {
-            Some(acc) => acc,
-            None => return Ok(None),
-        };
-
+    /// Returns an SDK [`Client`] instance configured with per-account storage and persistent encryption key.
+    pub async fn client_for_account(&self, account: &Account) -> Result<Option<Client>, SyncError> {
         if account.is_system || account.credentials.username.is_empty() {
             return Ok(None);
         }
 
         {
-            let current = self.sdk_client.read().await;
-            if let Some(ref c) = *current
-                && c.server_url().as_str() == account.server.server_url
-                && c.current_user_id().as_deref() == Some(&account.credentials.username)
-            {
-                return Ok(Some(c.clone()));
+            let clients = self.sdk_clients.read().await;
+            if let Some(client) = clients.get(&account.id) {
+                return Ok(Some(client.clone()));
             }
         }
 
+        let account_dir = self.cache_dir.join("accounts").join(&account.id.0);
+        let _ = std::fs::create_dir_all(&account_dir);
+
+        let auth_db = account_dir.join("auth.db");
+        let cache_db = account_dir.join("cache.db");
+        let key_file = account_dir.join("store.key");
+
+        let key = if key_file.exists() {
+            let hex = std::fs::read_to_string(&key_file)
+                .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+            StoreKey::from_hex(hex.trim(), &account.id.0)
+                .map_err(|e| SyncError::InvalidPath(e.to_string()))?
+        } else {
+            let generated =
+                StoreKey::generate().map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+            let _ = std::fs::write(&key_file, generated.to_hex());
+            generated
+        };
+
         let server_url = ServerUrl::parse(&account.server.server_url)
             .map_err(|err| SyncError::InvalidPath(err.to_string()))?;
-
-        let cache_dir = self.vfs_engine.cache_dir();
-        let auth_db = cache_dir.join(format!("auth_{}.db", account.id));
-        let cache_db = cache_dir.join(format!("cache_{}.db", account.id));
-        let key = StoreKey::generate().map_err(|e| SyncError::InvalidPath(e.to_string()))?;
 
         let secret = SecretString::new(account.credentials.secret());
         let new_client = Client::builder()
@@ -96,9 +144,18 @@ impl DesktopSyncCoordinator {
             .await
             .map_err(|err| SyncError::InvalidPath(err.to_string()))?;
 
-        let mut lock = self.sdk_client.write().await;
-        *lock = Some(new_client.clone());
+        let mut clients = self.sdk_clients.write().await;
+        clients.insert(account.id.clone(), new_client.clone());
         Ok(Some(new_client))
+    }
+
+    /// Returns the active `nextcloud-rust-sdk` [`Client`] handle if configured.
+    pub async fn client(&self) -> Result<Option<Client>, SyncError> {
+        let account = match self.active_account().await {
+            Some(acc) => acc,
+            None => return Ok(None),
+        };
+        self.client_for_account(&account).await
     }
 
     /// Helper resolving active account, SDK client, and auth credentials.
@@ -107,43 +164,61 @@ impl DesktopSyncCoordinator {
         if account.is_system || account.credentials.password.is_empty() {
             return None;
         }
-        let client = self.client().await.ok()??;
+        let client = self.client_for_account(&account).await.ok()??;
         let secret = SecretString::new(account.credentials.secret());
         let auth = BasicAuth::new(&account.credentials.username, secret);
         Some((account, client, auth))
     }
 
-    /// Returns a list of all configured and discovered desktop system accounts.
-    pub async fn accounts(&self) -> Vec<Account> {
-        let mut accounts = self.config.read().await.accounts.clone();
-
-        // Discover external desktop system accounts from GNOME Online Accounts, KDE, and Nextcloud configs
+    /// Discovers external desktop system accounts (SSO), resolves credentials, and synchronizes configuration.
+    pub async fn sync_discovered_accounts(&self) {
         let sso = nextcloud_rust_sdk::DesktopSso::new();
-        for disc in sso.discover_accounts().await {
-            let host = disc.server_url.as_str().trim_end_matches('/');
-            let id = format!("sso-{}-{}", host, disc.username);
-            let already_present = accounts.iter().any(|a| {
-                a.id.0 == id
-                    || (a.server.server_url == host && a.credentials.username == disc.username)
+        let keyring = nextcloud_rust_sdk::PlatformKeyring::new();
+        let discovered = sso.discover_accounts().await;
+
+        let (_, _, host_avatar) = Account::detect_host_user_info();
+
+        let mut system_accounts = Vec::new();
+        for disc in discovered {
+            let clean_server = ServerConfig::new(disc.server_url.as_str()).server_url;
+            let id = format!("sso-{clean_server}-{}", disc.username);
+
+            let label = disc.display_name.clone().unwrap_or_else(|| {
+                let domain = clean_server
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://");
+                format!("{} ({domain})", disc.username)
             });
-            if !already_present {
-                let label = disc.display_name.unwrap_or_else(|| {
-                    let domain = host
-                        .trim_start_matches("https://")
-                        .trim_start_matches("http://");
-                    format!("{} ({domain})", disc.username)
-                });
-                accounts.push(Account::system_sso_account(
-                    id,
-                    label,
-                    nextcloud_desktop_core::account::ServerConfig::new(host),
-                    nextcloud_desktop_core::account::AccountCredentials::new(&disc.username, ""),
-                    None,
-                ));
-            }
+
+            let password = sso
+                .resolve_credentials(&disc, &keyring)
+                .await
+                .ok()
+                .flatten()
+                .map(|p| p.into_inner())
+                .unwrap_or_default();
+
+            system_accounts.push(Account::system_sso_account(
+                id,
+                label,
+                ServerConfig::new(&clean_server),
+                nextcloud_desktop_core::account::AccountCredentials::new(&disc.username, password),
+                host_avatar.clone(),
+            ));
         }
 
-        accounts
+        {
+            let mut conf = self.config.write().await;
+            conf.sync_system_accounts(system_accounts);
+            if let Some(ref path) = self.config_path {
+                let _ = conf.save_to_path(path);
+            }
+        }
+    }
+
+    /// Returns a list of all configured desktop accounts.
+    pub async fn accounts(&self) -> Vec<Account> {
+        self.config.read().await.accounts.clone()
     }
 
     /// Returns the currently active account if configured.
@@ -159,12 +234,18 @@ impl DesktopSyncCoordinator {
     pub async fn switch_account(&self, account_id: &AccountId) -> Result<(), SyncError> {
         {
             let mut conf = self.config.write().await;
+            if !conf.accounts.iter().any(|a| &a.id == account_id) {
+                return Err(SyncError::NotFound(format!(
+                    "Account {} not found",
+                    account_id.0
+                )));
+            }
             conf.active_account_id = Some(account_id.clone());
+            if let Some(ref path) = self.config_path {
+                let _ = conf.save_to_path(path);
+            }
         }
-        {
-            let mut lock = self.sdk_client.write().await;
-            *lock = None;
-        }
+
         let _ = self.refresh_virtual_tree().await;
         Ok(())
     }
@@ -175,19 +256,21 @@ impl DesktopSyncCoordinator {
             let mut conf = self.config.write().await;
             conf.upsert_account(account.clone());
             conf.active_account_id = Some(account.id);
+            if let Some(ref path) = self.config_path {
+                let _ = conf.save_to_path(path);
+            }
         }
-        {
-            let mut lock = self.sdk_client.write().await;
-            *lock = None;
-        }
+
         let _ = self.refresh_virtual_tree().await;
         Ok(())
     }
 
     /// Refreshes the virtual file tree for the active configured account, or resets to local virtual hierarchy.
     pub async fn refresh_virtual_tree(&self) -> Result<usize, SyncError> {
+        let vfs = self.active_vfs().await;
+
         let Some((account, client, auth)) = self.active_dav_context().await else {
-            return Ok(self.vfs_engine.reset_default_hierarchy().await);
+            return Ok(vfs.reset_default_hierarchy().await);
         };
 
         let dav_client = client.dav(&auth);
@@ -201,39 +284,38 @@ impl DesktopSyncCoordinator {
                 tracing::warn!(
                     "Remote WebDAV PROPFIND failed ({err}), falling back to default tree"
                 );
-                return Ok(self.vfs_engine.reset_default_hierarchy().await);
+                return Ok(vfs.reset_default_hierarchy().await);
             }
         };
 
         let dav_prefix = format!("/remote.php/dav/files/{}", account.credentials.username);
-        self.vfs_engine
-            .populate_from_resources(&dav_prefix, &resources)
-            .await
+        vfs.populate_from_resources(&dav_prefix, &resources).await
     }
 
     /// Performs on-demand hydration for a virtual file, downloading via SDK or using local cache.
     pub async fn hydrate_file(&self, remote_path: &str) -> Result<PathBuf, SyncError> {
+        let vfs = self.active_vfs().await;
+
         let Some((account, client, auth)) = self.active_dav_context().await else {
-            return self.vfs_engine.hydrate_local_placeholder(remote_path).await;
+            return vfs.hydrate_local_placeholder(remote_path).await;
         };
 
         let dav_client = client.dav(&auth);
-        match self
-            .vfs_engine
+        match vfs
             .hydrate_file(&account.credentials.username, &dav_client, remote_path)
             .await
         {
             Ok(path) => Ok(path),
             Err(err) => {
                 tracing::warn!("Remote hydration failed ({err}), using local placeholder content");
-                self.vfs_engine.hydrate_local_placeholder(remote_path).await
+                vfs.hydrate_local_placeholder(remote_path).await
             }
         }
     }
 
     /// Dehydrates a file node, freeing local cache space.
     pub async fn dehydrate_file(&self, remote_path: &str) -> Result<(), SyncError> {
-        self.vfs_engine.dehydrate_file(remote_path).await
+        self.active_vfs().await.dehydrate_file(remote_path).await
     }
 
     /// Creates a new directory in the virtual tree and (if an account is configured) on the remote WebDAV server.
@@ -244,7 +326,7 @@ impl DesktopSyncCoordinator {
             let _ = dav_client.mkcol(&dav_path).await;
         }
 
-        self.vfs_engine.create_directory(remote_path).await
+        self.active_vfs().await.create_directory(remote_path).await
     }
 
     /// Creates a new file in the virtual tree and uploads it if an account is configured.
@@ -261,10 +343,13 @@ impl DesktopSyncCoordinator {
             let _ = dav_client.put(&dav_path, content.to_vec(), None).await;
         }
 
-        self.vfs_engine.create_file(&clean_path, content).await
+        self.active_vfs()
+            .await
+            .create_file(&clean_path, content)
+            .await
     }
 
-    /// Renames a file or directory in the virtual tree and (if an account is configured) on the remote WebDAV server via MOVE.
+    /// Renames a file or directory in the virtual tree and on the remote WebDAV server via MOVE.
     pub async fn rename_resource(
         &self,
         old_remote_path: &str,
@@ -286,7 +371,10 @@ impl DesktopSyncCoordinator {
             let _ = dav_client.move_(&src_dav, &dst_dav, false).await;
         }
 
-        self.vfs_engine.rename_entry(&clean_old, &clean_new).await?;
+        self.active_vfs()
+            .await
+            .rename_entry(&clean_old, &clean_new)
+            .await?;
         Ok(clean_new)
     }
 
@@ -313,7 +401,8 @@ impl DesktopSyncCoordinator {
             let _ = dav_client.move_(&src_dav, &dst_dav, false).await;
         }
 
-        self.vfs_engine
+        self.active_vfs()
+            .await
             .move_entry(&clean_src, &clean_dest_dir)
             .await
     }
@@ -328,7 +417,46 @@ impl DesktopSyncCoordinator {
             let _ = dav_client.delete(&dav_path).await;
         }
 
-        self.vfs_engine.remove_entry(remote_path).await
+        self.active_vfs().await.remove_entry(remote_path).await
+    }
+
+    /// Creates or retrieves a public link share for a remote path using Nextcloud OCS Sharing API.
+    pub async fn create_public_share(&self, remote_path: &str) -> Result<String, SyncError> {
+        let clean_path = format!("/{}", remote_path.trim_matches('/'));
+
+        if let Some((account, client, auth)) = self.active_dav_context().await {
+            let shares_client = client.shares(&auth);
+            match shares_client.get_or_create_public_link(&clean_path).await {
+                Ok(share) => {
+                    if let Some(url) = share
+                        .public_url(&account.server.server_url)
+                        .or_else(|| share.url().map(|s| s.to_string()))
+                    {
+                        return Ok(url);
+                    }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "Failed to create public share via OCS API ({err}), falling back to direct server link"
+                    );
+                }
+            }
+
+            let base = account.server.server_url.trim_end_matches('/');
+            let encoded_path = clean_path.trim_start_matches('/');
+            Ok(format!("{base}/index.php/apps/files/?dir=/{encoded_path}"))
+        } else {
+            let server_url = self
+                .active_account()
+                .await
+                .map(|a| a.server.server_url)
+                .unwrap_or_else(|| "https://cloud.nextcloud.com".to_string());
+            let base = server_url.trim_end_matches('/');
+            Ok(format!(
+                "{base}/index.php/apps/files/{}",
+                clean_path.trim_start_matches('/')
+            ))
+        }
     }
 
     /// Runs synchronization on all enabled two-way sync folder pairs.
@@ -353,7 +481,7 @@ impl DesktopSyncCoordinator {
                 continue;
             };
 
-            let client = match self.client().await {
+            let client = match self.client_for_account(account).await {
                 Ok(Some(c)) => c,
                 _ => continue,
             };
@@ -395,9 +523,10 @@ mod tests {
         let coordinator =
             DesktopSyncCoordinator::new(config_lock, temp_dir.clone(), EventBus::new(100));
 
+        coordinator.sync_discovered_accounts().await;
+
         let accounts = coordinator.accounts().await;
         assert!(!accounts.is_empty());
-        assert!(accounts[0].is_system);
         let initial_count = accounts.len();
 
         let active = coordinator.active_account().await.expect("has active");
@@ -420,13 +549,13 @@ mod tests {
         let active2 = coordinator.active_account().await.expect("has active");
         assert_eq!(active2.id, alice_id);
 
-        let sys_id = Account::system_account().id;
+        let first_id = accounts[0].id.clone();
         coordinator
-            .switch_account(&sys_id)
+            .switch_account(&first_id)
             .await
             .expect("switch succeeds");
         let active3 = coordinator.active_account().await.expect("has active");
-        assert_eq!(active3.id, sys_id);
+        assert_eq!(active3.id, first_id);
 
         let _ = std::fs::remove_dir_all(temp_dir);
     }

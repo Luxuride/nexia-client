@@ -89,7 +89,8 @@ impl DesktopUiController {
         let path = self.current_path().await;
         let entries = self
             .coordinator
-            .vfs()
+            .active_vfs()
+            .await
             .list_children(&path)
             .await
             .map_err(|err| UiError::Controller(err.to_string()))?;
@@ -105,11 +106,7 @@ impl DesktopUiController {
                     FileSyncStatus::CloudPlaceholder
                 };
 
-                let size_formatted = if e.is_directory {
-                    "Folder".to_string()
-                } else {
-                    FileViewItem::format_bytes(e.size)
-                };
+                let size_formatted = e.display_size();
 
                 FileViewItem {
                     path: e.path,
@@ -255,12 +252,14 @@ impl DesktopUiController {
         self.coordinator.active_account().await.map(|a| a.id)
     }
 
-    /// Switches the active account profile to `account_id`.
+    /// Switches the active account profile to `account_id` and resets view navigation to root.
     pub async fn switch_account(&self, account_id: &AccountId) -> Result<(), UiError> {
         self.coordinator
             .switch_account(account_id)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::Controller(err.to_string()))?;
+        self.set_current_path("/").await;
+        Ok(())
     }
 
     /// Adds a new account profile to the application.
@@ -269,6 +268,19 @@ impl DesktopUiController {
             .add_account(account)
             .await
             .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Creates or retrieves a public share link for a virtual file or directory.
+    pub async fn create_public_share(&self, remote_path: &str) -> Result<String, UiError> {
+        self.coordinator
+            .create_public_share(remote_path)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
+    /// Synchronizes discovered system accounts on application startup.
+    pub async fn ensure_discovered_accounts(&self) {
+        self.coordinator.sync_discovered_accounts().await;
     }
 }
 
@@ -346,7 +358,7 @@ impl FileExplorerBackend for DesktopUiController {
     }
 
     fn cache_dir_display(&self) -> String {
-        self.coordinator.vfs().cache_dir().display().to_string()
+        self.coordinator.cache_dir().display().to_string()
     }
 
     async fn accounts(&self) -> Vec<Account> {
@@ -363,5 +375,9 @@ impl FileExplorerBackend for DesktopUiController {
 
     async fn add_account(&self, account: Account) -> Result<(), UiError> {
         self.add_account(account).await
+    }
+
+    async fn create_public_share(&self, remote_path: &str) -> Result<String, UiError> {
+        self.create_public_share(remote_path).await
     }
 }

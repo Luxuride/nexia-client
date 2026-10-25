@@ -122,11 +122,12 @@ impl ItemContextMenu {
 
         {
             let pop = popover.clone();
+            let b = backend.clone();
             let toast = toast_overlay.clone();
             let item_clone = item.clone();
             properties_btn.connect_clicked(move |btn| {
                 pop.popdown();
-                crate::files::PropertiesDialog::present(Some(btn), &item_clone, &toast);
+                crate::files::PropertiesDialog::present(Some(btn), &item_clone, &b, &toast);
             });
         }
 

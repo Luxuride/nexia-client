@@ -1,8 +1,8 @@
 //! Nautilus-style detailed list view with multi-selection, hover suggestions, and inline actions.
 
 use gtk4::{
-    Align, Box as GtkBox, Button, EventControllerKey, GestureClick, Image, Label, ListBox,
-    ListBoxRow, Orientation, PolicyType, ScrolledWindow, SelectionMode, Separator, gdk, pango,
+    Align, Box as GtkBox, Button, EventControllerKey, Image, Label, ListBox, ListBoxRow,
+    Orientation, PolicyType, ScrolledWindow, SelectionMode, Separator, gdk, pango,
 };
 use libadwaita as adw;
 use libadwaita::prelude::*;
@@ -408,38 +408,6 @@ impl FileListRow {
         hbox.append(&type_lbl);
         hbox.append(&size_lbl);
         hbox.append(&actions);
-
-        // Direct primary double-click gesture to open files or navigate directories
-        let double_click = GestureClick::new();
-        double_click.set_button(1);
-        let b_click = backend.clone();
-        let toast_click = toast_overlay.clone();
-        let cb_click = on_refresh.clone();
-        let item_click = item.clone();
-        double_click.connect_pressed(move |_, n_press, _, _| {
-            if n_press == 2 {
-                let b = b_click.clone();
-                let toast = toast_click.clone();
-                let cb = cb_click.clone();
-                let item = item_click.clone();
-                glib::MainContext::default().spawn_local(async move {
-                    if item.is_directory {
-                        b.set_current_path(&item.path).await;
-                        cb();
-                    } else {
-                        match b.open_file(&item.path).await {
-                            Ok(path) => {
-                                launch_file_externally(&path);
-                                toast
-                                    .add_toast(adw::Toast::new(&format!("Opened “{}”", item.name)));
-                            }
-                            Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
-                        }
-                    }
-                });
-            }
-        });
-        hbox.add_controller(double_click);
 
         ItemContextMenu::attach(&hbox, item, backend, toast_overlay, on_refresh.clone());
         FileDragDrop::attach_source(&hbox, item);
