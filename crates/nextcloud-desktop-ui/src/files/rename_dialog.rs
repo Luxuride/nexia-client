@@ -67,13 +67,25 @@ impl RenameDialog {
         dialog.add_response("cancel", "Cancel");
         dialog.add_response("rename", "Rename");
         dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
-        dialog.set_default_response(Some("rename"));
         dialog.set_close_response("cancel");
 
-        // Pressing Enter in the text entry triggers the "rename" response
+        // Keep the Rename button unselected initially until the user enters a modified, valid name
+        dialog.set_response_enabled("rename", false);
+
+        let dialog_for_change = dialog.clone();
+        let old_name_for_change = item.name.clone();
+        entry.connect_text_notify(move |e| {
+            let text = e.text().to_string().trim().to_string();
+            let is_valid = !text.is_empty() && text != old_name_for_change && !text.contains('/');
+            dialog_for_change.set_response_enabled("rename", is_valid);
+        });
+
+        // Pressing Enter in the text entry triggers the "rename" response if valid
         let dialog_for_activate = dialog.clone();
         entry.connect_activate(move |_| {
-            dialog_for_activate.response("rename");
+            if dialog_for_activate.is_response_enabled("rename") {
+                dialog_for_activate.response("rename");
+            }
         });
 
         let b = backend.clone();

@@ -79,9 +79,10 @@ impl ItemContextMenu {
             let toast = toast_overlay.clone();
             let cb = on_refresh.clone();
             let item_clone = item.clone();
-            rename_btn.connect_clicked(move |btn| {
+            let target_widget = target.clone();
+            rename_btn.connect_clicked(move |_| {
                 pop.popdown();
-                RenameDialog::present(Some(btn), &item_clone, &b, &toast, cb.clone());
+                RenameDialog::present(Some(&target_widget), &item_clone, &b, &toast, cb.clone());
             });
         }
 

@@ -319,6 +319,7 @@ impl FileListRow {
         };
         let open_btn = Button::from_icon_name(open_icon);
         open_btn.add_css_class("flat");
+        open_btn.set_focusable(false);
         open_btn.set_tooltip_text(Some(if item.is_directory {
             "Open Folder"
         } else {
@@ -358,6 +359,7 @@ impl FileListRow {
         // Rename button
         let rename_btn = Button::from_icon_name("edit-rename-symbolic");
         rename_btn.add_css_class("flat");
+        rename_btn.set_focusable(false);
         rename_btn.set_tooltip_text(Some("Rename (F2)"));
 
         {
@@ -373,6 +375,7 @@ impl FileListRow {
         // Delete button
         let del_btn = Button::from_icon_name("user-trash-symbolic");
         del_btn.add_css_class("flat");
+        del_btn.set_focusable(false);
         del_btn.set_tooltip_text(Some("Delete"));
 
         {
