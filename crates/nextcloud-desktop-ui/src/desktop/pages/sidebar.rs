@@ -24,12 +24,18 @@ impl NavigationSidebar {
         on_page_selected: Rc<dyn Fn(NavigationPage)>,
     ) -> Self {
         let container = GtkBox::new(Orientation::Vertical, 0);
-        container.set_width_request(210);
+        container.set_size_request(220, -1);
+        container.set_width_request(220);
         container.set_vexpand(true);
+        container.set_hexpand(false);
+        container.set_halign(Align::Start);
+        container.add_css_class("navigation-sidebar-fixed");
 
         // Nextcloud Server Brand Banner Card
         let banner = GtkBox::new(Orientation::Vertical, 4);
         banner.add_css_class("nextcloud-server-banner");
+        banner.set_hexpand(false);
+        banner.set_halign(Align::Fill);
 
         let top_row = GtkBox::new(Orientation::Horizontal, 8);
         top_row.set_valign(Align::Center);
@@ -77,6 +83,8 @@ impl NavigationSidebar {
         title_label.add_css_class("nextcloud-server-title");
         title_label.set_halign(Align::Start);
         title_label.set_hexpand(true);
+        title_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        title_label.set_max_width_chars(13);
 
         top_row.append(&icon_box);
         top_row.append(&title_label);
@@ -89,6 +97,7 @@ impl NavigationSidebar {
         slogan_label.add_css_class("nextcloud-server-slogan");
         slogan_label.set_halign(Align::Start);
         slogan_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        slogan_label.set_max_width_chars(20);
 
         // Apply theme color immediately if known
         if let Some(ref theme) = initial_theme
@@ -104,6 +113,8 @@ impl NavigationSidebar {
         status_dot.set_valign(Align::Center);
         let status_label = Label::new(Some("Online"));
         status_label.add_css_class("nextcloud-status-badge");
+        status_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+        status_label.set_max_width_chars(15);
 
         badge_row.append(&status_dot);
         badge_row.append(&status_label);
@@ -202,6 +213,8 @@ impl NavigationSidebar {
         let list_box = ListBox::new();
         list_box.set_selection_mode(SelectionMode::Single);
         list_box.add_css_class("navigation-sidebar");
+        list_box.set_hexpand(false);
+        list_box.set_halign(Align::Fill);
 
         let mut first_row: Option<ListBoxRow> = None;
         for page in NavigationPage::all() {
@@ -226,7 +239,9 @@ impl NavigationSidebar {
 
         let scroll = ScrolledWindow::new();
         scroll.set_hscrollbar_policy(PolicyType::Never);
+        scroll.set_vscrollbar_policy(PolicyType::Automatic);
         scroll.set_vexpand(true);
+        scroll.set_hexpand(false);
         scroll.set_child(Some(&list_box));
 
         container.append(&scroll);
@@ -271,6 +286,8 @@ fn build_sidebar_row(icon_name: &str, title: &str) -> ListBoxRow {
     let label = Label::new(Some(title));
     label.set_halign(Align::Start);
     label.set_hexpand(true);
+    label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+    label.set_max_width_chars(16);
 
     hbox.append(&icon);
     hbox.append(&label);
@@ -302,6 +319,11 @@ pub fn apply_server_theme_color(color_hex: &str, text_color: Option<&str>) {
         @define-color accent_color {clean_hex};
         @define-color accent_bg_color {clean_hex};
 
+        .navigation-sidebar-fixed {{
+            min-width: 220px !important;
+            max-width: 220px !important;
+            width: 220px !important;
+        }}
         .nextcloud-server-banner {{
             background: linear-gradient(135deg, {clean_hex} 0%, {darker_hex} 100%);
             color: {text_hex};

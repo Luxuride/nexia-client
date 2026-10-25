@@ -73,6 +73,12 @@ pub fn launch_gtk_application(
             @define-color accent_color #0082c9;
             @define-color accent_bg_color #0082c9;
 
+            .navigation-sidebar-fixed {
+                min-width: 220px !important;
+                max-width: 220px !important;
+                width: 220px !important;
+            }
+
             .nextcloud-server-banner {
                 background: linear-gradient(135deg, #0082c9 0%, #005a8e 100%);
                 color: #ffffff;
@@ -305,8 +311,11 @@ fn build_ui(
             header_for_nav.set_page_subtitle(page.title());
         }),
     );
-    sidebar.root_widget().set_size_request(210, -1);
+    sidebar.root_widget().set_width_request(220);
+    sidebar.root_widget().set_size_request(220, -1);
     sidebar.root_widget().set_hexpand(false);
+    sidebar.root_widget().set_halign(gtk4::Align::Start);
+    sidebar.root_widget().add_css_class("navigation-sidebar-fixed");
 
     let sidebar_sep = gtk4::Separator::new(Orientation::Vertical);
 
