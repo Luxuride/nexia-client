@@ -20,7 +20,7 @@ impl SettingsPage {
 
         // 1. Nextcloud Account & System Startup
         let account_group = adw::PreferencesGroup::builder()
-            .title("Application & System Startup")
+            .title("Application and System Startup")
             .description("System integration and autostart preferences.")
             .build();
 
@@ -45,7 +45,7 @@ impl SettingsPage {
 
         // 2. Virtual File System Cache & Disk Usage
         let storage_group = adw::PreferencesGroup::builder()
-            .title("Local Storage & Cache")
+            .title("Local Storage and Cache")
             .description(
                 "Local disk storage used for encrypted databases, thumbnails, and hydrated files.",
             )

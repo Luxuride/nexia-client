@@ -22,7 +22,16 @@ static SUPPRESS_GTK_LOGS_ONCE: Once = Once::new();
 /// Suppresses noisy GTK and GLib logging to stderr.
 pub fn suppress_gtk_logs() {
     SUPPRESS_GTK_LOGS_ONCE.call_once(|| {
-        glib::log_set_writer_func(|_level, _fields| glib::LogWriterOutput::Handled);
+        glib::log_set_writer_func(|level, fields| {
+            if matches!(
+                level,
+                glib::LogLevel::Error | glib::LogLevel::Critical | glib::LogLevel::Warning
+            ) {
+                glib::log_writer_default(level, fields)
+            } else {
+                glib::LogWriterOutput::Handled
+            }
+        });
     });
 }
 
@@ -197,12 +206,16 @@ pub fn launch_gtk_application(
     let win_for_activate = main_window.clone();
 
     app.connect_activate(move |app| {
+        tracing::info!("Application activate event received");
         if hold_for_activate.borrow().is_none() {
             // Keep the GApplication alive when the window is hidden to the background tray
             *hold_for_activate.borrow_mut() = Some(app.hold());
+            tracing::info!("Building UI...");
             let win = build_ui(app, controller.clone(), start_minimized);
             *win_for_activate.borrow_mut() = Some(win);
+            tracing::info!("UI built successfully");
         } else if let Some(ref win) = *win_for_activate.borrow() {
+            tracing::info!("Presenting existing main window");
             win.set_visible(true);
             win.present();
         }
@@ -376,7 +389,9 @@ fn build_ui(
                     refresh_for_tray();
                 }
                 TrayAction::Quit => {
+                    tracing::info!("Quitting Nextcloud Desktop from app bar tray");
                     app_for_tray.quit();
+                    std::process::exit(0);
                 }
             }
         }

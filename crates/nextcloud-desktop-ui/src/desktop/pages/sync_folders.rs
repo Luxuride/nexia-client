@@ -1,5 +1,6 @@
 //! Two-way local folder synchronization page component.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use gtk4::prelude::*;
@@ -104,17 +105,20 @@ impl SyncFoldersPage {
         let toast_list = toast_overlay.clone();
         let grp_list = syncs_group;
         let page_for_dialog = page.clone();
+        let tracked_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
+        let tracked_list = tracked_rows.clone();
 
         let refresh_list = Rc::new(move || {
             let b = b_list.clone();
             let toast = toast_list.clone();
             let grp = grp_list.clone();
             let pg = page_for_dialog.clone();
+            let tracked = tracked_list.clone();
 
             glib::MainContext::default().spawn_local(async move {
                 // Clear existing mount rows
-                while let Some(child) = grp.first_child() {
-                    grp.remove(&child);
+                for r in tracked.borrow_mut().drain(..) {
+                    grp.remove(&r);
                 }
 
                 let mounts = b.sync_mounts().await;
@@ -127,6 +131,7 @@ impl SyncFoldersPage {
                         .build();
                     empty_row.add_prefix(&Image::from_icon_name("folder-symbolic"));
                     grp.add(&empty_row);
+                    tracked.borrow_mut().push(empty_row);
                     return;
                 }
 
@@ -247,6 +252,7 @@ impl SyncFoldersPage {
 
                     row.add_suffix(&settings_btn);
                     grp.add(&row);
+                    tracked.borrow_mut().push(row);
                 }
             });
         });
