@@ -55,6 +55,7 @@ pub struct DesktopSyncCoordinator {
     pub(crate) fuse_tree:
         Arc<tokio::sync::RwLock<Option<Arc<std::sync::RwLock<nextcloud_rust_sdk::VirtualTree>>>>>,
     pub(crate) fuse_mountpoint: Arc<tokio::sync::RwLock<Option<PathBuf>>>,
+    pub(crate) last_root_etags: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
 }
 
 impl DesktopSyncCoordinator {
@@ -99,6 +100,7 @@ impl DesktopSyncCoordinator {
             fuse_session: Arc::new(tokio::sync::Mutex::new(None)),
             fuse_tree: Arc::new(tokio::sync::RwLock::new(None)),
             fuse_mountpoint: Arc::new(tokio::sync::RwLock::new(None)),
+            last_root_etags: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
         };
 
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
@@ -145,21 +147,16 @@ impl DesktopSyncCoordinator {
                 });
             }
 
-            // Periodic background WebDAV synchronizer
-            let periodic_coord = coord.clone();
+            // Periodic background WebDAV synchronizer & remote change detector across all accounts
+            let monitor_coord = coord.clone();
             rt_handle.spawn(async move {
-                // Short delay after startup before running initial sync
+                // Short delay after startup before running initial check
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                if periodic_coord.active_client().await.is_some() {
-                    periodic_coord.sync_all_mounts().await;
-                }
+                monitor_coord.check_remote_changes_all_accounts().await;
 
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-                    if periodic_coord.active_client().await.is_some() {
-                        let _ = periodic_coord.refresh_virtual_tree().await;
-                        periodic_coord.sync_all_mounts().await;
-                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    monitor_coord.check_remote_changes_all_accounts().await;
                 }
             });
         }

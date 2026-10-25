@@ -63,6 +63,11 @@ impl AsyncHydrator for DesktopHydrator {
         let coord = self.coordinator.clone();
         let paths = paths.to_vec();
         tokio::spawn(async move {
+            if let Some(first) = paths.first()
+                && let Some(parent) = nextcloud_rust_sdk::parent_path(first)
+            {
+                let _ = coord.refresh_path(&parent).await;
+            }
             coord.batch_prefetch_thumbnails(paths, 256);
         });
     }

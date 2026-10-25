@@ -110,6 +110,8 @@ impl SyncFoldersPage {
         let page_for_dialog = page.clone();
         let tracked_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
         let tracked_list = tracked_rows.clone();
+        let refresh_gen: Rc<std::cell::Cell<u64>> = Rc::new(std::cell::Cell::new(0));
+        let gen_counter = refresh_gen.clone();
 
         let refresh_holder: RefreshHolder = Rc::new(RefCell::new(None));
         let rh = refresh_holder.clone();
@@ -121,14 +123,23 @@ impl SyncFoldersPage {
             let pg = page_for_dialog.clone();
             let tracked = tracked_list.clone();
             let rh_c = rh.clone();
+            let counter = gen_counter.clone();
+
+            let my_gen = counter.get().wrapping_add(1);
+            counter.set(my_gen);
 
             glib::MainContext::default().spawn_local(async move {
-                // Clear existing mount rows
+                let mounts = b.sync_mounts().await;
+
+                // Discard render if a newer refresh was triggered while awaiting
+                if counter.get() != my_gen {
+                    return;
+                }
+
+                // Clear existing mount rows right before populating
                 for r in tracked.borrow_mut().drain(..) {
                     grp.remove(&r);
                 }
-
-                let mounts = b.sync_mounts().await;
                 if mounts.is_empty() {
                     let empty_row = adw::ActionRow::builder()
                         .title("No Folders Configured")
@@ -305,8 +316,7 @@ impl SyncFoldersPage {
                 match event {
                     nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. }
                     | nextcloud_desktop_core::events::DesktopEvent::AccountSignedOut { .. }
-                    | nextcloud_desktop_core::events::DesktopEvent::SyncMountRemoved { .. }
-                    | nextcloud_desktop_core::events::DesktopEvent::SyncCompleted { .. } => {
+                    | nextcloud_desktop_core::events::DesktopEvent::SyncMountRemoved { .. } => {
                         ref_for_events();
                     }
                     _ => {}

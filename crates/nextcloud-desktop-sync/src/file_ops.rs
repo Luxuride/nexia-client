@@ -87,6 +87,21 @@ impl DesktopSyncCoordinator {
             }
         };
 
+        // Sync to running FUSE in-memory tree and persist tree.json
+        if let Ok(tree_snap) = vfs.snapshot().await {
+            if let Some(ref ft_lock) = *self.fuse_tree.read().await
+                && let Ok(mut guard) = ft_lock.write()
+            {
+                *guard = tree_snap.clone();
+            }
+            if let Some(acc) = self.active_account().await {
+                let tree_file = self.account_vfs_dir(&acc.id.0).join("tree.json");
+                if let Ok(json) = serde_json::to_string_pretty(&tree_snap) {
+                    let _ = std::fs::write(&tree_file, json);
+                }
+            }
+        }
+
         self.event_bus.emit(
             nextcloud_desktop_core::events::DesktopEvent::VfsTreeUpdated {
                 node_count: inserted,
@@ -172,6 +187,21 @@ impl DesktopSyncCoordinator {
             .populate_from_resources(&dav_prefix, summaries.clone())
             .await
             .unwrap_or(0);
+
+        // Sync to running FUSE in-memory tree and persist tree.json
+        if let Ok(tree_snap) = vfs.snapshot().await {
+            if let Some(ref ft_lock) = *self.fuse_tree.read().await
+                && let Ok(mut guard) = ft_lock.write()
+            {
+                *guard = tree_snap.clone();
+            }
+            if let Some(acc) = self.active_account().await {
+                let tree_file = self.account_vfs_dir(&acc.id.0).join("tree.json");
+                if let Ok(json) = serde_json::to_string_pretty(&tree_snap) {
+                    let _ = std::fs::write(&tree_file, json);
+                }
+            }
+        }
 
         self.event_bus.emit(
             nextcloud_desktop_core::events::DesktopEvent::VfsTreeUpdated {
@@ -935,6 +965,163 @@ impl DesktopSyncCoordinator {
         }
 
         None
+    }
+
+    /// Polls remote WebDAV root ETags across all configured accounts to detect server-side moves and file changes.
+    pub async fn check_remote_changes_all_accounts(&self) {
+        let accounts = self.accounts().await;
+        if accounts.is_empty() {
+            return;
+        }
+
+        for account in accounts {
+            let Some((user, client, auth)) = self.dav_context_for_account(&account).await else {
+                continue;
+            };
+
+            let dav_client = client.dav(&auth);
+            let Ok(root_dav) = DavPath::root(&user) else {
+                continue;
+            };
+
+            // Lightweight PROPFIND Depth: 0 asking ONLY for d:getetag
+            let body = PropfindBody::new([DavProperty::Etag]);
+            let Ok(res) = dav_client.propfind(&root_dav, Depth::Zero, &body).await else {
+                continue;
+            };
+
+            let Some(first) = res.first() else {
+                continue;
+            };
+
+            let Some(ref etag) = first.etag else {
+                continue;
+            };
+
+            let changed = {
+                let mut etags = self.last_root_etags.write().await;
+                match etags.get(&account.id.0) {
+                    Some(prev) if prev == etag => false,
+                    _ => {
+                        etags.insert(account.id.0.clone(), etag.clone());
+                        true
+                    }
+                }
+            };
+
+            if changed {
+                tracing::info!(
+                    account = %account.id.0,
+                    user = %user,
+                    etag = %etag,
+                    "Remote server changes detected via root ETag poll; refreshing VFS tree"
+                );
+
+                // Refresh this account's virtual tree, pruning moved/deleted nodes
+                let _ = self.refresh_account_virtual_tree(&account).await;
+
+                // Synchronize any two-way folder sync pairings belonging to this account
+                self.sync_account_mounts(&account.id.0).await;
+            }
+        }
+    }
+
+    /// Refreshes the virtual file tree for a specific account, pruning moved/deleted items and syncing FUSE.
+    pub async fn refresh_account_virtual_tree(
+        &self,
+        account: &nextcloud_desktop_core::account::Account,
+    ) -> Result<usize, SyncError> {
+        let Some((user, client, auth)) = self.dav_context_for_account(account).await else {
+            return Ok(0);
+        };
+
+        let dav_client = client.dav(&auth);
+        let root_dav =
+            DavPath::root(&user).map_err(|err| SyncError::InvalidPath(err.to_string()))?;
+
+        let body = PropfindBody::all();
+        let resources = match dav_client.propfind(&root_dav, Depth::One, &body).await {
+            Ok(r) => r,
+            Err(err) => {
+                tracing::warn!(
+                    account = %account.id.0,
+                    error = %err,
+                    "Failed to query WebDAV root during remote change refresh"
+                );
+                return Ok(0);
+            }
+        };
+
+        let dav_prefix = format!("/remote.php/dav/files/{user}");
+        let summaries: Vec<nextcloud_rust_sdk::DavResourceSummary> = resources
+            .iter()
+            .map(|res| {
+                let mut sum =
+                    nextcloud_rust_sdk::DavResourceSummary::new(&res.href, res.is_collection);
+                if let Some(len) = res.content_length {
+                    sum = sum.with_content_length(len);
+                }
+                if let Some(ref etag) = res.etag {
+                    sum = sum.with_etag(etag);
+                }
+                if let Some(ref lm) = res.last_modified {
+                    sum = sum.with_last_modified(lm);
+                }
+                if let Some(ref mime) = res.content_type {
+                    sum = sum.with_content_type(mime);
+                }
+                if let Some(ref fid) = res.file_id
+                    && let Ok(id) = fid.parse::<u64>()
+                {
+                    sum = sum.with_file_id(id);
+                }
+                if let Some(prev) = res.has_preview {
+                    sum = sum.with_has_preview(prev);
+                }
+                sum
+            })
+            .collect();
+
+        // 1. Update the account's persistent VFS tree on disk
+        let vfs_dir = self.account_vfs_dir(&account.id.0);
+        let tree_file = vfs_dir.join("tree.json");
+        let mut tree = if tree_file.exists() {
+            std::fs::read_to_string(&tree_file)
+                .ok()
+                .and_then(|data| serde_json::from_str(&data).ok())
+                .unwrap_or_else(|| nextcloud_rust_sdk::VirtualTree::new("Nextcloud"))
+        } else {
+            nextcloud_rust_sdk::VirtualTree::new("Nextcloud")
+        };
+
+        let count = tree.populate_from_resources(&dav_prefix, &summaries);
+        if let Ok(json) = serde_json::to_string_pretty(&tree) {
+            let _ = std::fs::write(&tree_file, json);
+        }
+
+        // 2. If this is the active account, also sync to orchestrator and FUSE in-memory tree:
+        let is_active = self
+            .active_account()
+            .await
+            .map(|a| a.id.0 == account.id.0)
+            .unwrap_or(false);
+        if is_active {
+            let vfs = self.active_vfs().await;
+            let _ = vfs
+                .populate_from_resources(&dav_prefix, summaries.clone())
+                .await;
+
+            if let Some(ref ft_lock) = *self.fuse_tree.read().await
+                && let Ok(mut guard) = ft_lock.write()
+            {
+                *guard = tree.clone();
+            }
+
+            self.event_bus
+                .emit(DesktopEvent::VfsTreeUpdated { node_count: count });
+        }
+
+        Ok(count)
     }
 
     /// Installs FreeDesktop system thumbnails for a remote file across all active mounts (FUSE, internal VFS, folder pairs).

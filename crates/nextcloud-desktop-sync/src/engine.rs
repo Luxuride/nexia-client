@@ -260,4 +260,59 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(temp_dir);
     }
+
+    #[tokio::test]
+    async fn multi_account_etag_polling_tracks_state() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "nextcloud_etag_poll_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let config = AppConfig {
+            cache_dir: Some(temp_dir.clone()),
+            ..Default::default()
+        };
+        let config_lock = Arc::new(tokio::sync::RwLock::new(config));
+        let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
+
+        // When no accounts exist, checking remote changes completes cleanly
+        coordinator.check_remote_changes_all_accounts().await;
+
+        // Register two accounts
+        let acc1 = Account::new(
+            "Account 1",
+            ServerConfig::new("https://server1.local"),
+            AccountCredentials::new("user1", "tok1"),
+        );
+        let id1 = acc1.id.0.clone();
+        coordinator.add_account(acc1).await.unwrap();
+
+        let acc2 = Account::new(
+            "Account 2",
+            ServerConfig::new("https://server2.local"),
+            AccountCredentials::new("user2", "tok2"),
+        );
+        let id2 = acc2.id.0.clone();
+        coordinator.add_account(acc2).await.unwrap();
+
+        // Simulate recorded root etags across multiple accounts
+        coordinator
+            .last_root_etags
+            .write()
+            .await
+            .insert(id1.clone(), "\"etag-acc1-v1\"".to_string());
+        coordinator
+            .last_root_etags
+            .write()
+            .await
+            .insert(id2.clone(), "\"etag-acc2-v1\"".to_string());
+
+        let etags = coordinator.last_root_etags.read().await;
+        assert_eq!(etags.get(&id1).unwrap(), "\"etag-acc1-v1\"");
+        assert_eq!(etags.get(&id2).unwrap(), "\"etag-acc2-v1\"");
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
 }

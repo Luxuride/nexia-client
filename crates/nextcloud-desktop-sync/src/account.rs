@@ -248,54 +248,63 @@ impl DesktopSyncCoordinator {
             Vec::new()
         };
 
-        // 1. Purge legacy app-default-vfs mount if present
-        let had_legacy = mounts.iter().any(|m| {
-            m.id == "app-default-vfs" || m.local_target.contains("mounts/app-default-vfs")
-        });
-        if had_legacy {
+        // 1. Purge any legacy or stale internal VFS mounts that don't match the active account
+        let Some(account) = self.active_account().await else {
+            return mounts;
+        };
+
+        let active_vfs_id = format!("app-vfs-{}", account.id.0);
+
+        let stale_internal_ids: Vec<String> = mounts
+            .iter()
+            .filter(|m| {
+                (Self::is_internal_vfs(&m.id) && m.id != active_vfs_id)
+                    || m.id == "app-default-vfs"
+                    || m.local_target.contains("mounts/app-default-vfs")
+            })
+            .map(|m| m.id.clone())
+            .collect();
+
+        if !stale_internal_ids.is_empty() {
             if let Some(client) = self.active_client().await {
-                let _ = client.remove_sync_mount("app-default-vfs").await;
+                for id in &stale_internal_ids {
+                    let _ = client.remove_sync_mount(id).await;
+                }
             }
             if let Some(ref h) = *self.orchestrator_handle.read().await {
-                let _ = h
-                    .mounts()
-                    .remove_mount(MountId::from("app-default-vfs".to_string()))
-                    .await;
+                for id in &stale_internal_ids {
+                    let _ = h.mounts().remove_mount(MountId::from(id.clone())).await;
+                }
             }
             let legacy_dir = self.cache_dir().join("mounts").join("app-default-vfs");
             if legacy_dir.exists() {
                 let _ = tokio::fs::remove_dir_all(&legacy_dir).await;
             }
-            mounts.retain(|m| {
-                m.id != "app-default-vfs" && !m.local_target.contains("mounts/app-default-vfs")
-            });
+            mounts.retain(|m| !stale_internal_ids.contains(&m.id));
         }
 
-        // 2. Ensure per-account virtual mount exists
-        if let Some(account) = self.active_account().await {
-            // Filter to only mounts belonging to the active account (or unassigned)
-            mounts.retain(|m| m.account_id.is_empty() || m.account_id == account.id.0);
+        // 2. Filter to only mounts belonging to the active account (or unassigned)
+        mounts.retain(|m| m.account_id.is_empty() || m.account_id == account.id.0);
 
-            let app_vfs_id = format!("app-vfs-{}", account.id.0);
-            let has_app_vfs = mounts.iter().any(|m| m.id == app_vfs_id);
-            if !has_app_vfs {
-                let vfs_dir = self.account_vfs_dir(&account.id.0);
-                let default_app_mount = StoredSyncMount {
-                    id: app_vfs_id.clone(),
-                    account_id: account.id.0.clone(),
-                    remote_path: "/".to_string(),
-                    local_target: vfs_dir.to_string_lossy().to_string(),
-                    mode: "VirtualVfs".to_string(),
-                    display_name: Some("Application Virtual Drive".to_string()),
-                    enabled: true,
-                    created_at: 0,
-                    updated_at: 0,
-                };
-                if let Some(client) = self.active_client().await {
-                    let _ = client.store_sync_mount(default_app_mount.clone()).await;
-                }
-                mounts.insert(0, default_app_mount);
+        // 3. Ensure per-account virtual mount exists
+        let has_app_vfs = mounts.iter().any(|m| m.id == active_vfs_id);
+        if !has_app_vfs {
+            let vfs_dir = self.account_vfs_dir(&account.id.0);
+            let default_app_mount = StoredSyncMount {
+                id: active_vfs_id.clone(),
+                account_id: account.id.0.clone(),
+                remote_path: "/".to_string(),
+                local_target: vfs_dir.to_string_lossy().to_string(),
+                mode: "VirtualVfs".to_string(),
+                display_name: Some("Application Virtual Drive".to_string()),
+                enabled: true,
+                created_at: 0,
+                updated_at: 0,
+            };
+            if let Some(client) = self.active_client().await {
+                let _ = client.store_sync_mount(default_app_mount.clone()).await;
             }
+            mounts.insert(0, default_app_mount);
         }
 
         // 3. Deduplicate mounts by ID
@@ -476,6 +485,46 @@ impl DesktopSyncCoordinator {
             })
             .unwrap_or_else(|| "user".to_string());
         Some((user, client, auth))
+    }
+
+    /// Helper resolving user name, SDK client, and auth credentials for any specific account.
+    pub(crate) async fn dav_context_for_account(
+        &self,
+        account: &Account,
+    ) -> Option<(String, Client, BasicAuth)> {
+        let clients = self.clients.read().await;
+        let client = clients
+            .iter()
+            .find(|c| {
+                let target_authority = ServerUrl::parse(&account.server.server_url)
+                    .map(|u| u.authority().to_string())
+                    .unwrap_or_default();
+                (c.server_url().as_str() == account.server.server_url
+                    || c.server_url().authority() == target_authority)
+                    && c.current_user_id().as_deref() == Some(&account.credentials.username)
+            })?
+            .clone();
+
+        let auth = client.credentials().unwrap_or_else(|| {
+            BasicAuth::new(
+                &account.credentials.username,
+                SecretString::new(account.credentials.secret()),
+            )
+        });
+        let user = account.credentials.username.clone();
+        Some((user, client, auth))
+    }
+
+    /// Synchronizes all active folder mount pairings belonging to a specific account.
+    pub async fn sync_account_mounts(&self, account_id: &str) {
+        let engine = crate::folder_sync::FolderSyncEngine::new(self.clone());
+        let mounts = self.sync_mounts().await;
+        for mount in mounts {
+            if mount.account_id == account_id && !Self::is_internal_vfs(&mount.id) && mount.enabled
+            {
+                let _ = engine.sync_mount(&mount.id).await;
+            }
+        }
     }
 
     /// Discovers external desktop system accounts (SSO), resolves credentials, and instantiates [`Client`]s.
