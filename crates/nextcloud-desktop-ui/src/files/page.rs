@@ -25,6 +25,7 @@ pub struct CloudFilesPage<B: FileExplorerBackend> {
     view_stack: Stack,
     empty_page: adw::StatusPage,
     search_query: Rc<RefCell<Option<String>>>,
+    search_generation: Rc<std::cell::Cell<u64>>,
     backend: B,
 }
 
@@ -36,10 +37,22 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
         toast_overlay.set_vexpand(true);
 
         let search_query = Rc::new(RefCell::new(None));
+        let search_generation = Rc::new(std::cell::Cell::new(0));
+
         let sq_clone = search_query.clone();
+        let gen_clone = search_generation.clone();
         let cb = on_refresh_request.clone();
         let on_search = Rc::new(move |q: Option<String>| {
-            *sq_clone.borrow_mut() = q;
+            let sanitized = q.and_then(|s| {
+                let trimmed = s.trim().to_string();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
+            });
+            *sq_clone.borrow_mut() = sanitized;
+            gen_clone.set(gen_clone.get() + 1);
             cb();
         });
 
@@ -111,6 +124,7 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
             view_stack,
             empty_page,
             search_query,
+            search_generation,
             backend: backend.clone(),
         }
     }
@@ -122,25 +136,37 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
             .await;
 
         let active_search = self.search_query.borrow().clone();
+        let current_gen = self.search_generation.get();
 
         let items = if let Some(ref q) = active_search {
-            if !q.is_empty() {
-                self.backend.search_items(q).await.unwrap_or_default()
-            } else {
+            let trimmed = q.trim();
+            if trimmed.is_empty() {
                 self.backend.list_current_items().await.unwrap_or_default()
+            } else {
+                let res = self.backend.search_items(trimmed).await.unwrap_or_default();
+                if self.search_generation.get() != current_gen {
+                    tracing::debug!(query = %trimmed, "Discarding outdated search results");
+                    return;
+                }
+                res
             }
         } else {
             self.backend.list_current_items().await.unwrap_or_default()
         };
 
+        if self.search_generation.get() != current_gen {
+            return;
+        }
+
         self.status_bar.update_counts(&items);
 
         if items.is_empty() {
             if let Some(ref q) = active_search {
-                if !q.is_empty() {
+                let trimmed = q.trim();
+                if !trimmed.is_empty() {
                     self.empty_page.set_title("No Results Found");
                     self.empty_page
-                        .set_description(Some(&format!("No files match “{q}”.")));
+                        .set_description(Some(&format!("No files match “{trimmed}”.")));
                     self.empty_page.set_icon_name(Some("edit-find-symbolic"));
                 } else {
                     self.empty_page.set_title("Folder is Empty");

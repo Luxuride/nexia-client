@@ -174,4 +174,43 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(temp_dir);
     }
+
+    #[tokio::test]
+    async fn empty_search_returns_empty_and_valid_search_finds_entries() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "nextcloud_search_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut config = AppConfig::default();
+        config.cache_dir = Some(temp_dir.clone());
+        let config_lock = Arc::new(tokio::sync::RwLock::new(config));
+        let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
+
+        // 1. Empty or whitespace search must return empty immediately without searching
+        let empty1 = coordinator.search("").await.expect("empty search");
+        assert!(empty1.is_empty());
+
+        let empty2 = coordinator.search("   ").await.expect("whitespace search");
+        assert!(empty2.is_empty());
+
+        // 2. Add an item and verify non-empty search runs asynchronously and finds it
+        coordinator
+            .create_file("/budget_report_2026.pdf", b"data")
+            .await
+            .expect("create file");
+
+        let found = coordinator.search("budget").await.expect("search budget");
+        assert!(found.iter().any(|m| m.name == "budget_report_2026.pdf"));
+
+        let not_found = coordinator
+            .search("nonexistent")
+            .await
+            .expect("search none");
+        assert!(not_found.is_empty());
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
 }

@@ -285,86 +285,109 @@ impl DesktopSyncCoordinator {
         &self,
         term: &str,
     ) -> Result<Vec<nextcloud_rust_sdk::VirtualEntrySummary>, SyncError> {
-        let trimmed = term.trim();
+        let trimmed = term.trim().to_string();
         if trimmed.is_empty() {
             return Ok(Vec::new());
         }
 
-        let vfs = self.active_vfs().await;
-        let mut matches = Vec::new();
-        let mut queue = vec!["/".to_string()];
-        let term_lower = trimmed.to_lowercase();
+        let this = self.clone();
+        tokio::task::spawn(async move {
+            let vfs = this.active_vfs().await;
+            let term_lower = trimmed.to_lowercase();
 
-        // 1. Recursive BFS over local VFS tree
-        while let Some(current_dir) = queue.pop() {
-            if let Ok(children) = vfs.list_children(&current_dir).await {
-                for child in children {
-                    if child.name.to_lowercase().contains(&term_lower)
-                        || child.path.to_lowercase().contains(&term_lower)
-                    {
-                        matches.push(child.clone());
-                    }
-                    if child.is_directory {
-                        queue.push(child.path);
-                    }
-                }
-            }
-        }
-
-        // 2. Query remote Nextcloud Unified Search API if active client exists
-        if let Some((_, client, _)) = self.active_dav_context().await
-            && let Ok(ocs) = client.ocs()
-        {
-            let search_client = client.search(&ocs);
-            if let Ok(result_set) = search_client.search("files", trimmed).await {
-                for entry in result_set.entries {
-                    let candidate_path = if let Some(sub) = entry.subline {
-                        if sub.starts_with('/') {
-                            sub
-                        } else {
-                            format!("/{sub}")
+            let local_future = async {
+                let mut matches = Vec::new();
+                let mut queue = vec!["/".to_string()];
+                while let Some(current_dir) = queue.pop() {
+                    if let Ok(children) = vfs.list_children(&current_dir).await {
+                        for child in children {
+                            if child.name.to_lowercase().contains(&term_lower)
+                                || child.path.to_lowercase().contains(&term_lower)
+                            {
+                                matches.push(child.clone());
+                            }
+                            if child.is_directory {
+                                queue.push(child.path);
+                            }
                         }
-                    } else {
-                        format!("/{}", entry.title)
-                    };
-
-                    if !matches
-                        .iter()
-                        .any(|m| m.path == candidate_path || m.name == entry.title)
-                    {
-                        let is_dir = entry
-                            .icon
-                            .as_deref()
-                            .is_some_and(|ic| ic.contains("folder"));
-                        let summary = nextcloud_rust_sdk::VirtualEntrySummary {
-                            path: candidate_path,
-                            name: entry.title,
-                            is_directory: is_dir,
-                            size: entry
-                                .attributes
-                                .get("size")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0),
-                            etag: None,
-                            modified_at: None,
-                            permissions: None,
-                            mime_type: None,
-                            icon_category: if is_dir {
-                                nextcloud_rust_sdk::ResourceIconCategory::Folder
-                            } else {
-                                nextcloud_rust_sdk::ResourceIconCategory::Document
-                            },
-                            is_hydrated: false,
-                            cached_path: None,
-                            directory_summary: None,
-                        };
-                        matches.push(summary);
                     }
                 }
-            }
-        }
+                matches
+            };
 
-        Ok(matches)
+            let remote_future = async {
+                let mut remote_matches = Vec::new();
+                if let Some((_, client, _)) = this.active_dav_context().await
+                    && let Ok(ocs) = client.ocs()
+                {
+                    let search_client = client.search(&ocs);
+                    // Impose 3s timeout on remote Unified Search so network latency never freezes search
+                    let search_res = tokio::time::timeout(
+                        std::time::Duration::from_secs(3),
+                        search_client.search("files", &trimmed),
+                    )
+                    .await;
+
+                    if let Ok(Ok(result_set)) = search_res {
+                        for entry in result_set.entries {
+                            let candidate_path = if let Some(sub) = entry.subline {
+                                if sub.starts_with('/') {
+                                    sub
+                                } else {
+                                    format!("/{sub}")
+                                }
+                            } else {
+                                format!("/{}", entry.title)
+                            };
+
+                            let is_dir = entry
+                                .icon
+                                .as_deref()
+                                .is_some_and(|ic| ic.contains("folder"));
+                            let summary = nextcloud_rust_sdk::VirtualEntrySummary {
+                                path: candidate_path,
+                                name: entry.title,
+                                is_directory: is_dir,
+                                size: entry
+                                    .attributes
+                                    .get("size")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0),
+                                etag: None,
+                                modified_at: None,
+                                permissions: None,
+                                mime_type: None,
+                                icon_category: if is_dir {
+                                    nextcloud_rust_sdk::ResourceIconCategory::Folder
+                                } else {
+                                    nextcloud_rust_sdk::ResourceIconCategory::Document
+                                },
+                                is_hydrated: false,
+                                cached_path: None,
+                                directory_summary: None,
+                            };
+                            remote_matches.push(summary);
+                        }
+                    }
+                }
+                remote_matches
+            };
+
+            // Run local VFS tree traversal and remote Unified Search concurrently
+            let (mut matches, remote_entries) = tokio::join!(local_future, remote_future);
+
+            for remote_entry in remote_entries {
+                if !matches
+                    .iter()
+                    .any(|m| m.path == remote_entry.path || m.name == remote_entry.name)
+                {
+                    matches.push(remote_entry);
+                }
+            }
+
+            Ok(matches)
+        })
+        .await?
     }
 
     /// Fetches or retrieves a cached thumbnail for `remote_path`.

@@ -53,4 +53,8 @@ pub enum SyncError {
     /// Error originating from background orchestrator actor.
     #[error("orchestrator error: {0}")]
     Orchestrator(#[from] nextcloud_rust_sdk::OrchestratorError),
+
+    /// Background asynchronous task join failure.
+    #[error("background task failed: {0}")]
+    Task(#[from] tokio::task::JoinError),
 }

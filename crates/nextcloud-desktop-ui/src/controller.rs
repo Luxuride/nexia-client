@@ -65,9 +65,14 @@ impl DesktopUiController {
 
     /// Searches files matching `query` across local VFS and server unified search.
     pub async fn search_items(&self, query: &str) -> Result<Vec<FileViewItem>, UiError> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+
         let entries = self
             .coordinator
-            .search(query)
+            .search(trimmed)
             .await
             .map_err(|err| UiError::Controller(err.to_string()))?;
 

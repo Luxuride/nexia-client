@@ -3,6 +3,7 @@
 use gtk4::{Align, Box as GtkBox, Button, Orientation, SearchEntry, ToggleButton};
 use libadwaita as adw;
 use libadwaita::prelude::*;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::files::new_folder::NewFolderPopover;
@@ -161,16 +162,52 @@ impl PathToolbar {
             });
         }
 
-        // Wire Search Entry
+        // Wire Search Entry with debouncing and Enter key immediate trigger
         {
             let search_cb = on_search;
+            let pending_timeout: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+
+            let pending_timeout_changed = pending_timeout.clone();
+            let search_cb_changed = search_cb.clone();
             search_entry.connect_search_changed(move |entry| {
+                if let Some(source) = pending_timeout_changed.borrow_mut().take() {
+                    source.remove();
+                }
+
                 let text = entry.text().trim().to_string();
                 if text.is_empty() {
-                    search_cb(None);
-                } else {
-                    search_cb(Some(text));
+                    // Empty search does not search anything; restore normal directory view
+                    search_cb_changed(None);
+                    return;
                 }
+
+                let cb = search_cb_changed.clone();
+                let pending = pending_timeout_changed.clone();
+                let query = text;
+                let source = glib::timeout_add_local_once(
+                    std::time::Duration::from_millis(300),
+                    move || {
+                        *pending.borrow_mut() = None;
+                        cb(Some(query));
+                    },
+                );
+                *pending_timeout_changed.borrow_mut() = Some(source);
+            });
+
+            let pending_timeout_activate = pending_timeout;
+            let search_cb_activate = search_cb;
+            search_entry.connect_activate(move |entry| {
+                if let Some(source) = pending_timeout_activate.borrow_mut().take() {
+                    source.remove();
+                }
+
+                let text = entry.text().trim().to_string();
+                if text.is_empty() {
+                    // Empty file search should not search anything!
+                    return;
+                }
+
+                search_cb_activate(Some(text));
             });
         }
 
