@@ -72,6 +72,9 @@ impl RubberbandOverlay {
         items_ref: Rc<RefCell<Vec<FileViewItem>>>,
         tracker: SelectionTracker,
     ) {
+        // Strip built-in linear GestureDrag from FlowBox to prevent shift-like range selection.
+        strip_flowbox_linear_drag(flow_box);
+
         let overlay = self.overlay.clone();
         let drawing_area = self.drawing_area.clone();
         let active_rect = self.active_rect.clone();
@@ -209,6 +212,9 @@ impl RubberbandOverlay {
         items_ref: Rc<RefCell<Vec<FileViewItem>>>,
         tracker: SelectionTracker,
     ) {
+        // Strip any built-in linear GestureDrag from ListBox if present.
+        strip_listbox_linear_drag(list_box);
+
         let overlay = self.overlay.clone();
         let drawing_area = self.drawing_area.clone();
         let active_rect = self.active_rect.clone();
@@ -345,5 +351,82 @@ impl ViewComponent for RubberbandOverlay {
 
     fn root_widget(&self) -> &Self::RootWidget {
         &self.overlay
+    }
+}
+
+/// Strips GTK's built-in 1D linear `GestureDrag` from a `FlowBox` to prevent unwanted
+/// shift-like contiguous range selection during drag operations and file drag-and-drop.
+pub fn strip_flowbox_linear_drag(flow_box: &FlowBox) {
+    let controllers = flow_box.observe_controllers();
+    let mut i = 0;
+    while i < controllers.n_items() {
+        if let Some(obj) = controllers.item(i)
+            && let Ok(controller) = obj.downcast::<gtk4::EventController>()
+            && controller.type_().name() == "GtkGestureDrag"
+        {
+            flow_box.remove_controller(&controller);
+            continue;
+        }
+        i += 1;
+    }
+}
+
+/// Strips any built-in `GestureDrag` controller from a `ListBox`.
+pub fn strip_listbox_linear_drag(list_box: &ListBox) {
+    let controllers = list_box.observe_controllers();
+    let mut i = 0;
+    while i < controllers.n_items() {
+        if let Some(obj) = controllers.item(i)
+            && let Ok(controller) = obj.downcast::<gtk4::EventController>()
+            && controller.type_().name() == "GtkGestureDrag"
+        {
+            list_box.remove_controller(&controller);
+            continue;
+        }
+        i += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_flowbox_linear_drag_removes_gesture_drag() {
+        if gtk4::init().is_err() {
+            return;
+        }
+
+        let fb = FlowBox::new();
+        // Verify FlowBox initially contains GtkGestureDrag
+        let mut had_gesture_drag = false;
+        let controllers = fb.observe_controllers();
+        for i in 0..controllers.n_items() {
+            if let Some(obj) = controllers.item(i) {
+                if obj.type_().name() == "GtkGestureDrag" {
+                    had_gesture_drag = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            had_gesture_drag,
+            "FlowBox must initially have GtkGestureDrag"
+        );
+
+        // Strip the controller
+        strip_flowbox_linear_drag(&fb);
+
+        // Verify GtkGestureDrag is gone
+        let controllers_after = fb.observe_controllers();
+        for i in 0..controllers_after.n_items() {
+            if let Some(obj) = controllers_after.item(i) {
+                assert_ne!(
+                    obj.type_().name(),
+                    "GtkGestureDrag",
+                    "GtkGestureDrag should have been stripped from FlowBox"
+                );
+            }
+        }
     }
 }

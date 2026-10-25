@@ -14,7 +14,7 @@ use crate::files::context_menu::ItemContextMenu;
 use crate::files::dnd::FileDragDrop;
 use crate::files::launcher::launch_file_externally;
 use crate::files::rename_dialog::RenameDialog;
-use crate::files::rubberband::RubberbandOverlay;
+use crate::files::rubberband::{RubberbandOverlay, strip_listbox_linear_drag};
 use crate::files::selection::SelectionTracker;
 use crate::model::FileViewItem;
 use crate::widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
@@ -85,6 +85,7 @@ impl FileListView {
         list_box.set_selection_mode(SelectionMode::Multiple);
         list_box.set_activate_on_single_click(false);
         list_box.add_css_class("file-list-view");
+        strip_listbox_linear_drag(&list_box);
 
         let items = Rc::new(RefCell::new(Vec::new()));
 

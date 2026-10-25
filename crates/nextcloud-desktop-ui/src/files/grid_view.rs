@@ -14,7 +14,7 @@ use crate::files::context_menu::ItemContextMenu;
 use crate::files::dnd::FileDragDrop;
 use crate::files::launcher::launch_file_externally;
 use crate::files::rename_dialog::RenameDialog;
-use crate::files::rubberband::RubberbandOverlay;
+use crate::files::rubberband::{RubberbandOverlay, strip_flowbox_linear_drag};
 use crate::files::selection::SelectionTracker;
 use crate::model::FileViewItem;
 use crate::widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
@@ -52,6 +52,7 @@ impl FileGridView {
         flow_box.set_margin_end(16);
         flow_box.set_halign(Align::Start);
         flow_box.set_valign(Align::Start);
+        strip_flowbox_linear_drag(&flow_box);
 
         let items = Rc::new(RefCell::new(Vec::new()));
 
