@@ -1,12 +1,11 @@
 //! In-page navigation and action toolbar for the Cloud Files view.
 
-use gtk4::{Align, Box as GtkBox, Button, MenuButton, Orientation, SearchEntry, ToggleButton};
+use gtk4::{Align, Box as GtkBox, Button, Orientation, SearchEntry, ToggleButton};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::files::canvas_menu::CanvasContextMenu;
 use crate::files::new_folder::NewFolderPopover;
 use crate::files::path_bar::PathBar;
 use crate::files::sort_popover::SortPopover;
@@ -114,18 +113,6 @@ impl PathToolbar {
         view_mode_box.append(&grid_toggle);
         view_mode_box.append(&list_toggle);
 
-        // Top-right "..." actions menu (opens the same canvas context menu)
-        let more_btn = MenuButton::new();
-        more_btn.set_icon_name("view-more-symbolic");
-        more_btn.set_tooltip_text(Some("More actions and settings (Menu)"));
-        let menu_popover = CanvasContextMenu::create_menu_popover(
-            &more_btn,
-            backend,
-            toast_overlay,
-            on_change.clone(),
-        );
-        more_btn.set_popover(Some(&menu_popover));
-
         container.append(&nav_box);
         container.append(path_bar.root_widget());
         container.append(&search_entry);
@@ -134,7 +121,6 @@ impl PathToolbar {
         container.append(sort_popover.widget());
         container.append(&zoom_box);
         container.append(&view_mode_box);
-        container.append(&more_btn);
 
         // Wire Back button
         {
