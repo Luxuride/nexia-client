@@ -334,10 +334,28 @@ impl DesktopSyncCoordinator {
 
     /// Removes a sync mount by ID from both the SDK database and the orchestrator.
     pub async fn remove_sync_mount(&self, id: &str) -> Result<(), SyncError> {
+        self.remove_sync_mount_with_cleanup(id, false).await
+    }
+
+    /// Removes a sync mount by ID, optionally deleting local synced files from disk.
+    pub async fn remove_sync_mount_with_cleanup(
+        &self,
+        id: &str,
+        clean_local_files: bool,
+    ) -> Result<(), SyncError> {
         let mounts = self.sync_mounts().await;
         if let Some(target) = mounts.into_iter().find(|m| m.id == id) {
             let local_path = std::path::PathBuf::from(&target.local_target);
             self.unwatch_mount(&local_path).await;
+
+            let mount_cache = self.account_mounts_dir(&target.account_id).join(id);
+            if mount_cache.exists() {
+                let _ = tokio::fs::remove_dir_all(&mount_cache).await;
+            }
+
+            if clean_local_files && local_path.exists() {
+                let _ = tokio::fs::remove_dir_all(&local_path).await;
+            }
         }
 
         if let Some(client) = self.active_client().await {
@@ -346,6 +364,11 @@ impl DesktopSyncCoordinator {
         if let Some(ref h) = *self.orchestrator_handle.read().await {
             let _ = h.mounts().remove_mount(MountId::from(id.to_string())).await;
         }
+
+        self.event_bus.emit(DesktopEvent::SyncMountRemoved {
+            mount_id: id.to_string(),
+        });
+
         Ok(())
     }
 

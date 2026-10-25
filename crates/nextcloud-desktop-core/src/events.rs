@@ -129,6 +129,11 @@ pub enum DesktopEvent {
         /// Identifier of the signed out account.
         account_id: String,
     },
+    /// A configured sync folder mount pairing was removed.
+    SyncMountRemoved {
+        /// Identifier of the removed sync mount.
+        mount_id: String,
+    },
     /// An application or sync error occurred.
     Notification {
         /// Message content.

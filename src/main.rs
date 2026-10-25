@@ -54,6 +54,10 @@ struct CliArgs {
     #[arg(long)]
     list_mounts: bool,
 
+    /// Mount the virtual filesystem at the specified or default directory.
+    #[arg(long)]
+    mount_vfs: Option<Option<PathBuf>>,
+
     /// Path to custom configuration file.
     #[arg(long)]
     config: Option<PathBuf>,
@@ -132,6 +136,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || args.pause_sync
         || args.resume_sync
         || args.list_mounts
+        || args.mount_vfs.is_some()
     {
         rt.block_on(async {
             if args.pause_sync {
@@ -215,7 +220,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
-            if args.headless && !args.sync && !args.refresh_vfs && args.hydrate.is_none() && args.dehydrate.is_none() {
+            if let Some(ref target) = args.mount_vfs {
+                let mp = match target {
+                    Some(p) => p.clone(),
+                    None => controller.default_fuse_mountpoint().await,
+                };
+                tracing::info!(mountpoint = %mp.display(), "Mounting Nextcloud virtual filesystem with FUSE...");
+                match controller.mount_fuse_vfs(&mp).await {
+                    Ok(()) => {
+                        tracing::info!(mountpoint = %mp.display(), "Virtual drive mounted successfully! Press Ctrl+C to unmount.");
+                        tokio::signal::ctrl_c().await?;
+                        controller.unmount_fuse_vfs().await;
+                        tracing::info!("Virtual drive unmounted.");
+                    }
+                    Err(e) => tracing::error!(error = %e, "Failed to mount virtual drive"),
+                }
+            }
+
+            if args.headless
+                && !args.sync
+                && !args.refresh_vfs
+                && args.hydrate.is_none()
+                && args.dehydrate.is_none()
+                && args.mount_vfs.is_none()
+            {
                 tracing::info!("Running Nextcloud background daemon. Press Ctrl+C to terminate.");
                 tokio::signal::ctrl_c().await?;
                 tracing::info!("Shutting down Nextcloud background daemon.");

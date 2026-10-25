@@ -211,13 +211,14 @@ impl SyncMountSettingsDialog {
                 let confirm = adw::MessageDialog::builder()
                     .heading("Remove Sync Folder?")
                     .body(format!(
-                        "Are you sure you want to remove the pairing for “{m_name_rm}”?\n\nLocal files will remain in your folder, but will no longer synchronize with Nextcloud."
+                        "Choose how you want to remove the pairing for “{m_name_rm}”:\n\n• Unlink: Stop synchronizing, but keep all local files on disk.\n• Remove & Delete: Stop synchronizing and delete all local files and placeholders from your disk."
                     ))
                     .build();
                 confirm.set_transient_for(Some(&win_rm));
                 confirm.add_response("cancel", "Cancel");
-                confirm.add_response("remove", "Remove Folder");
-                confirm.set_response_appearance("remove", adw::ResponseAppearance::Destructive);
+                confirm.add_response("unlink", "Unlink (Keep Local Files)");
+                confirm.add_response("cleanup", "Remove & Delete Local Files");
+                confirm.set_response_appearance("cleanup", adw::ResponseAppearance::Destructive);
                 confirm.set_default_response(Some("cancel"));
                 confirm.set_close_response("cancel");
 
@@ -228,18 +229,22 @@ impl SyncMountSettingsDialog {
                 let m_id = m_id_rm.clone();
 
                 confirm.connect_response(None, move |d, response| {
-                    if response == "remove" {
+                    if response == "unlink" || response == "cleanup" {
+                        let clean_local = response == "cleanup";
                         let b = b.clone();
                         let toast = toast.clone();
                         let win = win.clone();
                         let cb = cb.clone();
                         let m_id = m_id.clone();
                         glib::MainContext::default().spawn_local(async move {
-                            match b.remove_sync_mount(&m_id).await {
+                            match b.remove_sync_mount_with_cleanup(&m_id, clean_local).await {
                                 Ok(()) => {
-                                    toast.add_toast(adw::Toast::new(
-                                        "Sync folder pairing removed successfully",
-                                    ));
+                                    let msg = if clean_local {
+                                        "Sync folder removed and local files deleted"
+                                    } else {
+                                        "Sync folder unlinked successfully (local files kept)"
+                                    };
+                                    toast.add_toast(adw::Toast::new(msg));
                                     cb();
                                     win.close();
                                 }

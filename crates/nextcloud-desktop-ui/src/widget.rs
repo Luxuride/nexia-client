@@ -310,6 +310,15 @@ pub trait FileExplorerBackend: Clone + 'static {
         async { Ok(()) }
     }
 
+    /// Removes a sync mount pairing by ID, optionally deleting local files.
+    fn remove_sync_mount_with_cleanup(
+        &self,
+        _mount_id: &str,
+        _clean_local_files: bool,
+    ) -> impl Future<Output = Result<(), UiError>> {
+        async { Ok(()) }
+    }
+
     /// Triggers an immediate folder synchronization cycle for a specific mount point.
     fn sync_mount(&self, _mount_id: &str) -> impl Future<Output = Result<(), UiError>> {
         async { Ok(()) }
@@ -327,6 +336,29 @@ pub trait FileExplorerBackend: Clone + 'static {
         _new_mode: &str,
     ) -> impl Future<Output = Result<(), UiError>> {
         async { Ok(()) }
+    }
+
+    /// Mounts the active Nextcloud account as an OS virtual drive via FUSE.
+    fn mount_fuse_vfs(
+        &self,
+        _mountpoint: std::path::PathBuf,
+    ) -> impl Future<Output = Result<(), UiError>> {
+        async { Ok(()) }
+    }
+
+    /// Unmounts the running FUSE virtual filesystem.
+    fn unmount_fuse_vfs(&self) -> impl Future<Output = ()> {
+        async {}
+    }
+
+    /// Returns `true` if the FUSE virtual filesystem is actively mounted.
+    fn is_fuse_mounted(&self) -> impl Future<Output = bool> {
+        async { false }
+    }
+
+    /// Returns the default FUSE mountpoint for the active account.
+    fn default_fuse_mountpoint(&self) -> impl Future<Output = std::path::PathBuf> {
+        async { std::path::PathBuf::from("/tmp/nextcloud") }
     }
 
     /// Queries remote Nextcloud via WebDAV to list child directories beneath `relative_path`.

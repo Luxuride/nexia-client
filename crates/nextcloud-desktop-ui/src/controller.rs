@@ -827,6 +827,32 @@ impl DesktopUiController {
             .map_err(|err| UiError::Controller(err.to_string()))
     }
 
+    /// Mounts the active Nextcloud account as an OS virtual drive via FUSE.
+    pub async fn mount_fuse_vfs(
+        &self,
+        mountpoint: impl AsRef<std::path::Path>,
+    ) -> Result<(), UiError> {
+        self.coordinator
+            .mount_fuse_vfs(mountpoint)
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    /// Unmounts the running FUSE virtual filesystem.
+    pub async fn unmount_fuse_vfs(&self) {
+        self.coordinator.unmount_fuse_vfs().await;
+    }
+
+    /// Returns `true` if the FUSE virtual filesystem is actively mounted.
+    pub async fn is_fuse_mounted(&self) -> bool {
+        self.coordinator.is_fuse_mounted().await
+    }
+
+    /// Returns the default FUSE mountpoint for the active account.
+    pub async fn default_fuse_mountpoint(&self) -> std::path::PathBuf {
+        self.coordinator.default_fuse_mountpoint().await
+    }
+
     /// Returns `true` if synchronization is globally paused.
     pub async fn is_sync_paused(&self) -> Result<bool, UiError> {
         self.coordinator
@@ -1205,6 +1231,17 @@ impl FileExplorerBackend for DesktopUiController {
             .map_err(|e| UiError::Controller(e.to_string()))
     }
 
+    async fn remove_sync_mount_with_cleanup(
+        &self,
+        mount_id: &str,
+        clean_local_files: bool,
+    ) -> Result<(), UiError> {
+        self.coordinator
+            .remove_sync_mount_with_cleanup(mount_id, clean_local_files)
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
     async fn sync_mount(&self, mount_id: &str) -> Result<(), UiError> {
         self.sync_mount(mount_id).await
     }
@@ -1215,6 +1252,25 @@ impl FileExplorerBackend for DesktopUiController {
 
     async fn update_sync_mount_mode(&self, mount_id: &str, new_mode: &str) -> Result<(), UiError> {
         self.update_sync_mount_mode(mount_id, new_mode).await
+    }
+
+    async fn mount_fuse_vfs(&self, mountpoint: std::path::PathBuf) -> Result<(), UiError> {
+        self.coordinator
+            .mount_fuse_vfs(mountpoint)
+            .await
+            .map_err(|e| UiError::Controller(e.to_string()))
+    }
+
+    async fn unmount_fuse_vfs(&self) {
+        self.coordinator.unmount_fuse_vfs().await;
+    }
+
+    async fn is_fuse_mounted(&self) -> bool {
+        self.coordinator.is_fuse_mounted().await
+    }
+
+    async fn default_fuse_mountpoint(&self) -> std::path::PathBuf {
+        self.coordinator.default_fuse_mountpoint().await
     }
 
     async fn list_remote_directory_folders(

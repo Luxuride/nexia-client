@@ -12,6 +12,9 @@ use crate::desktop::pages::add_sync_dialog::AddSyncFolderDialog;
 use crate::desktop::pages::sync_mount_settings_dialog::SyncMountSettingsDialog;
 use crate::widget::{FileExplorerBackend, ViewComponent};
 
+type RefreshCallback = Rc<dyn Fn()>;
+type RefreshHolder = Rc<RefCell<Option<RefreshCallback>>>;
+
 /// Preferences page configuring local folder synchronization pairings.
 #[derive(Clone)]
 pub struct SyncFoldersPage {
@@ -108,12 +111,16 @@ impl SyncFoldersPage {
         let tracked_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
         let tracked_list = tracked_rows.clone();
 
+        let refresh_holder: RefreshHolder = Rc::new(RefCell::new(None));
+        let rh = refresh_holder.clone();
+
         let refresh_list = Rc::new(move || {
             let b = b_list.clone();
             let toast = toast_list.clone();
             let grp = grp_list.clone();
             let pg = page_for_dialog.clone();
             let tracked = tracked_list.clone();
+            let rh_c = rh.clone();
 
             glib::MainContext::default().spawn_local(async move {
                 // Clear existing mount rows
@@ -252,13 +259,19 @@ impl SyncFoldersPage {
                     let m_s = mount.clone();
                     let pg_s = pg.clone();
 
+                    let rh_for_settings = rh_c.clone();
                     let open_settings = Rc::new(move || {
+                        let rh_call = rh_for_settings.clone();
                         SyncMountSettingsDialog::present(
                             Some(&pg_s),
                             &b_s,
                             &t_s,
                             m_s.clone(),
-                            Rc::new(|| {}),
+                            Rc::new(move || {
+                                if let Some(ref f) = *rh_call.borrow() {
+                                    f();
+                                }
+                            }),
                         );
                     });
 
@@ -279,6 +292,7 @@ impl SyncFoldersPage {
             });
         });
 
+        *refresh_holder.borrow_mut() = Some(refresh_list.clone());
         refresh_list();
 
         // Subscribe to account switches and sync events to update the sync folder pairings list
@@ -289,6 +303,7 @@ impl SyncFoldersPage {
                 match event {
                     nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. }
                     | nextcloud_desktop_core::events::DesktopEvent::AccountSignedOut { .. }
+                    | nextcloud_desktop_core::events::DesktopEvent::SyncMountRemoved { .. }
                     | nextcloud_desktop_core::events::DesktopEvent::SyncCompleted { .. } => {
                         ref_for_events();
                     }

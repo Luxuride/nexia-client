@@ -51,6 +51,10 @@ pub struct DesktopSyncCoordinator {
             std::collections::HashMap<String, nextcloud_rust_sdk::MountProgressSnapshot>,
         >,
     >,
+    pub(crate) fuse_session: Arc<tokio::sync::Mutex<Option<nextcloud_rust_sdk::BackgroundSession>>>,
+    pub(crate) fuse_tree:
+        Arc<tokio::sync::RwLock<Option<Arc<std::sync::RwLock<nextcloud_rust_sdk::VirtualTree>>>>>,
+    pub(crate) fuse_mountpoint: Arc<tokio::sync::RwLock<Option<PathBuf>>>,
 }
 
 impl DesktopSyncCoordinator {
@@ -92,6 +96,9 @@ impl DesktopSyncCoordinator {
             mount_progress_cache: Arc::new(
                 std::sync::RwLock::new(std::collections::HashMap::new()),
             ),
+            fuse_session: Arc::new(tokio::sync::Mutex::new(None)),
+            fuse_tree: Arc::new(tokio::sync::RwLock::new(None)),
+            fuse_mountpoint: Arc::new(tokio::sync::RwLock::new(None)),
         };
 
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
