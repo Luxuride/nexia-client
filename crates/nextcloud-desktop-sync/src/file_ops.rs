@@ -388,6 +388,8 @@ impl DesktopSyncCoordinator {
             return Ok(Some(thumb_path));
         }
 
+        let _permit = self.preview_semaphore.acquire().await.ok();
+
         if let Some((_, client, auth)) = self.active_dav_context().await {
             let preview = client.preview(&auth);
             let opts = nextcloud_rust_sdk::PreviewOptions::new()
@@ -404,6 +406,25 @@ impl DesktopSyncCoordinator {
                 && tokio::fs::write(&thumb_path, &bytes).await.is_ok()
             {
                 return Ok(Some(thumb_path));
+            }
+
+            // Fallback to super low-res if higher-res preview returned server error
+            if size > 32 {
+                let low_opts = nextcloud_rust_sdk::PreviewOptions::new()
+                    .dimensions(32, 32)
+                    .mode(nextcloud_rust_sdk::PreviewMode::Cover);
+                let low_filename = format!("{:016x}_32.png", path_hash);
+                let low_path = thumbs_dir.join(low_filename);
+
+                if low_path.exists() {
+                    return Ok(Some(low_path));
+                }
+
+                if let Ok(bytes) = preview.get_by_path(&preview_path, &low_opts).await
+                    && tokio::fs::write(&low_path, &bytes).await.is_ok()
+                {
+                    return Ok(Some(low_path));
+                }
             }
         }
 

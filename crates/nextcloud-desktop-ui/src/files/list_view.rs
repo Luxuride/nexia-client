@@ -314,6 +314,7 @@ impl FileListRow {
             let thumb_dim = icon_size as u32;
 
             glib::MainContext::default().spawn_local(async move {
+                // 1. If high-res thumbnail is already cached on disk, display immediately
                 if let Some(thumb_path) = backend_clone.get_thumbnail(&path_clone, thumb_dim).await
                 {
                     let file = gtk4::gio::File::for_path(&thumb_path);
@@ -326,6 +327,41 @@ impl FileListRow {
                             icon_box_clone.remove(&first);
                         }
                         icon_box_clone.append(&picture);
+                        return;
+                    }
+                }
+
+                // 2. Otherwise, first fetch and render the super low-res thumbnail (32px) for instant preview
+                if thumb_dim > 32 {
+                    if let Some(low_thumb) = backend_clone.get_thumbnail(&path_clone, 32).await {
+                        let file = gtk4::gio::File::for_path(&low_thumb);
+                        if let Ok(texture) = gdk::Texture::from_file(&file) {
+                            let picture = gtk4::Picture::for_paintable(&texture);
+                            picture.set_can_shrink(true);
+                            picture.set_keep_aspect_ratio(true);
+                            picture.set_size_request(icon_size, icon_size);
+                            while let Some(first) = icon_box_clone.first_child() {
+                                icon_box_clone.remove(&first);
+                            }
+                            icon_box_clone.append(&picture);
+                        }
+                    }
+
+                    // 3. Progressively load and upgrade to the target resolution
+                    if let Some(thumb_path) =
+                        backend_clone.get_thumbnail(&path_clone, thumb_dim).await
+                    {
+                        let file = gtk4::gio::File::for_path(&thumb_path);
+                        if let Ok(texture) = gdk::Texture::from_file(&file) {
+                            let picture = gtk4::Picture::for_paintable(&texture);
+                            picture.set_can_shrink(true);
+                            picture.set_keep_aspect_ratio(true);
+                            picture.set_size_request(icon_size, icon_size);
+                            while let Some(first) = icon_box_clone.first_child() {
+                                icon_box_clone.remove(&first);
+                            }
+                            icon_box_clone.append(&picture);
+                        }
                     }
                 }
             });
