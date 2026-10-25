@@ -351,7 +351,7 @@ impl FileListRow {
         }
 
         // Rename button
-        let rename_btn = Button::from_icon_name("edit-rename-symbolic");
+        let rename_btn = Button::from_icon_name("document-edit-symbolic");
         rename_btn.add_css_class("flat");
         rename_btn.set_focusable(false);
         rename_btn.set_tooltip_text(Some("Rename (F2)"));
