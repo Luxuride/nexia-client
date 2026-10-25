@@ -59,6 +59,9 @@ struct CliArgs {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(feature = "gtk")]
+    nextcloud_desktop_ui::suppress_gtk_logs();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()

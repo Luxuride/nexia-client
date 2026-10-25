@@ -15,11 +15,19 @@ use crate::pages::{ActivityPage, NavigationSidebar, SettingsPage, SyncFoldersPag
 use crate::tray::{TrayAction, spawn_app_bar_tray};
 use crate::widget::ViewComponent;
 
+/// Suppresses noisy GTK and GLib logging to stderr.
+pub fn suppress_gtk_logs() {
+    glib::log_set_writer_func(|_level, _fields| glib::LogWriterOutput::Handled);
+}
+
 /// Launches the Nextcloud Desktop GTK 4 / Libadwaita application.
 pub fn launch_gtk_application(
     controller: DesktopUiController,
     start_minimized: bool,
 ) -> Result<(), UiError> {
+    // Suppress noisy GTK/GLib stderr session bus and debug logs
+    suppress_gtk_logs();
+
     let app = adw::Application::builder()
         .application_id("com.nextcloud.desktop.rs")
         .build();

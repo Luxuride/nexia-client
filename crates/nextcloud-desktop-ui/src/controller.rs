@@ -129,6 +129,16 @@ impl DesktopUiController {
         Ok(items)
     }
 
+    /// Fast synchronous check returning a cached thumbnail path (preferred size or 64px placeholder) if already on disk.
+    pub fn cached_thumbnail(
+        &self,
+        remote_path: &str,
+        preferred_size: Option<u32>,
+    ) -> Option<PathBuf> {
+        self.coordinator
+            .cached_thumbnail_path(remote_path, preferred_size)
+    }
+
     /// Fetches or retrieves a cached thumbnail for `remote_path`.
     pub async fn get_thumbnail(&self, remote_path: &str, size: u32) -> Option<PathBuf> {
         self.coordinator
@@ -535,6 +545,10 @@ impl FileExplorerBackend for DesktopUiController {
 
     async fn search_items(&self, query: &str) -> Result<Vec<FileViewItem>, UiError> {
         self.search_items(query).await
+    }
+
+    fn cached_thumbnail(&self, remote_path: &str, preferred_size: Option<u32>) -> Option<PathBuf> {
+        self.cached_thumbnail(remote_path, preferred_size)
     }
 
     async fn get_thumbnail(&self, remote_path: &str, size: u32) -> Option<PathBuf> {

@@ -51,6 +51,9 @@ pub trait FileExplorerBackend: Clone + 'static {
     fn search_items(&self, query: &str)
     -> impl Future<Output = Result<Vec<FileViewItem>, UiError>>;
 
+    /// Fast synchronous check returning a cached thumbnail path (preferred size or 64px placeholder) if already on disk.
+    fn cached_thumbnail(&self, remote_path: &str, preferred_size: Option<u32>) -> Option<PathBuf>;
+
     /// Returns or fetches thumbnail path for a remote file at the given dimensions.
     fn get_thumbnail(&self, remote_path: &str, size: u32) -> impl Future<Output = Option<PathBuf>>;
 

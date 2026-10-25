@@ -390,6 +390,34 @@ impl DesktopSyncCoordinator {
         .await?
     }
 
+    /// Fast synchronous check returning a cached thumbnail path (preferred size or 64px placeholder) if already on disk.
+    pub fn cached_thumbnail_path(
+        &self,
+        remote_path: &str,
+        preferred_size: Option<u32>,
+    ) -> Option<PathBuf> {
+        let cache_dir = self.cache_dir();
+        let thumbs_dir = cache_dir.join("thumbnails");
+        let clean_path = remote_path.trim_matches('/');
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&clean_path, &mut hasher);
+        let path_hash = std::hash::Hasher::finish(&hasher);
+
+        if let Some(s) = preferred_size {
+            let p = thumbs_dir.join(format!("{:016x}_{s}.png", path_hash));
+            if p.exists() {
+                return Some(p);
+            }
+        }
+
+        let low_p = thumbs_dir.join(format!("{:016x}_64.png", path_hash));
+        if low_p.exists() {
+            return Some(low_p);
+        }
+
+        None
+    }
+
     /// Fetches or retrieves a cached thumbnail for `remote_path`.
     pub async fn fetch_thumbnail(
         &self,
@@ -423,15 +451,35 @@ impl DesktopSyncCoordinator {
 
         if let Some((_, client, auth)) = self.active_dav_context().await {
             let preview = client.preview(&auth);
-            let opts = nextcloud_rust_sdk::PreviewOptions::new()
-                .dimensions(size, size)
-                .mode(nextcloud_rust_sdk::PreviewMode::Cover);
 
             let preview_path = if clean_path.starts_with('/') {
                 clean_path.to_string()
             } else {
                 format!("/{clean_path}")
             };
+
+            // Progressive loading: if target size > 64 and 64px is not cached yet,
+            // fetch smallest 64px thumbnail first and emit ThumbnailReady immediately!
+            if size > 64 && !low_path.exists() {
+                let low_opts = nextcloud_rust_sdk::PreviewOptions::new()
+                    .dimensions(64, 64)
+                    .mode(nextcloud_rust_sdk::PreviewMode::Cover);
+
+                if let Ok(bytes) = preview.get_by_path(&preview_path, &low_opts).await
+                    && tokio::fs::write(&low_path, &bytes).await.is_ok()
+                {
+                    self.event_bus.emit(
+                        nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
+                            path: remote_path.to_string(),
+                            cached_path: low_path.clone(),
+                        },
+                    );
+                }
+            }
+
+            let opts = nextcloud_rust_sdk::PreviewOptions::new()
+                .dimensions(size, size)
+                .mode(nextcloud_rust_sdk::PreviewMode::Cover);
 
             if let Ok(bytes) = preview.get_by_path(&preview_path, &opts).await
                 && tokio::fs::write(&thumb_path, &bytes).await.is_ok()
@@ -472,12 +520,13 @@ impl DesktopSyncCoordinator {
 
         let coord = self.clone();
         tokio::spawn(async move {
-            let mut tasks = Vec::new();
-            for path in paths {
+            // 1. First prefetch smallest 64px thumbnails in fast concurrent batch
+            let mut low_tasks = Vec::new();
+            for path in &paths {
                 let c = coord.clone();
                 let p = path.clone();
-                tasks.push(tokio::spawn(async move {
-                    if let Ok(Some(cached_path)) = c.fetch_thumbnail(&p, size).await {
+                low_tasks.push(tokio::spawn(async move {
+                    if let Ok(Some(cached_path)) = c.fetch_thumbnail(&p, 64).await {
                         c.event_bus.emit(
                             nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
                                 path: p,
@@ -487,8 +536,30 @@ impl DesktopSyncCoordinator {
                     }
                 }));
             }
-            for task in tasks {
+            for task in low_tasks {
                 let _ = task.await;
+            }
+
+            // 2. If requested size > 64, upgrade to target size in background
+            if size > 64 {
+                let mut target_tasks = Vec::new();
+                for path in paths {
+                    let c = coord.clone();
+                    let p = path.clone();
+                    target_tasks.push(tokio::spawn(async move {
+                        if let Ok(Some(cached_path)) = c.fetch_thumbnail(&p, size).await {
+                            c.event_bus.emit(
+                                nextcloud_desktop_core::events::DesktopEvent::ThumbnailReady {
+                                    path: p,
+                                    cached_path,
+                                },
+                            );
+                        }
+                    }));
+                }
+                for task in target_tasks {
+                    let _ = task.await;
+                }
             }
         });
     }

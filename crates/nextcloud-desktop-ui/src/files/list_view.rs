@@ -396,27 +396,51 @@ impl FileListRow {
                 || item.name.ends_with(".pdf"));
 
         if is_thumbnail_candidate {
-            let backend_clone = backend.clone();
-            let path_clone = item.path.clone();
-            let icon_box_clone = icon_box.clone();
             let thumb_dim = icon_size as u32;
 
-            glib::MainContext::default().spawn_local(async move {
-                if let Some(thumb_path) = backend_clone.get_thumbnail(&path_clone, thumb_dim).await
-                {
-                    let file = gtk4::gio::File::for_path(&thumb_path);
-                    if let Ok(texture) = gdk::Texture::from_file(&file) {
-                        let picture = gtk4::Picture::for_paintable(&texture);
-                        picture.set_can_shrink(true);
-                        picture.set_keep_aspect_ratio(true);
-                        picture.set_size_request(icon_size, icon_size);
-                        while let Some(first) = icon_box_clone.first_child() {
-                            icon_box_clone.remove(&first);
-                        }
-                        icon_box_clone.append(&picture);
+            // 1. Immediately provide cached thumbnail (target or 64px placeholder) if already on disk!
+            if let Some(cached_path) = backend.cached_thumbnail(&item.path, Some(thumb_dim)) {
+                let file = gtk4::gio::File::for_path(&cached_path);
+                if let Ok(texture) = gdk::Texture::from_file(&file) {
+                    let picture = gtk4::Picture::for_paintable(&texture);
+                    picture.set_can_shrink(true);
+                    picture.set_keep_aspect_ratio(true);
+                    picture.set_size_request(icon_size, icon_size);
+                    while let Some(first) = icon_box.first_child() {
+                        icon_box.remove(&first);
                     }
+                    icon_box.append(&picture);
                 }
-            });
+            }
+
+            // 2. Asynchronously fetch if target size is not yet on disk
+            let has_target_cached = backend
+                .cached_thumbnail(&item.path, Some(thumb_dim))
+                .is_some_and(|p| p.to_string_lossy().contains(&format!("_{thumb_dim}.")));
+
+            if !has_target_cached {
+                let backend_clone = backend.clone();
+                let path_clone = item.path.clone();
+                let icon_box_clone = icon_box.clone();
+
+                glib::MainContext::default().spawn_local(async move {
+                    if let Some(thumb_path) =
+                        backend_clone.get_thumbnail(&path_clone, thumb_dim).await
+                    {
+                        let file = gtk4::gio::File::for_path(&thumb_path);
+                        if let Ok(texture) = gdk::Texture::from_file(&file) {
+                            let picture = gtk4::Picture::for_paintable(&texture);
+                            picture.set_can_shrink(true);
+                            picture.set_keep_aspect_ratio(true);
+                            picture.set_size_request(icon_size, icon_size);
+                            while let Some(first) = icon_box_clone.first_child() {
+                                icon_box_clone.remove(&first);
+                            }
+                            icon_box_clone.append(&picture);
+                        }
+                    }
+                });
+            }
         }
 
         let name = Label::new(Some(&item.name));
@@ -535,7 +559,7 @@ impl FileListRow {
         actions.append(&rename_btn);
         actions.append(&del_btn);
 
-        hbox.append(&icon);
+        hbox.append(&icon_box);
         hbox.append(&name);
         hbox.append(&type_lbl);
         hbox.append(&size_lbl);

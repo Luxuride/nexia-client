@@ -1,4 +1,4 @@
-//! Context menu popover providing Open, Rename, and Delete actions for file items.
+//! Lazy context menu popover providing Open, Rename, Delete, and Properties actions for file items.
 
 use gtk4::{Box as GtkBox, Button, GestureClick, Orientation, Popover, Separator};
 use libadwaita as adw;
@@ -9,13 +9,35 @@ use crate::files::rename_dialog::RenameDialog;
 use crate::model::FileViewItem;
 use crate::widget::FileExplorerBackend;
 
-/// Right-click context menu offering Open, Rename, and Delete actions.
+/// Right-click context menu offering Open, Rename, Delete, and Properties actions.
 pub struct ItemContextMenu;
 
 impl ItemContextMenu {
-    /// Attaches a right-click secondary click gesture and popup to `target`.
+    /// Attaches a right-click secondary click gesture that builds and presents the context menu lazily on demand.
     pub fn attach<B: FileExplorerBackend>(
         target: &impl IsA<gtk4::Widget>,
+        item: &FileViewItem,
+        backend: &B,
+        toast_overlay: &adw::ToastOverlay,
+        on_refresh: Rc<dyn Fn()>,
+    ) {
+        let gesture = GestureClick::new();
+        gesture.set_button(3); // Secondary click
+        let target_widget = target.clone().upcast::<gtk4::Widget>();
+        let item_clone = item.clone();
+        let b = backend.clone();
+        let toast = toast_overlay.clone();
+        let cb = on_refresh;
+
+        gesture.connect_pressed(move |_, _, _, _| {
+            Self::show_menu(&target_widget, &item_clone, &b, &toast, cb.clone());
+        });
+        target.add_controller(gesture);
+    }
+
+    /// Lazily constructs and presents the context menu popover anchored to `target`.
+    fn show_menu<B: FileExplorerBackend>(
+        target: &gtk4::Widget,
         item: &FileViewItem,
         backend: &B,
         toast_overlay: &adw::ToastOverlay,
@@ -138,15 +160,9 @@ impl ItemContextMenu {
         menu_box.append(&delete_btn);
         menu_box.append(&Separator::new(Orientation::Horizontal));
         menu_box.append(&properties_btn);
+
         popover.set_child(Some(&menu_box));
         popover.set_parent(target);
-
-        let gesture = GestureClick::new();
-        gesture.set_button(3); // Secondary click
-        let pop_for_click = popover;
-        gesture.connect_pressed(move |_, _, _, _| {
-            pop_for_click.popup();
-        });
-        target.add_controller(gesture);
+        popover.popup();
     }
 }

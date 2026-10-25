@@ -23,9 +23,7 @@ pub mod pages;
 pub use controller::DesktopUiController;
 pub use error::UiError;
 #[cfg(feature = "gtk")]
-pub use gtk_app::launch_gtk_application;
-#[cfg(feature = "gtk")]
-pub use gtk_app::run_headless;
+pub use gtk_app::{launch_gtk_application, run_headless, suppress_gtk_logs};
 pub use model::{
     FileSyncStatus, FileViewItem, FileViewMode, NavigationPage, PathSegment, TransferItem,
 };
