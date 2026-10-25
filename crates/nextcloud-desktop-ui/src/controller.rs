@@ -446,12 +446,13 @@ impl DesktopUiController {
     pub async fn list_current_items(&self) -> Result<Vec<FileViewItem>, UiError> {
         let path = self.current_path().await;
         let vfs = self.coordinator.active_vfs().await;
+        let is_populated = vfs.is_directory_populated(&path).await.unwrap_or(false);
         let mut entries = vfs
             .list_children(&path)
             .await
             .map_err(|err| UiError::Controller(err.to_string()))?;
 
-        if entries.is_empty() {
+        if !is_populated {
             let _ = self.coordinator.refresh_path(&path).await;
             if let Ok(fresh) = vfs.list_children(&path).await {
                 entries = fresh;

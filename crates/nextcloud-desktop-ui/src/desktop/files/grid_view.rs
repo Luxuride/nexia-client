@@ -370,8 +370,11 @@ impl FileGridTile {
                 }
 
                 // 2. Asynchronously fetch 64px thumbnail if not yet cached
+                let b = backend_clone.clone();
+                let p = path_clone.clone();
+                let ib = icon_box_clone.clone();
                 glib::MainContext::default().spawn_local(async move {
-                    if let Some(thumb_path) = backend_clone.get_thumbnail(&path_clone, 64).await {
+                    if let Some(thumb_path) = b.get_thumbnail(&p, 64).await {
                         let file = gtk4::gio::File::for_path(&thumb_path);
                         if let Ok(texture) = gdk::Texture::from_file(&file) {
                             let picture = gtk4::Picture::for_paintable(&texture);
@@ -380,10 +383,10 @@ impl FileGridTile {
                             picture.set_halign(Align::Center);
                             picture.set_valign(Align::Center);
                             picture.set_size_request(icon_size, icon_size);
-                            while let Some(first) = icon_box_clone.first_child() {
-                                icon_box_clone.remove(&first);
+                            while let Some(first) = ib.first_child() {
+                                ib.remove(&first);
                             }
-                            icon_box_clone.append(&picture);
+                            ib.append(&picture);
                         }
                     }
                 });

@@ -425,21 +425,18 @@ fn build_ui(
         }
     });
 
-    // Startup discovery & initial remote tree refresh
-    let ctrl_for_init = controller.clone();
-    let refresh_for_init = refresh_cb.clone();
-    glib::MainContext::default().spawn_local(async move {
-        ctrl_for_init.ensure_discovered_accounts().await;
-        let _ = ctrl_for_init.refresh_virtual_tree().await;
-        refresh_for_init();
-    });
-
-    // Initial render of Cloud Files view
+    // Initial render of Cloud Files view from local persistent tree cache (0 ms first paint)
     refresh_cb();
 
     if !start_minimized {
         window.present();
     }
+
+    // Background remote tree refresh & automatic subfolder preloading (runs off the UI thread)
+    let ctrl_for_init = controller.clone();
+    tokio::spawn(async move {
+        let _ = ctrl_for_init.refresh_virtual_tree().await;
+    });
 
     window
 }

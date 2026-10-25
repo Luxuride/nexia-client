@@ -43,6 +43,7 @@ pub struct DesktopSyncCoordinator {
     pub(crate) preview_semaphore: Arc<tokio::sync::Semaphore>,
     pub(crate) cached_theme_data: Arc<std::sync::RwLock<Option<nextcloud_rust_sdk::ThemeInfo>>>,
     pub(crate) thumbnail_stats: Arc<std::sync::RwLock<ThumbnailQueueSnapshot>>,
+    pub(crate) is_preloading_tree: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) storage: Option<Arc<nextcloud_desktop_core::DesktopStorage>>,
 }
 
@@ -79,6 +80,7 @@ impl DesktopSyncCoordinator {
             preview_semaphore: Arc::new(tokio::sync::Semaphore::new(8)),
             cached_theme_data: Arc::new(std::sync::RwLock::new(None)),
             thumbnail_stats: Arc::new(std::sync::RwLock::new(ThumbnailQueueSnapshot::default())),
+            is_preloading_tree: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             storage: None,
         };
 

@@ -79,6 +79,8 @@ impl DesktopSyncCoordinator {
             },
         );
 
+        self.trigger_background_tree_preload();
+
         if self.is_autodownload_thumbnails_enabled().await {
             let media_paths: Vec<String> = summaries
                 .into_iter()
@@ -167,6 +169,8 @@ impl DesktopSyncCoordinator {
                 node_count: inserted,
             },
         );
+
+        self.trigger_background_tree_preload();
 
         if self.is_autodownload_thumbnails_enabled().await {
             let media_paths: Vec<String> = summaries
@@ -1078,6 +1082,54 @@ impl DesktopSyncCoordinator {
                 }
             }
         });
+    }
+
+    /// Triggers background crawling and preloading of unpopulated virtual directory trees.
+    pub fn trigger_background_tree_preload(&self) {
+        if self
+            .is_preloading_tree
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .is_err()
+        {
+            return;
+        }
+
+        let this = self.clone();
+        tokio::spawn(async move {
+            this.run_background_tree_preload().await;
+            this.is_preloading_tree
+                .store(false, std::sync::atomic::Ordering::SeqCst);
+        });
+    }
+
+    async fn run_background_tree_preload(&self) {
+        let vfs = self.active_vfs().await;
+        while let Ok(unpopulated) = vfs.unpopulated_directories().await {
+            if unpopulated.is_empty() {
+                break;
+            }
+            let mut any_fetched = false;
+            for dir in unpopulated {
+                if let Ok(true) = vfs.is_directory_populated(&dir).await {
+                    continue;
+                }
+                if let Ok(true) = self.is_sync_paused().await {
+                    return;
+                }
+                tracing::debug!(path = %dir, "Background preloading virtual directory");
+                let _ = self.refresh_path(&dir).await;
+                any_fetched = true;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            if !any_fetched {
+                break;
+            }
+        }
     }
 }
 
