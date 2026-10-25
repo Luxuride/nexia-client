@@ -147,7 +147,7 @@ mod tests {
 
         let vfs = coordinator.active_vfs().await;
         let root_entries = vfs.list_children("/").await.expect("list root");
-        assert!(!root_entries.is_empty());
+        assert!(root_entries.is_empty());
 
         coordinator
             .create_directory("/TestFolder")

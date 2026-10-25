@@ -57,11 +57,22 @@ impl DesktopSyncCoordinator {
                 .unwrap_or_default();
 
             let secret = SecretString::new(&password);
-            if let Ok(client) = Client::builder()
-                .server_url(server_url)
-                .initial_credentials(&disc.username, secret)
-                .build()
-                .await
+
+            let client_exists = {
+                let clients = self.clients.read().await;
+                clients.iter().any(|c| {
+                    (c.server_url().as_str() == server_url.as_str()
+                        || c.server_url().authority() == server_url.authority())
+                        && c.current_user_id().as_deref() == Some(&disc.username)
+                })
+            };
+
+            if !client_exists
+                && let Ok(client) = Client::builder()
+                    .server_url(server_url.clone())
+                    .initial_credentials(&disc.username, secret)
+                    .build()
+                    .await
             {
                 self.add_client(client).await;
             }
@@ -73,11 +84,11 @@ impl DesktopSyncCoordinator {
             let sso_acc = Account::system_sso_account(
                 format!(
                     "sso-{}-{}",
-                    disc.server_url.as_str().replace([':', '/'], "_"),
+                    server_url.authority().replace([':', '/'], "_"),
                     disc.username
                 ),
                 display_name,
-                ServerConfig::new(disc.server_url.as_str()),
+                ServerConfig::new(server_url.as_str()),
                 nextcloud_desktop_core::account::AccountCredentials::new(&disc.username, password),
                 None,
             );
@@ -125,29 +136,36 @@ impl DesktopSyncCoordinator {
             acc
         };
 
-        // Match client by server URL and username
-        let clients = self.clients.read().await;
-        if let Some(pos) = clients.iter().position(|c| {
-            c.server_url().as_str() == target_account.server.server_url
-                && c.current_user_id().as_deref() == Some(&target_account.credentials.username)
-        }) {
-            drop(clients);
-            let _ = self.switch_client(pos).await;
-        } else {
-            drop(clients);
-            if let Ok(server_url) = ServerUrl::parse(&target_account.server.server_url) {
+        // Match existing running client by server URL and username, or create it if not present
+        let target_idx = {
+            let clients = self.clients.read().await;
+            clients.iter().position(|c| {
+                let target_authority = ServerUrl::parse(&target_account.server.server_url)
+                    .map(|u| u.authority().to_string())
+                    .unwrap_or_default();
+                (c.server_url().as_str() == target_account.server.server_url
+                    || c.server_url().authority() == target_authority)
+                    && c.current_user_id().as_deref() == Some(&target_account.credentials.username)
+            })
+        };
+
+        let idx = match target_idx {
+            Some(i) => i,
+            None => {
+                let server_url = ServerUrl::parse(&target_account.server.server_url)
+                    .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
                 let secret = SecretString::new(target_account.credentials.secret());
-                if let Ok(client) = Client::builder()
+                let client = Client::builder()
                     .server_url(server_url)
                     .initial_credentials(&target_account.credentials.username, secret)
                     .build()
                     .await
-                {
-                    let pos = self.add_client(client).await;
-                    let _ = self.switch_client(pos).await;
-                }
+                    .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+                self.add_client(client).await
             }
-        }
+        };
+
+        self.switch_client(idx).await?;
 
         // Reset default mount id so a new mount is opened for the switched account
         *self.default_mount_id.write().await = None;

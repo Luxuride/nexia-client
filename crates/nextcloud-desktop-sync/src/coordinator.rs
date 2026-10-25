@@ -1,9 +1,8 @@
 //! Master desktop coordinator wrapping the Nextcloud background orchestrator and client list.
 
 use nextcloud_rust_sdk::{
-    Client, HierarchySeeder, MountDescriptor, MountId, MountMode, MountsHandle,
-    NextcloudOrchestrator, OrchestratorConfig, OrchestratorHandle, ServerUrl, SessionState,
-    StandardNextcloudSeeder, VfsHandle, VirtualTree,
+    Client, MountDescriptor, MountId, MountMode, MountsHandle, NextcloudOrchestrator,
+    OrchestratorConfig, OrchestratorHandle, ServerUrl, SessionState, VfsHandle, VirtualTree,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -103,8 +102,7 @@ impl DesktopSyncCoordinator {
             let tree_file = vfs_dir.join("tree.json");
             if !tree_file.exists() {
                 let _ = std::fs::create_dir_all(&vfs_dir);
-                let mut tree = VirtualTree::new("Nextcloud");
-                StandardNextcloudSeeder::seed(&mut tree);
+                let tree = VirtualTree::new("Nextcloud");
                 if let Ok(json) = serde_json::to_string_pretty(&tree) {
                     let _ = std::fs::write(&tree_file, json);
                 }

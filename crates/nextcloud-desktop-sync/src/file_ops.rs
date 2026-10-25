@@ -23,7 +23,7 @@ impl DesktopSyncCoordinator {
         let vfs = self.active_vfs().await;
 
         let Some((user, client, auth)) = self.active_dav_context().await else {
-            return Ok(16);
+            return Ok(0);
         };
 
         let dav_client = client.dav(&auth);
@@ -37,7 +37,7 @@ impl DesktopSyncCoordinator {
                 Ok(r) => r,
                 Err(err) => {
                     tracing::warn!("Remote WebDAV PROPFIND failed ({err}), keeping default tree");
-                    return Ok(16);
+                    return Ok(0);
                 }
             },
         };

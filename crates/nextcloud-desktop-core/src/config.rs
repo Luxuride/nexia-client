@@ -111,16 +111,13 @@ impl AppConfig {
         // Clean up any legacy placeholder dummy system accounts
         self.accounts.retain(|acc| acc.id.0 != "system-account");
 
+        // Remove obsolete system accounts that are no longer discovered
+        self.accounts
+            .retain(|acc| !acc.is_system || system_accounts.iter().any(|sys| sys.id == acc.id));
+
         for sys in system_accounts {
-            if let Some(pos) = self.accounts.iter().position(|a| {
-                a.id == sys.id
-                    || (a.server.server_url == sys.server.server_url
-                        && a.credentials.username == sys.credentials.username)
-            }) {
-                self.accounts[pos].is_system = true;
-                if sys.avatar_path.is_some() && self.accounts[pos].avatar_path.is_none() {
-                    self.accounts[pos].avatar_path = sys.avatar_path;
-                }
+            if let Some(pos) = self.accounts.iter().position(|a| a.id == sys.id) {
+                self.accounts[pos] = sys;
             } else {
                 self.accounts.push(sys);
             }
