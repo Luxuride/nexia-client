@@ -188,7 +188,7 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
 
         let mode = self.backend.view_mode().await;
         let zoom = self.backend.zoom_level().await;
-        let thumb_dim = zoom.grid_icon_size() as u32;
+        let thumb_dim = 64u32;
 
         let thumb_candidates: Vec<String> = items
             .iter()

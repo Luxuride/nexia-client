@@ -6,7 +6,7 @@ use gtk4::{
 };
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use crate::files::canvas_menu::CanvasContextMenu;
@@ -26,6 +26,7 @@ pub struct FileGridView {
     flow_box: FlowBox,
     items: Rc<RefCell<Vec<FileViewItem>>>,
     selection_tracker: SelectionTracker,
+    generation: Rc<Cell<u64>>,
 }
 
 impl FileGridView {
@@ -41,7 +42,7 @@ impl FileGridView {
         flow_box.set_focus_on_click(false);
         flow_box.set_selection_mode(SelectionMode::Multiple);
         flow_box.set_activate_on_single_click(false);
-        flow_box.set_homogeneous(true);
+        flow_box.set_homogeneous(false);
         flow_box.set_max_children_per_line(100);
         flow_box.set_min_children_per_line(1);
         flow_box.set_column_spacing(12);
@@ -56,6 +57,7 @@ impl FileGridView {
         strip_flowbox_linear_drag(&flow_box);
 
         let items = Rc::new(RefCell::new(Vec::new()));
+        let generation = Rc::new(Cell::new(0u64));
 
         // Wire selection change (Ctrl+click, Shift+click, drag-select)
         let items_for_sel = items.clone();
@@ -159,6 +161,7 @@ impl FileGridView {
             flow_box,
             items,
             selection_tracker,
+            generation,
         }
     }
 
@@ -169,6 +172,7 @@ impl FileGridView {
 
     /// Removes all rendered children from the grid and resets selection.
     pub fn clear(&self) {
+        self.generation.set(self.generation.get() + 1);
         self.flow_box.unselect_all();
         while let Some(child) = self.flow_box.first_child() {
             self.flow_box.remove(&child);
@@ -188,12 +192,7 @@ impl ViewComponent for FileGridView {
 
 impl<B: FileExplorerBackend> ItemCollectionView<B> for FileGridView {
     fn clear(&self) {
-        self.flow_box.unselect_all();
-        while let Some(child) = self.flow_box.first_child() {
-            self.flow_box.remove(&child);
-        }
-        self.items.borrow_mut().clear();
-        self.selection_tracker.clear();
+        self.clear();
     }
 
     fn populate(
@@ -205,15 +204,74 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileGridView {
         on_refresh: Rc<dyn Fn()>,
     ) {
         self.clear();
+        let current_gen = self.generation.get();
+        let all_items = Rc::new(items.to_vec());
         *self.items.borrow_mut() = items.to_vec();
 
-        for item in items {
+        // Populate initial batch immediately for zero-latency first paint
+        let chunk_size = 50;
+        let initial_count = chunk_size.min(all_items.len());
+        for item in &all_items[..initial_count] {
             let tile = FileGridTile::build(item, backend, toast_overlay, zoom, on_refresh.clone());
             self.flow_box.insert(tile.root_widget(), -1);
         }
+
+        // Schedule remaining items in idle slices so the UI stays responsive without freezing
+        if all_items.len() > initial_count {
+            let ctx = GridChunkContext {
+                items: all_items,
+                generation: self.generation.clone(),
+                expected_gen: current_gen,
+                flow_box: self.flow_box.clone(),
+                backend: backend.clone(),
+                toast_overlay: toast_overlay.clone(),
+                zoom,
+                on_refresh,
+            };
+            schedule_grid_chunks(ctx, initial_count, chunk_size);
+        }
+
         self.flow_box.unselect_all();
         self.selection_tracker.clear();
     }
+}
+
+#[derive(Clone)]
+struct GridChunkContext<B> {
+    items: Rc<Vec<FileViewItem>>,
+    generation: Rc<Cell<u64>>,
+    expected_gen: u64,
+    flow_box: FlowBox,
+    backend: B,
+    toast_overlay: adw::ToastOverlay,
+    zoom: ZoomLevel,
+    on_refresh: Rc<dyn Fn()>,
+}
+
+fn schedule_grid_chunks<B: FileExplorerBackend + 'static>(
+    ctx: GridChunkContext<B>,
+    start_idx: usize,
+    chunk_size: usize,
+) {
+    glib::idle_add_local_once(move || {
+        if ctx.generation.get() != ctx.expected_gen || start_idx >= ctx.items.len() {
+            return;
+        }
+        let end_idx = (start_idx + chunk_size).min(ctx.items.len());
+        for item in &ctx.items[start_idx..end_idx] {
+            let tile = FileGridTile::build(
+                item,
+                &ctx.backend,
+                &ctx.toast_overlay,
+                ctx.zoom,
+                ctx.on_refresh.clone(),
+            );
+            ctx.flow_box.insert(tile.root_widget(), -1);
+        }
+        if end_idx < ctx.items.len() {
+            schedule_grid_chunks(ctx, end_idx, chunk_size);
+        }
+    });
 }
 
 /// A single icon tile within the [`FileGridView`].
@@ -233,14 +291,18 @@ impl FileGridTile {
         let child = FlowBoxChild::new();
         child.set_focusable(false);
         child.set_focus_on_click(false);
-        child.set_hexpand(true);
-        let card = GtkBox::new(Orientation::Vertical, 4);
         let item_width = zoom.grid_item_width();
         let icon_size = zoom.grid_icon_size();
-        let item_height = icon_size + 70;
-        card.set_size_request(item_width, item_height);
+
+        // Enforce unified width across all items (files and directories)
+        child.set_size_request(item_width, -1);
+        child.set_hexpand(false);
+        child.set_halign(Align::Center);
+
+        let card = GtkBox::new(Orientation::Vertical, 4);
+        card.set_size_request(item_width, -1);
         card.set_halign(Align::Fill);
-        card.set_hexpand(true);
+        card.set_hexpand(false);
         card.set_valign(Align::Start);
         card.set_overflow(gtk4::Overflow::Hidden);
         card.add_css_class("file-tile");
@@ -264,6 +326,7 @@ impl FileGridTile {
         let icon = Image::from_icon_name(item.nautilus_icon_name());
         icon.set_pixel_size(icon_size);
         icon.set_halign(Align::Center);
+        icon.set_valign(Align::Center);
         icon_box.append(&icon);
 
         // Check for thumbnail support
@@ -282,58 +345,40 @@ impl FileGridTile {
                 || item.name.ends_with(".pdf"));
 
         if is_thumbnail_candidate {
-            let thumb_dim = icon_size as u32;
+            let backend_clone = backend.clone();
+            let path_clone = item.path.clone();
+            let icon_box_clone = icon_box.clone();
 
-            // 1. Immediately provide cached thumbnail (target or 64px placeholder) if already on disk!
-            if let Some(cached_path) = backend.cached_thumbnail(&item.path, Some(thumb_dim)) {
-                let file = gtk4::gio::File::for_path(&cached_path);
-                if let Ok(texture) = gdk::Texture::from_file(&file) {
-                    let picture = gtk4::Picture::for_paintable(&texture);
-                    picture.set_can_shrink(true);
-                    picture.set_keep_aspect_ratio(true);
-                    picture.set_size_request(icon_size, icon_size);
-                    while let Some(first) = icon_box.first_child() {
-                        icon_box.remove(&first);
-                    }
-                    icon_box.append(&picture);
-                }
-            }
-
-            // 2. Asynchronously fetch if target size is not yet on disk
-            let has_target_cached = backend
-                .cached_thumbnail(&item.path, Some(thumb_dim))
-                .is_some_and(|p| p.to_string_lossy().contains(&format!("_{thumb_dim}.")));
-
-            if !has_target_cached {
-                let backend_clone = backend.clone();
-                let path_clone = item.path.clone();
-                let icon_box_clone = icon_box.clone();
-
-                glib::MainContext::default().spawn_local(async move {
-                    if thumb_dim > 64
-                        && let Some(low_path) = backend_clone.get_thumbnail(&path_clone, 64).await
-                    {
-                        let file = gtk4::gio::File::for_path(&low_path);
-                        if let Ok(texture) = gdk::Texture::from_file(&file) {
-                            let picture = gtk4::Picture::for_paintable(&texture);
-                            picture.set_can_shrink(true);
-                            picture.set_keep_aspect_ratio(true);
-                            picture.set_size_request(icon_size, icon_size);
-                            while let Some(first) = icon_box_clone.first_child() {
-                                icon_box_clone.remove(&first);
-                            }
-                            icon_box_clone.append(&picture);
+            // Asynchronously resolve thumbnail on idle to keep UI loop completely unblocked
+            glib::idle_add_local_once(move || {
+                // 1. Immediately provide cached 64px thumbnail if already on disk
+                if let Some(cached_path) = backend_clone.cached_thumbnail(&path_clone, Some(64)) {
+                    let file = gtk4::gio::File::for_path(&cached_path);
+                    if let Ok(texture) = gdk::Texture::from_file(&file) {
+                        let picture = gtk4::Picture::for_paintable(&texture);
+                        picture.set_can_shrink(true);
+                        picture.set_keep_aspect_ratio(true);
+                        picture.set_halign(Align::Center);
+                        picture.set_valign(Align::Center);
+                        picture.set_size_request(icon_size, icon_size);
+                        while let Some(first) = icon_box_clone.first_child() {
+                            icon_box_clone.remove(&first);
                         }
+                        icon_box_clone.append(&picture);
+                        return;
                     }
+                }
 
-                    if let Some(thumb_path) =
-                        backend_clone.get_thumbnail(&path_clone, thumb_dim).await
-                    {
+                // 2. Asynchronously fetch 64px thumbnail if not yet cached
+                glib::MainContext::default().spawn_local(async move {
+                    if let Some(thumb_path) = backend_clone.get_thumbnail(&path_clone, 64).await {
                         let file = gtk4::gio::File::for_path(&thumb_path);
                         if let Ok(texture) = gdk::Texture::from_file(&file) {
                             let picture = gtk4::Picture::for_paintable(&texture);
                             picture.set_can_shrink(true);
                             picture.set_keep_aspect_ratio(true);
+                            picture.set_halign(Align::Center);
+                            picture.set_valign(Align::Center);
                             picture.set_size_request(icon_size, icon_size);
                             while let Some(first) = icon_box_clone.first_child() {
                                 icon_box_clone.remove(&first);
@@ -342,7 +387,7 @@ impl FileGridTile {
                         }
                     }
                 });
-            }
+            });
         }
 
         let name = Label::new(Some(&item.name));
@@ -351,19 +396,21 @@ impl FileGridTile {
         name.set_justify(Justification::Center);
         name.set_halign(Align::Fill);
         name.set_valign(Align::Start);
-        name.set_hexpand(true);
-        name.set_size_request(-1, 36);
+        name.set_hexpand(false);
         name.set_max_width_chars(match zoom {
             ZoomLevel::Small => 10,
             ZoomLevel::Medium => 14,
             ZoomLevel::Large => 18,
             ZoomLevel::ExtraLarge => 24,
         });
-        name.set_lines(2);
+        name.set_lines(3);
         name.set_ellipsize(pango::EllipsizeMode::End);
 
         let sub = Label::new(Some(&item.size_formatted));
-        sub.set_size_request(-1, 18);
+        sub.set_wrap(true);
+        sub.set_wrap_mode(pango::WrapMode::WordChar);
+        sub.set_justify(Justification::Center);
+        sub.set_halign(Align::Fill);
         sub.add_css_class("caption");
         sub.add_css_class("dim-label");
 
@@ -414,7 +461,7 @@ mod tests {
             return;
         }
         let flow_box = FlowBox::new();
-        flow_box.set_homogeneous(true);
+        flow_box.set_homogeneous(false);
         flow_box.set_max_children_per_line(100);
         flow_box.set_min_children_per_line(1);
         flow_box.set_column_spacing(12);
@@ -424,11 +471,11 @@ mod tests {
         flow_box.set_hexpand(true);
 
         let child1 = FlowBoxChild::new();
-        child1.set_hexpand(true);
+        child1.set_hexpand(false);
         let card = GtkBox::new(Orientation::Vertical, 4);
-        card.set_size_request(100, 110);
+        card.set_size_request(100, -1);
         card.set_halign(Align::Fill);
-        card.set_hexpand(true);
+        card.set_hexpand(false);
 
         let label = Label::new(Some(
             "A very long filename for testing stretch behavior.png",
@@ -436,16 +483,16 @@ mod tests {
         label.set_wrap(true);
         label.set_wrap_mode(pango::WrapMode::WordChar);
         label.set_justify(Justification::Center);
-        label.set_lines(2);
+        label.set_lines(3);
         label.set_ellipsize(pango::EllipsizeMode::End);
         label.set_max_width_chars(14);
-        label.set_hexpand(true);
+        label.set_hexpand(false);
         card.append(&label);
 
         child1.set_child(Some(&card));
         flow_box.insert(&child1, -1);
 
-        assert!(flow_box.is_homogeneous());
+        assert!(!flow_box.is_homogeneous());
         assert_eq!(flow_box.max_children_per_line(), 100);
         assert_eq!(flow_box.column_spacing(), 12);
         assert_eq!(flow_box.row_spacing(), 12);

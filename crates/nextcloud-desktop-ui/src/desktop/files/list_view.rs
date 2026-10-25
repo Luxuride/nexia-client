@@ -6,7 +6,7 @@ use gtk4::{
 };
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use crate::files::canvas_menu::CanvasContextMenu;
@@ -28,6 +28,7 @@ pub struct FileListView {
     list_box: ListBox,
     items: Rc<RefCell<Vec<FileViewItem>>>,
     selection_tracker: SelectionTracker,
+    generation: Rc<Cell<u64>>,
 }
 
 impl FileListView {
@@ -273,11 +274,14 @@ impl FileListView {
         });
         container.add_controller(key_controller);
 
+        let generation = Rc::new(Cell::new(0u64));
+
         Self {
             container,
             list_box,
             items,
             selection_tracker,
+            generation,
         }
     }
 
@@ -288,6 +292,7 @@ impl FileListView {
 
     /// Removes all rendered children from the list and clears active selection.
     pub fn clear(&self) {
+        self.generation.set(self.generation.get() + 1);
         self.list_box.unselect_all();
         while let Some(child) = self.list_box.first_child() {
             self.list_box.remove(&child);
@@ -307,12 +312,7 @@ impl ViewComponent for FileListView {
 
 impl<B: FileExplorerBackend> ItemCollectionView<B> for FileListView {
     fn clear(&self) {
-        self.list_box.unselect_all();
-        while let Some(child) = self.list_box.first_child() {
-            self.list_box.remove(&child);
-        }
-        self.items.borrow_mut().clear();
-        self.selection_tracker.clear();
+        self.clear();
     }
 
     fn populate(
@@ -324,15 +324,74 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileListView {
         on_refresh: Rc<dyn Fn()>,
     ) {
         self.clear();
+        let current_gen = self.generation.get();
+        let all_items = Rc::new(items.to_vec());
         *self.items.borrow_mut() = items.to_vec();
 
-        for item in items {
+        // Populate initial batch immediately for zero-latency first paint
+        let chunk_size = 50;
+        let initial_count = chunk_size.min(all_items.len());
+        for item in &all_items[..initial_count] {
             let row = FileListRow::build(item, backend, toast_overlay, zoom, on_refresh.clone());
             self.list_box.append(row.root_widget());
         }
+
+        // Schedule remaining items in idle slices so the UI stays responsive without freezing
+        if all_items.len() > initial_count {
+            let ctx = ListChunkContext {
+                items: all_items,
+                generation: self.generation.clone(),
+                expected_gen: current_gen,
+                list_box: self.list_box.clone(),
+                backend: backend.clone(),
+                toast_overlay: toast_overlay.clone(),
+                zoom,
+                on_refresh,
+            };
+            schedule_list_chunks(ctx, initial_count, chunk_size);
+        }
+
         self.list_box.unselect_all();
         self.selection_tracker.clear();
     }
+}
+
+#[derive(Clone)]
+struct ListChunkContext<B> {
+    items: Rc<Vec<FileViewItem>>,
+    generation: Rc<Cell<u64>>,
+    expected_gen: u64,
+    list_box: ListBox,
+    backend: B,
+    toast_overlay: adw::ToastOverlay,
+    zoom: ZoomLevel,
+    on_refresh: Rc<dyn Fn()>,
+}
+
+fn schedule_list_chunks<B: FileExplorerBackend + 'static>(
+    ctx: ListChunkContext<B>,
+    start_idx: usize,
+    chunk_size: usize,
+) {
+    glib::idle_add_local_once(move || {
+        if ctx.generation.get() != ctx.expected_gen || start_idx >= ctx.items.len() {
+            return;
+        }
+        let end_idx = (start_idx + chunk_size).min(ctx.items.len());
+        for item in &ctx.items[start_idx..end_idx] {
+            let row = FileListRow::build(
+                item,
+                &ctx.backend,
+                &ctx.toast_overlay,
+                ctx.zoom,
+                ctx.on_refresh.clone(),
+            );
+            ctx.list_box.append(row.root_widget());
+        }
+        if end_idx < ctx.items.len() {
+            schedule_list_chunks(ctx, end_idx, chunk_size);
+        }
+    });
 }
 
 /// A single row within the [`FileListView`].
@@ -397,58 +456,39 @@ impl FileListRow {
                 || item.name.ends_with(".pdf"));
 
         if is_thumbnail_candidate {
-            let thumb_dim = icon_size as u32;
+            let backend_clone = backend.clone();
+            let path_clone = item.path.clone();
+            let icon_box_clone = icon_box.clone();
 
-            // 1. Immediately provide cached thumbnail (target or 64px placeholder) if already on disk!
-            if let Some(cached_path) = backend.cached_thumbnail(&item.path, Some(thumb_dim)) {
-                let file = gtk4::gio::File::for_path(&cached_path);
-                if let Ok(texture) = gdk::Texture::from_file(&file) {
-                    let picture = gtk4::Picture::for_paintable(&texture);
-                    picture.set_can_shrink(true);
-                    picture.set_keep_aspect_ratio(true);
-                    picture.set_size_request(icon_size, icon_size);
-                    while let Some(first) = icon_box.first_child() {
-                        icon_box.remove(&first);
-                    }
-                    icon_box.append(&picture);
-                }
-            }
-
-            // 2. Asynchronously fetch if target size is not yet on disk
-            let has_target_cached = backend
-                .cached_thumbnail(&item.path, Some(thumb_dim))
-                .is_some_and(|p| p.to_string_lossy().contains(&format!("_{thumb_dim}.")));
-
-            if !has_target_cached {
-                let backend_clone = backend.clone();
-                let path_clone = item.path.clone();
-                let icon_box_clone = icon_box.clone();
-
-                glib::MainContext::default().spawn_local(async move {
-                    if thumb_dim > 64
-                        && let Some(low_path) = backend_clone.get_thumbnail(&path_clone, 64).await
-                    {
-                        let file = gtk4::gio::File::for_path(&low_path);
-                        if let Ok(texture) = gdk::Texture::from_file(&file) {
-                            let picture = gtk4::Picture::for_paintable(&texture);
-                            picture.set_can_shrink(true);
-                            picture.set_keep_aspect_ratio(true);
-                            picture.set_size_request(icon_size, icon_size);
-                            while let Some(first) = icon_box_clone.first_child() {
-                                icon_box_clone.remove(&first);
-                            }
-                            icon_box_clone.append(&picture);
+            glib::idle_add_local_once(move || {
+                // 1. Immediately provide cached 64px thumbnail if already on disk
+                if let Some(cached_path) = backend_clone.cached_thumbnail(&path_clone, Some(64)) {
+                    let file = gtk4::gio::File::for_path(&cached_path);
+                    if let Ok(texture) = gdk::Texture::from_file(&file) {
+                        let picture = gtk4::Picture::for_paintable(&texture);
+                        picture.set_can_shrink(true);
+                        picture.set_keep_aspect_ratio(true);
+                        picture.set_halign(Align::Center);
+                        picture.set_valign(Align::Center);
+                        picture.set_size_request(icon_size, icon_size);
+                        while let Some(first) = icon_box_clone.first_child() {
+                            icon_box_clone.remove(&first);
                         }
+                        icon_box_clone.append(&picture);
+                        return;
                     }
+                }
 
-                    if let Some(thumb_path) =
-                        backend_clone.get_thumbnail(&path_clone, thumb_dim).await
-                    {
+                // 2. Asynchronously fetch 64px thumbnail if not yet cached
+                glib::MainContext::default().spawn_local(async move {
+                    if let Some(thumb_path) = backend_clone.get_thumbnail(&path_clone, 64).await {
                         let file = gtk4::gio::File::for_path(&thumb_path);
                         if let Ok(texture) = gdk::Texture::from_file(&file) {
                             let picture = gtk4::Picture::for_paintable(&texture);
                             picture.set_can_shrink(true);
                             picture.set_keep_aspect_ratio(true);
+                            picture.set_halign(Align::Center);
+                            picture.set_valign(Align::Center);
                             picture.set_size_request(icon_size, icon_size);
                             while let Some(first) = icon_box_clone.first_child() {
                                 icon_box_clone.remove(&first);
@@ -457,7 +497,7 @@ impl FileListRow {
                         }
                     }
                 });
-            }
+            });
         }
 
         let name = Label::new(Some(&item.name));

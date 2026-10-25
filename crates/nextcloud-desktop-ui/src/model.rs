@@ -86,12 +86,12 @@ pub enum FileViewMode {
 pub enum ZoomLevel {
     /// Smallest icon presentation (48px grid icon, compact list).
     Small,
-    /// Standard / default icon presentation (96px grid icon).
+    /// Standard / default icon presentation (64px grid icon).
     #[default]
     Medium,
-    /// Large icon presentation (128px grid icon).
+    /// Large icon presentation (96px grid icon).
     Large,
-    /// Extra large icon presentation (192px grid icon).
+    /// Extra large icon presentation (128px grid icon).
     ExtraLarge,
 }
 
@@ -100,19 +100,19 @@ impl ZoomLevel {
     pub const fn grid_icon_size(&self) -> i32 {
         match self {
             Self::Small => 48,
-            Self::Medium => 96,
-            Self::Large => 128,
-            Self::ExtraLarge => 192,
+            Self::Medium => 64,
+            Self::Large => 96,
+            Self::ExtraLarge => 128,
         }
     }
 
     /// Returns the target pixel width of the item container card in grid view.
     pub const fn grid_item_width(&self) -> i32 {
         match self {
-            Self::Small => 90,
-            Self::Medium => 120,
+            Self::Small => 100,
+            Self::Medium => 130,
             Self::Large => 160,
-            Self::ExtraLarge => 220,
+            Self::ExtraLarge => 200,
         }
     }
 

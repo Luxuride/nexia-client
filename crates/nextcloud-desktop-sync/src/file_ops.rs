@@ -771,7 +771,7 @@ impl DesktopSyncCoordinator {
         Ok(None)
     }
 
-    /// Batch prefetches thumbnails for multiple remote paths concurrently in background tasks.
+    /// Batch prefetches thumbnails for multiple remote paths concurrently with bounded background tasks.
     pub fn batch_prefetch_thumbnails(&self, paths: Vec<String>, size: u32) {
         if paths.is_empty() {
             return;
@@ -781,33 +781,22 @@ impl DesktopSyncCoordinator {
         tokio::spawn(async move {
             let max_size = coord.max_thumbnail_size().await;
             let effective_size = size.min(max_size).max(64);
+            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(8));
 
-            // 1. First prefetch smallest 64px thumbnails in fast concurrent batch
-            let mut low_tasks = Vec::new();
-            for path in &paths {
+            let mut tasks = Vec::with_capacity(paths.len());
+            for path in paths {
                 let c = coord.clone();
-                let p = path.clone();
-                low_tasks.push(tokio::spawn(async move {
-                    let _ = c.fetch_thumbnail(&p, 64).await;
+                let sem = semaphore.clone();
+                tasks.push(tokio::spawn(async move {
+                    let _permit = match sem.acquire().await {
+                        Ok(p) => p,
+                        Err(_) => return,
+                    };
+                    let _ = c.fetch_thumbnail(&path, effective_size).await;
                 }));
             }
-            for task in low_tasks {
+            for task in tasks {
                 let _ = task.await;
-            }
-
-            // 2. If requested size > 64, upgrade to target size in background
-            if effective_size > 64 {
-                let mut target_tasks = Vec::new();
-                for path in paths {
-                    let c = coord.clone();
-                    let p = path.clone();
-                    target_tasks.push(tokio::spawn(async move {
-                        let _ = c.fetch_thumbnail(&p, effective_size).await;
-                    }));
-                }
-                for task in target_tasks {
-                    let _ = task.await;
-                }
             }
         });
     }
