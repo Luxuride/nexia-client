@@ -120,6 +120,7 @@ impl CanvasContextMenu {
                     icon_category: nextcloud_rust_sdk::ResourceIconCategory::Folder,
                     modified_at: None,
                     permissions: Some("RDNVWC".to_string()),
+                    directory_summary: None,
                 };
                 PropertiesDialog::present(Some(&parent), &folder_item, &b, &toast);
             });

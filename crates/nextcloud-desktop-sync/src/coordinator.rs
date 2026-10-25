@@ -128,6 +128,11 @@ impl DesktopSyncCoordinator {
             .unwrap_or(false)
     }
 
+    /// Access the thread-safe application configuration.
+    pub fn config(&self) -> &Arc<RwLock<AppConfig>> {
+        &self.config
+    }
+
     /// Access the virtual filesystem handle for the active account mount.
     pub async fn active_vfs(&self) -> VfsHandle {
         let active_user = self

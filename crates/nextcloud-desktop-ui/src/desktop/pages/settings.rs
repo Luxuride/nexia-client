@@ -278,7 +278,56 @@ impl SettingsPage {
             });
         }
 
+        // Group: File & Folder Presentation Preferences
+        let display_group = adw::PreferencesGroup::builder()
+            .title("File Explorer & Item Presentation")
+            .description("Configure what details and item count numbers are always shown.")
+            .build();
+
+        let folder_items_options = [
+            "Direct items inside folder (Default)",
+            "Recursive total items",
+            "Both direct and total items",
+        ];
+        let folder_items_model = gtk4::StringList::new(&folder_items_options);
+        let folder_items_row = adw::ComboRow::builder()
+            .title("Folder Item Counts")
+            .subtitle("Choose how folder contents quantities are displayed on cards and rows")
+            .model(&folder_items_model)
+            .build();
+
+        let b_disp = backend.clone();
+        let folder_items_clone = folder_items_row.clone();
+        glib::MainContext::default().spawn_local(async move {
+            let cfg = b_disp.effective_display_config().await;
+            let sel = match cfg.folder_items {
+                nextcloud_desktop_core::FolderItemsDisplay::DirectOnly => 0,
+                nextcloud_desktop_core::FolderItemsDisplay::TotalOnly => 1,
+                nextcloud_desktop_core::FolderItemsDisplay::Both => 2,
+            };
+            folder_items_clone.set_selected(sel);
+            let b = b_disp.clone();
+            folder_items_clone.connect_selected_notify(move |combo| {
+                let mode = match combo.selected() {
+                    1 => nextcloud_desktop_core::FolderItemsDisplay::TotalOnly,
+                    2 => nextcloud_desktop_core::FolderItemsDisplay::Both,
+                    _ => nextcloud_desktop_core::FolderItemsDisplay::DirectOnly,
+                };
+                let b = b.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    let mut cur = b.effective_display_config().await;
+                    cur.folder_items = mode;
+                    if let Some(acc_id) = b.active_account_id().await {
+                        let _ = b.set_account_display_config(&acc_id, cur.clone()).await;
+                    }
+                    let _ = b.set_global_display_config(cur).await;
+                });
+            });
+        });
+        display_group.add(&folder_items_row);
+
         page.add(&account_group);
+        page.add(&display_group);
         page.add(&storage_group);
         page.add(&actions_group);
 

@@ -27,6 +27,43 @@ pub struct DesktopUiController {
     active_hydrations: Arc<RwLock<HashSet<String>>>,
 }
 
+fn format_folder_size(
+    sum: &nextcloud_rust_sdk::DirectorySizeSummary,
+    mode: nextcloud_desktop_core::FolderItemsDisplay,
+) -> String {
+    match mode {
+        nextcloud_desktop_core::FolderItemsDisplay::DirectOnly => {
+            let count = sum.direct_items();
+            if count == 1 {
+                "1 item".to_string()
+            } else {
+                format!("{count} items")
+            }
+        }
+        nextcloud_desktop_core::FolderItemsDisplay::TotalOnly => {
+            let count = sum.total_items();
+            if count == 1 {
+                "1 item".to_string()
+            } else {
+                format!("{count} items")
+            }
+        }
+        nextcloud_desktop_core::FolderItemsDisplay::Both => {
+            let direct = sum.direct_items();
+            let total = sum.total_items();
+            if direct == total {
+                if direct == 1 {
+                    "1 item".to_string()
+                } else {
+                    format!("{direct} items")
+                }
+            } else {
+                format!("{direct} direct ({total} total)")
+            }
+        }
+    }
+}
+
 impl DesktopUiController {
     /// Creates a new controller wrapping the given backend coordinator.
     pub fn new(coordinator: DesktopSyncCoordinator) -> Self {
@@ -61,6 +98,38 @@ impl DesktopUiController {
     pub async fn mark_hydration_finished(&self, remote_path: &str) {
         let clean = format!("/{}", remote_path.trim_matches('/'));
         self.active_hydrations.write().await.remove(&clean);
+    }
+
+    /// Returns the effective additional display configuration for the active account.
+    pub async fn effective_display_config(
+        &self,
+    ) -> nextcloud_desktop_core::AdditionalItemsDisplayConfig {
+        let cfg = self.coordinator.config().read().await;
+        cfg.effective_display_config(cfg.active_account_id.as_ref())
+    }
+
+    /// Sets additional display configuration for an account and persists it.
+    pub async fn set_account_display_config(
+        &self,
+        account_id: &AccountId,
+        display: nextcloud_desktop_core::AdditionalItemsDisplayConfig,
+    ) -> Result<(), UiError> {
+        let mut cfg = self.coordinator.config().write().await;
+        let mut prefs = cfg.get_account_preferences(account_id);
+        prefs.display = display;
+        cfg.set_account_preferences(account_id, prefs);
+        let _ = cfg.save_user_config(account_id);
+        Ok(())
+    }
+
+    /// Sets global default display configuration.
+    pub async fn set_global_display_config(
+        &self,
+        display: nextcloud_desktop_core::AdditionalItemsDisplayConfig,
+    ) -> Result<(), UiError> {
+        let mut cfg = self.coordinator.config().write().await;
+        cfg.global.default_display = display;
+        Ok(())
     }
 
     /// Gets the current virtual directory path.
@@ -179,6 +248,7 @@ impl DesktopUiController {
             .await
             .map_err(|err| UiError::Controller(err.to_string()))?;
 
+        let display_cfg = self.effective_display_config().await;
         let active_hydrations = self.active_hydrations.read().await;
         let mut items: Vec<FileViewItem> = entries
             .into_iter()
@@ -213,13 +283,7 @@ impl DesktopUiController {
 
                 let size_formatted = if e.is_directory {
                     if let Some(ref sum) = e.directory_summary {
-                        if sum.total_items() == 1 {
-                            "1 item".to_string()
-                        } else if sum.total_items() > 1 {
-                            format!("{} items", sum.total_items())
-                        } else {
-                            "—".to_string()
-                        }
+                        format_folder_size(sum, display_cfg.folder_items)
                     } else {
                         "—".to_string()
                     }
@@ -238,6 +302,7 @@ impl DesktopUiController {
                     icon_category: e.icon_category,
                     modified_at: e.modified_at,
                     permissions: e.permissions,
+                    directory_summary: e.directory_summary,
                 }
             })
             .collect();
@@ -334,6 +399,7 @@ impl DesktopUiController {
             .await
             .map_err(|err| UiError::Controller(err.to_string()))?;
 
+        let display_cfg = self.effective_display_config().await;
         let active_hydrations = self.active_hydrations.read().await;
         let mut items: Vec<FileViewItem> = entries
             .into_iter()
@@ -368,13 +434,7 @@ impl DesktopUiController {
 
                 let size_formatted = if e.is_directory {
                     if let Some(ref sum) = e.directory_summary {
-                        if sum.total_items() == 1 {
-                            "1 item".to_string()
-                        } else if sum.total_items() > 1 {
-                            format!("{} items", sum.total_items())
-                        } else {
-                            "—".to_string()
-                        }
+                        format_folder_size(sum, display_cfg.folder_items)
                     } else {
                         "—".to_string()
                     }
@@ -393,6 +453,7 @@ impl DesktopUiController {
                     icon_category: e.icon_category,
                     modified_at: e.modified_at,
                     permissions: e.permissions,
+                    directory_summary: e.directory_summary,
                 }
             })
             .collect();
@@ -975,6 +1036,27 @@ impl FileExplorerBackend for DesktopUiController {
     ) -> Option<nextcloud_rust_sdk::FileSortCriteria> {
         self.load_directory_sort(dir_path).await
     }
+
+    async fn effective_display_config(
+        &self,
+    ) -> nextcloud_desktop_core::AdditionalItemsDisplayConfig {
+        self.effective_display_config().await
+    }
+
+    async fn set_account_display_config(
+        &self,
+        account_id: &AccountId,
+        display: nextcloud_desktop_core::AdditionalItemsDisplayConfig,
+    ) -> Result<(), UiError> {
+        self.set_account_display_config(account_id, display).await
+    }
+
+    async fn set_global_display_config(
+        &self,
+        display: nextcloud_desktop_core::AdditionalItemsDisplayConfig,
+    ) -> Result<(), UiError> {
+        self.set_global_display_config(display).await
+    }
 }
 
 #[cfg(test)]
@@ -1000,5 +1082,24 @@ mod tests {
             .mark_hydration_finished("/Documents/test.pdf")
             .await;
         assert!(!controller.is_hydrating("/Documents/test.pdf").await);
+    }
+
+    #[test]
+    fn format_folder_size_respects_direct_and_total_modes() {
+        let sum =
+            nextcloud_rust_sdk::DirectorySizeSummary::new(1048576, 50, 5).with_direct(4096, 3, 2);
+
+        // Direct only (default)
+        let direct =
+            format_folder_size(&sum, nextcloud_desktop_core::FolderItemsDisplay::DirectOnly);
+        assert_eq!(direct, "5 items");
+
+        // Total only
+        let total = format_folder_size(&sum, nextcloud_desktop_core::FolderItemsDisplay::TotalOnly);
+        assert_eq!(total, "55 items");
+
+        // Both
+        let both = format_folder_size(&sum, nextcloud_desktop_core::FolderItemsDisplay::Both);
+        assert_eq!(both, "5 direct (55 total)");
     }
 }

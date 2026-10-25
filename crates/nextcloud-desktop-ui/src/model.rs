@@ -1,8 +1,8 @@
 //! Presentation models and UI state representations backed by `nextcloud-rust-sdk`.
 
 pub use nextcloud_rust_sdk::{
-    BreadcrumbSegment as PathSegment, FileSortCriteria, FileSortField, FileSortOrder,
-    ResourceIconCategory, ThemeInfo, breadcrumb_segments, format_bytes,
+    BreadcrumbSegment as PathSegment, DirectorySizeSummary, FileSortCriteria, FileSortField,
+    FileSortOrder, ResourceIconCategory, ThemeInfo, breadcrumb_segments, format_bytes,
 };
 
 /// Available navigation views in the application sidebar.
@@ -253,6 +253,8 @@ pub struct FileViewItem {
     pub modified_at: Option<String>,
     /// Permissions flags reported by Nextcloud if available.
     pub permissions: Option<String>,
+    /// Aggregated directory details if this item is a folder.
+    pub directory_summary: Option<DirectorySizeSummary>,
 }
 
 impl FileViewItem {

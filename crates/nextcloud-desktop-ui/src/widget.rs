@@ -278,6 +278,30 @@ pub trait FileExplorerBackend: Clone + 'static {
     fn is_mount_paused(&self, _mount_id: &str) -> impl Future<Output = Result<bool, UiError>> {
         async { Ok(false) }
     }
+
+    /// Returns the effective additional display config for file views.
+    fn effective_display_config(
+        &self,
+    ) -> impl Future<Output = nextcloud_desktop_core::AdditionalItemsDisplayConfig> {
+        async { nextcloud_desktop_core::AdditionalItemsDisplayConfig::default() }
+    }
+
+    /// Sets additional display configuration for a specific account.
+    fn set_account_display_config(
+        &self,
+        _account_id: &AccountId,
+        _display: nextcloud_desktop_core::AdditionalItemsDisplayConfig,
+    ) -> impl Future<Output = Result<(), UiError>> {
+        async { Ok(()) }
+    }
+
+    /// Sets global fallback display configuration.
+    fn set_global_display_config(
+        &self,
+        _display: nextcloud_desktop_core::AdditionalItemsDisplayConfig,
+    ) -> impl Future<Output = Result<(), UiError>> {
+        async { Ok(()) }
+    }
 }
 
 /// Trait implemented by file collection views (such as icon grid and columnar list views).

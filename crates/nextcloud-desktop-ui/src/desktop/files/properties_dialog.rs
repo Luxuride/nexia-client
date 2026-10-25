@@ -60,12 +60,93 @@ impl PropertiesDialog {
             .build();
         general_group.add(&row_type);
 
-        let size_desc = format!("{} ({} bytes)", item.size_formatted, item.size_bytes);
-        let row_size = adw::ActionRow::builder()
-            .title("Size")
-            .subtitle(&size_desc)
-            .build();
-        general_group.add(&row_size);
+        if item.is_directory {
+            if let Some(ref sum) = item.directory_summary {
+                let direct_items_str = format!(
+                    "{} items ({} files, {} folders)",
+                    sum.direct_items(),
+                    sum.direct_file_count,
+                    sum.direct_directory_count
+                );
+                let row_direct_items = adw::ActionRow::builder()
+                    .title("Direct Contents")
+                    .subtitle(&direct_items_str)
+                    .build();
+                general_group.add(&row_direct_items);
+
+                let total_items_str = format!(
+                    "{} items ({} files, {} folders)",
+                    sum.total_items(),
+                    sum.file_count,
+                    sum.directory_count
+                );
+                let row_total_items = adw::ActionRow::builder()
+                    .title("Total Contents (Recursive)")
+                    .subtitle(&total_items_str)
+                    .build();
+                general_group.add(&row_total_items);
+
+                let direct_size_str = format!(
+                    "{} ({} bytes)",
+                    nextcloud_rust_sdk::format_bytes(sum.direct_size),
+                    sum.direct_size
+                );
+                let row_direct_size = adw::ActionRow::builder()
+                    .title("Direct Files Size")
+                    .subtitle(&direct_size_str)
+                    .build();
+                general_group.add(&row_direct_size);
+
+                let total_size_str = format!(
+                    "{} ({} bytes)",
+                    nextcloud_rust_sdk::format_bytes(sum.total_size),
+                    sum.total_size
+                );
+                let row_total_size = adw::ActionRow::builder()
+                    .title("Total Size (Recursive)")
+                    .subtitle(&total_size_str)
+                    .build();
+                general_group.add(&row_total_size);
+            } else {
+                let row_size = adw::ActionRow::builder()
+                    .title("Contents")
+                    .subtitle(&item.size_formatted)
+                    .build();
+                general_group.add(&row_size);
+            }
+        } else {
+            let size_desc = format!(
+                "{} ({} bytes)",
+                nextcloud_rust_sdk::format_bytes(item.size_bytes),
+                item.size_bytes
+            );
+            let row_size = adw::ActionRow::builder()
+                .title("File Size")
+                .subtitle(&size_desc)
+                .build();
+            general_group.add(&row_size);
+
+            let disk_desc = match item.status {
+                crate::model::FileSyncStatus::HydratedOffline => format!(
+                    "{} (hydrated offline in cache)",
+                    nextcloud_rust_sdk::format_bytes(item.size_bytes)
+                ),
+                crate::model::FileSyncStatus::Syncing => "Downloading content…".to_string(),
+                crate::model::FileSyncStatus::LocalOnly => format!(
+                    "{} (local storage)",
+                    nextcloud_rust_sdk::format_bytes(item.size_bytes)
+                ),
+                crate::model::FileSyncStatus::CloudPlaceholder
+                | crate::model::FileSyncStatus::UnhydratedAndUnsynced => {
+                    "0 bytes (cloud placeholder)".to_string()
+                }
+            };
+            let row_disk_size = adw::ActionRow::builder()
+                .title("Size on Disk")
+                .subtitle(&disk_desc)
+                .build();
+            general_group.add(&row_disk_size);
+        }
 
         let row_path = adw::ActionRow::builder()
             .title("Location")

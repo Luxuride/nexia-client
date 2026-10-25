@@ -55,6 +55,73 @@ impl SyncFolderConfig {
     }
 }
 
+/// Folder item count presentation mode for file tiles and rows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FolderItemsDisplay {
+    /// Show direct item count only (e.g. "3 items"). Default.
+    #[default]
+    DirectOnly,
+    /// Show recursive total item count only (e.g. "124 items").
+    TotalOnly,
+    /// Show both direct items and recursive total (e.g. "3 items (124 total)").
+    Both,
+}
+
+/// Metadata presentation options configuring what additional items are always shown.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdditionalItemsDisplayConfig {
+    /// How folder item counts are presented in file explorer tiles and rows.
+    pub folder_items: FolderItemsDisplay,
+    /// Whether to display permissions in properties dialog and detailed views.
+    pub show_permissions: bool,
+    /// Whether to display MIME type information.
+    pub show_mime_type: bool,
+    /// Whether to display direct vs total folder size breakdown in properties.
+    pub show_size_breakdown: bool,
+    /// Whether to display file storage usage (size on disk vs remote size).
+    pub show_disk_usage: bool,
+    /// Maximum allowed thumbnail size in pixels (e.g. 64, 128, 256, 512). Default is 256.
+    pub max_thumbnail_size: u32,
+    /// Whether to auto-download thumbnails when browsing.
+    pub autodownload_thumbnails: bool,
+}
+
+impl Default for AdditionalItemsDisplayConfig {
+    fn default() -> Self {
+        Self {
+            folder_items: FolderItemsDisplay::DirectOnly,
+            show_permissions: true,
+            show_mime_type: true,
+            show_size_breakdown: true,
+            show_disk_usage: true,
+            max_thumbnail_size: 256,
+            autodownload_thumbnails: true,
+        }
+    }
+}
+
+/// Per-account configuration preferences stored in desktop app config database.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountPreferences {
+    /// Additional display items configuration for this account.
+    pub display: AdditionalItemsDisplayConfig,
+    /// Default view mode for this account (Grid or List).
+    pub default_view_mode: Option<String>,
+    /// Default zoom level for this account (Small, Medium, Large, ExtraLarge).
+    pub default_zoom_level: Option<String>,
+}
+
+/// Global desktop application configuration.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GlobalPreferences {
+    /// Start application minimized to background app bar / system tray.
+    pub start_minimized: bool,
+    /// Autostart application on system desktop login.
+    pub autostart: bool,
+    /// Global fallback display configuration when no account-specific override is set.
+    pub default_display: AdditionalItemsDisplayConfig,
+}
+
 /// Root application configuration persisted across sessions.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -68,6 +135,12 @@ pub struct AppConfig {
     pub cache_dir: Option<PathBuf>,
     /// Interval in seconds for background sync cycles.
     pub sync_interval_secs: u64,
+    /// Global application-level preferences.
+    #[serde(default)]
+    pub global: GlobalPreferences,
+    /// Per-account configuration preferences indexed by account ID string.
+    #[serde(default)]
+    pub account_preferences: std::collections::HashMap<String, AccountPreferences>,
 }
 
 impl AppConfig {
@@ -168,9 +241,76 @@ impl AppConfig {
     /// Removes an account by ID.
     pub fn remove_account(&mut self, id: &AccountId) {
         self.accounts.retain(|acc| &acc.id != id);
+        self.account_preferences.remove(&id.0);
         if self.active_account_id.as_ref() == Some(id) {
             self.active_account_id = self.accounts.first().map(|a| a.id.clone());
         }
+    }
+
+    /// Gets configuration preferences for a specific account, falling back to default.
+    pub fn get_account_preferences(&self, id: &AccountId) -> AccountPreferences {
+        self.account_preferences
+            .get(&id.0)
+            .cloned()
+            .unwrap_or_else(|| AccountPreferences {
+                display: self.global.default_display.clone(),
+                default_view_mode: None,
+                default_zoom_level: None,
+            })
+    }
+
+    /// Sets or updates configuration preferences for a specific account.
+    pub fn set_account_preferences(&mut self, id: &AccountId, prefs: AccountPreferences) {
+        self.account_preferences.insert(id.0.clone(), prefs);
+    }
+
+    /// Resolves the effective additional items display config for an account, falling back to global preferences.
+    pub fn effective_display_config(
+        &self,
+        account_id: Option<&AccountId>,
+    ) -> AdditionalItemsDisplayConfig {
+        if let Some(id) = account_id
+            && let Some(prefs) = self.account_preferences.get(&id.0)
+        {
+            prefs.display.clone()
+        } else {
+            self.global.default_display.clone()
+        }
+    }
+
+    /// Returns the directory used for per-account / per-user configuration files.
+    pub fn user_config_dir() -> Result<PathBuf, CoreError> {
+        let base = dirs::config_dir().ok_or(CoreError::MissingConfigDir)?;
+        Ok(base.join("nextcloud-desktop-rs").join("accounts"))
+    }
+
+    /// Persists an account's configuration into a dedicated per-user database/file.
+    pub fn save_user_config(&self, id: &AccountId) -> Result<(), CoreError> {
+        let dir = Self::user_config_dir()?;
+        fs::create_dir_all(&dir).map_err(|source| CoreError::ConfigSave {
+            path: dir.clone(),
+            source,
+        })?;
+        let prefs = self.get_account_preferences(id);
+        let path = dir.join(format!("{}.json", id.0));
+        let data = serde_json::to_string_pretty(&prefs).map_err(CoreError::ConfigParse)?;
+        fs::write(&path, data).map_err(|source| CoreError::ConfigSave { path, source })?;
+        Ok(())
+    }
+
+    /// Loads an account's configuration from its dedicated per-user database/file if present.
+    pub fn load_user_config(id: &AccountId) -> Result<Option<AccountPreferences>, CoreError> {
+        let path = Self::user_config_dir()?.join(format!("{}.json", id.0));
+        if !path.exists() {
+            return Ok(None);
+        }
+        let data = fs::read_to_string(&path).map_err(|source| CoreError::ConfigLoad {
+            path: path.clone(),
+            source,
+        })?;
+        let prefs: AccountPreferences =
+            serde_json::from_str(&data).map_err(CoreError::ConfigParse)?;
+        Ok(Some(prefs))
     }
 }
 
@@ -208,5 +348,30 @@ mod tests {
         assert_eq!(loaded.sync_folders[0].mode, SyncMode::VirtualSync);
 
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn account_preferences_and_display_config_roundtrip() {
+        let mut config = AppConfig::default();
+        let acc_id = AccountId("acc-123".to_string());
+
+        let default_disp = config.effective_display_config(Some(&acc_id));
+        assert_eq!(default_disp.folder_items, FolderItemsDisplay::DirectOnly);
+        assert!(default_disp.show_size_breakdown);
+        assert!(default_disp.show_disk_usage);
+
+        let mut custom_prefs = AccountPreferences::default();
+        custom_prefs.display.folder_items = FolderItemsDisplay::Both;
+        custom_prefs.display.max_thumbnail_size = 128;
+        config.set_account_preferences(&acc_id, custom_prefs);
+
+        let acc_disp = config.effective_display_config(Some(&acc_id));
+        assert_eq!(acc_disp.folder_items, FolderItemsDisplay::Both);
+        assert_eq!(acc_disp.max_thumbnail_size, 128);
+
+        // Fallback for unconfigured account uses global
+        let other_id = AccountId("other-456".to_string());
+        let fallback_disp = config.effective_display_config(Some(&other_id));
+        assert_eq!(fallback_disp.folder_items, FolderItemsDisplay::DirectOnly);
     }
 }
