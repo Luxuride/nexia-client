@@ -67,8 +67,8 @@ jobs:
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: nextcloud-desktop.flatpak
-          manifest-path: flatpak/org.nextcloud.NextcloudDesktop.yml
-          app-id: org.nextcloud.NextcloudDesktop
+          manifest-path: flatpak/eu.luxuride.nextcloud-desktop.yml
+          app-id: eu.luxuride.nextcloud-desktop
           run-tests: false
       - uses: actions/upload-artifact@v4
         with:

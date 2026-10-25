@@ -84,7 +84,7 @@ fn build_cloud_pixmap() -> Vec<Icon> {
 #[cfg(feature = "tray")]
 impl Tray for DesktopTrayItem {
     fn id(&self) -> String {
-        "com.nextcloud.desktop.rs".into()
+        "eu.luxuride.nextcloud-desktop".into()
     }
 
     fn category(&self) -> Category {
@@ -200,7 +200,7 @@ pub fn spawn_app_bar_tray(sender: UnboundedSender<TrayAction>) {
         match tray.spawn().await {
             Ok(_handle) => {
                 tracing::info!(
-                    "Registered StatusNotifierItem in desktop app bar (com.nextcloud.desktop.rs)"
+                    "Registered StatusNotifierItem in desktop app bar (eu.luxuride.nextcloud-desktop)"
                 );
                 std::future::pending::<()>().await;
             }

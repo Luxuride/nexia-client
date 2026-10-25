@@ -1,4 +1,4 @@
-app-id: org.nextcloud.NextcloudDesktop
+app-id: eu.luxuride.nextcloud-desktop
 runtime: org.gnome.Platform
 runtime-version: '47'
 sdk: org.gnome.Sdk
@@ -15,7 +15,7 @@ finish-args:
   - --filesystem=xdg-run/keyring
   - --talk-name=org.freedesktop.secrets
   - --talk-name=org.kde.ksecretservice
-  - --own-name=org.nextcloud.NextcloudDesktop
+  - --own-name=eu.luxuride.nextcloud-desktop
 
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
@@ -28,9 +28,9 @@ modules:
     build-commands:
       - cargo --offline build --release
       - install -Dm755 target/release/nextcloud-desktop-rs /app/bin/nextcloud-desktop-rs
-      - install -Dm644 data/org.nextcloud.NextcloudDesktop.desktop /app/share/applications/org.nextcloud.NextcloudDesktop.desktop
-      - install -Dm644 data/org.nextcloud.NextcloudDesktop.metainfo.xml /app/share/metainfo/org.nextcloud.NextcloudDesktop.metainfo.xml
-      - install -Dm644 data/icons/hicolor/scalable/apps/org.nextcloud.NextcloudDesktop.svg /app/share/icons/hicolor/scalable/apps/org.nextcloud.NextcloudDesktop.svg
+      - install -Dm644 data/eu.luxuride.nextcloud-desktop.desktop /app/share/applications/eu.luxuride.nextcloud-desktop.desktop
+      - install -Dm644 data/eu.luxuride.nextcloud-desktop.metainfo.xml /app/share/metainfo/eu.luxuride.nextcloud-desktop.metainfo.xml
+      - install -Dm644 data/icons/hicolor/scalable/apps/eu.luxuride.nextcloud-desktop.svg /app/share/icons/hicolor/scalable/apps/eu.luxuride.nextcloud-desktop.svg
     sources:
       - type: dir
         path: ..

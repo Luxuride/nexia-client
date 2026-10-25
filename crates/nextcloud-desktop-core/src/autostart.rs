@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 /// Application identifier used for autostart entries.
-pub const AUTOSTART_APP_NAME: &str = "org.nextcloud.NextcloudDesktop";
+pub const AUTOSTART_APP_NAME: &str = "eu.luxuride.nextcloud-desktop";
 
 /// Resolves the current running executable path.
 pub fn current_exe_path() -> Option<PathBuf> {

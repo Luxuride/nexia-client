@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>org.nextcloud.NextcloudDesktop</id>
+  <id>eu.luxuride.nextcloud-desktop</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <name>Nextcloud Desktop</name>
@@ -11,7 +11,7 @@
       event-driven server theming, and fast native performance.
     </p>
   </description>
-  <launchable type="desktop-id">org.nextcloud.NextcloudDesktop.desktop</launchable>
+  <launchable type="desktop-id">eu.luxuride.nextcloud-desktop.desktop</launchable>
   <url type="homepage">https://nextcloud.com</url>
   <url type="bugtracker">https://github.com/Luxuride/nextcloud-desktop-rs/issues</url>
   <provides>
