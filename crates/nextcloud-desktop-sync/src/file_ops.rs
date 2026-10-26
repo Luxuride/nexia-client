@@ -752,7 +752,7 @@ impl DesktopSyncCoordinator {
         Ok(before_size)
     }
 
-    /// Cleans and deletes cached thumbnails, returning bytes freed.
+    /// Cleans and deletes cached thumbnails across the app and FreeDesktop system cache, returning bytes freed.
     pub async fn clean_thumbnails(&self) -> Result<u64, SyncError> {
         let thumbs_dir = self.active_thumbnails_dir().await;
         let mut freed = 0;
@@ -767,6 +767,56 @@ impl DesktopSyncCoordinator {
             let _ = tokio::fs::remove_dir_all(&thumbs_dir).await;
             let _ = tokio::fs::create_dir_all(&thumbs_dir).await;
         }
+
+        // Also clean our FreeDesktop thumbnails in ~/.cache/thumbnails/{normal, large, x-large, xx-large} and fail markers
+        let (normal_dir, _) = crate::freedesktop_thumbs::freedesktop_thumbnail_dirs();
+        if let Some(parent) = normal_dir.parent() {
+            for size_dir_name in ["normal", "large", "x-large", "xx-large"] {
+                let target_dir = parent.join(size_dir_name);
+                if let Ok(entries) = std::fs::read_dir(&target_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if let Ok(mut file) = std::fs::File::open(&path) {
+                            use std::io::Read;
+                            let mut buf = [0u8; 2048];
+                            if let Ok(n) = file.read(&mut buf)
+                                && buf[..n].windows(9).any(|w| w == b"Nextcloud")
+                            {
+                                if let Ok(meta) = entry.metadata() {
+                                    freed += meta.len();
+                                }
+                                let _ = std::fs::remove_file(&path);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Also remove any fail markers created for Nextcloud files
+            let fail_dirs = [
+                parent.join("fail"),
+                parent.join("fail").join("gnome-thumbnail-factory"),
+            ];
+            for f_dir in fail_dirs {
+                if let Ok(entries) = std::fs::read_dir(&f_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file()
+                            && let Ok(mut file) = std::fs::File::open(&path)
+                        {
+                            use std::io::Read;
+                            let mut buf = [0u8; 2048];
+                            if let Ok(n) = file.read(&mut buf)
+                                && buf[..n].windows(9).any(|w| w == b"Nextcloud")
+                            {
+                                let _ = std::fs::remove_file(&path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(freed)
     }
 

@@ -185,7 +185,28 @@ impl DesktopSyncCoordinator {
             (0, 0)
         };
 
-        let shared_thumbnail_bytes = scan_local_dir_bytes(&self.active_thumbnails_dir().await);
+        let mut shared_thumbnail_bytes = scan_local_dir_bytes(&self.active_thumbnails_dir().await);
+        let (normal_dir, _) = crate::freedesktop_thumbs::freedesktop_thumbnail_dirs();
+        if let Some(parent) = normal_dir.parent() {
+            for sub in ["normal", "large", "x-large", "xx-large"] {
+                let target = parent.join(sub);
+                if let Ok(entries) = std::fs::read_dir(&target) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if let Ok(mut f) = std::fs::File::open(&path) {
+                            use std::io::Read;
+                            let mut buf = [0u8; 2048];
+                            if let Ok(n) = f.read(&mut buf)
+                                && buf[..n].windows(9).any(|w| w == b"Nextcloud")
+                                && let Ok(meta) = entry.metadata()
+                            {
+                                shared_thumbnail_bytes += meta.len();
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Ok(MountStorageUsage::new(
             id,
             local_bytes,
