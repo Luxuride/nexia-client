@@ -961,26 +961,24 @@ impl DesktopSyncCoordinator {
         let thumbs_dir = self.active_thumbnails_dir_sync();
         let fallback_thumbs_dir = self.cache_dir().join("thumbnails");
         let clean_path = remote_path.trim_matches('/');
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        std::hash::Hash::hash(&clean_path, &mut hasher);
-        let path_hash = std::hash::Hasher::finish(&hasher);
+        let hash = nextcloud_rust_sdk::md5_hex(clean_path.as_bytes());
 
         if let Some(s) = preferred_size {
-            let p = thumbs_dir.join(format!("{:016x}_{s}.png", path_hash));
+            let p = thumbs_dir.join(format!("{hash}_{s}.png"));
             if p.exists() {
                 return Some(p);
             }
-            let fb_p = fallback_thumbs_dir.join(format!("{:016x}_{s}.png", path_hash));
+            let fb_p = fallback_thumbs_dir.join(format!("{hash}_{s}.png"));
             if fb_p.exists() {
                 return Some(fb_p);
             }
         }
 
-        let low_p = thumbs_dir.join(format!("{:016x}_64.png", path_hash));
+        let low_p = thumbs_dir.join(format!("{hash}_64.png"));
         if low_p.exists() {
             return Some(low_p);
         }
-        let fb_low_p = fallback_thumbs_dir.join(format!("{:016x}_64.png", path_hash));
+        let fb_low_p = fallback_thumbs_dir.join(format!("{hash}_64.png"));
         if fb_low_p.exists() {
             return Some(fb_low_p);
         }
@@ -1271,10 +1269,8 @@ impl DesktopSyncCoordinator {
         let _ = tokio::fs::create_dir_all(&thumbs_dir).await;
 
         let clean_path = remote_path.trim_matches('/');
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        std::hash::Hash::hash(&clean_path, &mut hasher);
-        let path_hash = std::hash::Hasher::finish(&hasher);
-        let thumb_filename = format!("{:016x}_{effective_size}.png", path_hash);
+        let hash = nextcloud_rust_sdk::md5_hex(clean_path.as_bytes());
+        let thumb_filename = format!("{hash}_{effective_size}.png");
         let thumb_path = thumbs_dir.join(thumb_filename);
 
         if thumb_path.exists() {
@@ -1421,19 +1417,21 @@ impl DesktopSyncCoordinator {
             let effective_size = size.clamp(64, max_size);
 
             let thumbs_dir = coord.active_thumbnails_dir().await;
-            // Only process paths that are not already cached on disk
-            let missing_items: Vec<(String, Option<u64>)> = items
-                .into_iter()
-                .filter(|(p, _)| {
-                    let clean = p.trim_matches('/');
-                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    std::hash::Hash::hash(&clean, &mut hasher);
-                    let path_hash = std::hash::Hasher::finish(&hasher);
-                    let thumb_path =
-                        thumbs_dir.join(format!("{:016x}_{effective_size}.png", path_hash));
-                    !thumb_path.exists()
-                })
-                .collect();
+            let mut missing_items: Vec<(String, Option<u64>)> = Vec::new();
+            for (path, fid) in items {
+                let clean = path.trim_matches('/');
+                let hash = nextcloud_rust_sdk::md5_hex(clean.as_bytes());
+                let thumb_path = thumbs_dir.join(format!("{hash}_{effective_size}.png"));
+                if thumb_path.exists() {
+                    if let Ok(bytes) = tokio::fs::read(&thumb_path).await {
+                        coord
+                            .install_freedesktop_previews_for_remote_path(&path, &bytes)
+                            .await;
+                    }
+                } else {
+                    missing_items.push((path, fid));
+                }
+            }
 
             if missing_items.is_empty() {
                 return;
