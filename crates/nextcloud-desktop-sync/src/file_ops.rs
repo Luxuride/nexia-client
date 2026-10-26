@@ -1153,6 +1153,7 @@ impl DesktopSyncCoordinator {
         png_bytes: &[u8],
     ) {
         let clean_path = remote_path.trim_matches('/');
+        let png = crate::freedesktop_thumbs::ensure_png_bytes(png_bytes);
 
         // 1. Resolve mtime from active VFS or fallback to now
         let vfs = self.active_vfs().await;
@@ -1182,7 +1183,7 @@ impl DesktopSyncCoordinator {
                 .unwrap_or(mtime_sec);
             crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
                 &target,
-                png_bytes,
+                &png,
                 target_mtime,
             );
         }
@@ -1200,7 +1201,7 @@ impl DesktopSyncCoordinator {
                     .unwrap_or(mtime_sec);
                 crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
                     &vfs_target,
-                    png_bytes,
+                    &png,
                     vfs_mtime,
                 );
             }
@@ -1230,7 +1231,7 @@ impl DesktopSyncCoordinator {
                         .unwrap_or(mtime_sec);
                     crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
                         &local_target,
-                        png_bytes,
+                        &png,
                         local_mtime,
                     );
                 }
@@ -1266,6 +1267,10 @@ impl DesktopSyncCoordinator {
         let thumb_path = thumbs_dir.join(thumb_filename);
 
         if thumb_path.exists() {
+            if let Ok(bytes) = tokio::fs::read(&thumb_path).await {
+                self.install_freedesktop_previews_for_remote_path(remote_path, &bytes)
+                    .await;
+            }
             return Ok(Some(thumb_path));
         }
 
@@ -1296,6 +1301,10 @@ impl DesktopSyncCoordinator {
         let _permit = self.preview_semaphore.acquire().await.ok();
 
         if thumb_path.exists() {
+            if let Ok(bytes) = tokio::fs::read(&thumb_path).await {
+                self.install_freedesktop_previews_for_remote_path(remote_path, &bytes)
+                    .await;
+            }
             if let Ok(mut stats) = self.thumbnail_stats.write() {
                 stats.in_progress = stats.in_progress.saturating_sub(1);
                 stats.completed += 1;
@@ -1328,10 +1337,12 @@ impl DesktopSyncCoordinator {
                 .mode(nextcloud_rust_sdk::PreviewMode::Cover);
 
             if let Some(bytes) = fetch_preview_bytes(&preview, file_id, clean_no_slash, &opts).await
-                && tokio::fs::write(&thumb_path, &bytes).await.is_ok()
             {
-                self.install_freedesktop_previews_for_remote_path(remote_path, &bytes)
-                    .await;
+                let png_bytes = crate::freedesktop_thumbs::ensure_png_bytes(&bytes);
+                if tokio::fs::write(&thumb_path, &png_bytes).await.is_ok() {
+                    self.install_freedesktop_previews_for_remote_path(remote_path, &png_bytes)
+                        .await;
+                }
                 if let Ok(mut stats) = self.thumbnail_stats.write() {
                     stats.in_progress = stats.in_progress.saturating_sub(1);
                     stats.completed += 1;

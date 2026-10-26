@@ -307,6 +307,16 @@ pub fn install_freedesktop_thumbnail_with_mtime(
 
     let _ = fs::write(&normal_dest, &tagged_bytes);
     let _ = fs::write(&xlarge_dest, &tagged_bytes);
+
+    if let Some(parent) = normal_dir.parent() {
+        let fail_file = parent
+            .join("fail")
+            .join("gnome-thumbnail-factory")
+            .join(&filename);
+        if fail_file.exists() {
+            let _ = fs::remove_file(fail_file);
+        }
+    }
 }
 
 #[cfg(test)]

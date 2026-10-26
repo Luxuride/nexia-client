@@ -302,6 +302,13 @@ impl FolderSyncEngine {
         });
 
         for action in dirs.into_iter().chain(file_actions) {
+            if self.coordinator.is_mount_cancelled(mount_id).await {
+                info!(
+                    mount_id,
+                    "Sync mount was cancelled or removed; aborting sync loop immediately"
+                );
+                break;
+            }
             match action {
                 SyncAction::CreateLocalDirectory { relative_path } => {
                     let dest = local_target.join(relative_path.trim_start_matches('/'));
@@ -542,6 +549,14 @@ impl FolderSyncEngine {
                 }
                 SyncAction::InSync { relative_path: _ } => {}
             }
+        }
+
+        if self.coordinator.is_mount_cancelled(mount_id).await {
+            info!(
+                mount_id,
+                "Sync mount was cancelled; skipping thumbnail prefetching and progress"
+            );
+            return Ok(downloaded);
         }
 
         let _ = journal.save_to_file(&journal_path);

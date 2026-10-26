@@ -24,8 +24,8 @@ impl NavigationSidebar {
         on_page_selected: Rc<dyn Fn(NavigationPage)>,
     ) -> Self {
         let container = GtkBox::new(Orientation::Vertical, 0);
-        container.set_size_request(220, -1);
-        container.set_width_request(220);
+        container.set_size_request(260, -1);
+        container.set_width_request(260);
         container.set_vexpand(true);
         container.set_hexpand(false);
         container.set_halign(Align::Start);
@@ -84,7 +84,6 @@ impl NavigationSidebar {
         title_label.set_halign(Align::Start);
         title_label.set_hexpand(true);
         title_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-        title_label.set_max_width_chars(13);
 
         top_row.append(&icon_box);
         top_row.append(&title_label);
@@ -97,7 +96,6 @@ impl NavigationSidebar {
         slogan_label.add_css_class("nextcloud-server-slogan");
         slogan_label.set_halign(Align::Start);
         slogan_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-        slogan_label.set_max_width_chars(20);
 
         // Apply theme color immediately if known
         if let Some(ref theme) = initial_theme
@@ -114,7 +112,6 @@ impl NavigationSidebar {
         let status_label = Label::new(Some("Online"));
         status_label.add_css_class("nextcloud-status-badge");
         status_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
-        status_label.set_max_width_chars(15);
 
         badge_row.append(&status_dot);
         badge_row.append(&status_label);
@@ -320,9 +317,9 @@ pub fn apply_server_theme_color(color_hex: &str, text_color: Option<&str>) {
         @define-color accent_bg_color {clean_hex};
 
         .navigation-sidebar-fixed {{
-            min-width: 220px !important;
-            max-width: 220px !important;
-            width: 220px !important;
+            min-width: 260px !important;
+            max-width: 260px !important;
+            width: 260px !important;
         }}
         .nextcloud-server-banner {{
             background: linear-gradient(135deg, {clean_hex} 0%, {darker_hex} 100%);

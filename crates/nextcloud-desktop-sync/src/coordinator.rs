@@ -59,6 +59,7 @@ pub struct DesktopSyncCoordinator {
     pub(crate) last_root_etags: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
     pub(crate) priority_ops_counter: Arc<std::sync::atomic::AtomicUsize>,
     pub(crate) priority_ops_notify: Arc<tokio::sync::Notify>,
+    pub(crate) cancelled_mounts: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
 }
 
 /// RAII guard representing an active high-priority operation (hydration, sync, directory listing).
@@ -98,6 +99,24 @@ impl DesktopSyncCoordinator {
             counter: self.priority_ops_counter.clone(),
             notify: self.priority_ops_notify.clone(),
         }
+    }
+
+    /// Marks a mount point as cancelled or unmounted so that any active sync loop aborts immediately.
+    pub async fn cancel_mount(&self, mount_id: &str) {
+        let mut cancelled = self.cancelled_mounts.write().await;
+        cancelled.insert(mount_id.to_string());
+    }
+
+    /// Checks whether a mount point has been cancelled.
+    pub async fn is_mount_cancelled(&self, mount_id: &str) -> bool {
+        let cancelled = self.cancelled_mounts.read().await;
+        cancelled.contains(mount_id)
+    }
+
+    /// Clears the cancellation status for a mount point (e.g. when added or resumed).
+    pub async fn uncancel_mount(&self, mount_id: &str) {
+        let mut cancelled = self.cancelled_mounts.write().await;
+        cancelled.remove(mount_id);
     }
 
     /// Asynchronously waits until all active high-priority operations have completed.
@@ -155,6 +174,7 @@ impl DesktopSyncCoordinator {
             last_root_etags: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             priority_ops_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             priority_ops_notify: Arc::new(tokio::sync::Notify::new()),
+            cancelled_mounts: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {

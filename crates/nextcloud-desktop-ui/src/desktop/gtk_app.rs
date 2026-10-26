@@ -74,9 +74,9 @@ pub fn launch_gtk_application(
             @define-color accent_bg_color #0082c9;
 
             .navigation-sidebar-fixed {
-                min-width: 220px !important;
-                max-width: 220px !important;
-                width: 220px !important;
+                min-width: 260px !important;
+                max-width: 260px !important;
+                width: 260px !important;
             }
 
             .nextcloud-server-banner {
@@ -311,8 +311,8 @@ fn build_ui(
             header_for_nav.set_page_subtitle(page.title());
         }),
     );
-    sidebar.root_widget().set_width_request(220);
-    sidebar.root_widget().set_size_request(220, -1);
+    sidebar.root_widget().set_width_request(260);
+    sidebar.root_widget().set_size_request(260, -1);
     sidebar.root_widget().set_hexpand(false);
     sidebar.root_widget().set_halign(gtk4::Align::Start);
     sidebar

@@ -353,6 +353,7 @@ impl DesktopSyncCoordinator {
         let remote_str = remote_path.into();
         let local_buf = local_target.into();
         let mount_id = uuid::Uuid::new_v4().to_string();
+        self.uncancel_mount(&mount_id).await;
 
         let stored = StoredSyncMount {
             id: mount_id.clone(),
@@ -420,19 +421,15 @@ impl DesktopSyncCoordinator {
             ));
         }
 
+        // 1. Immediately mark mount as cancelled so any running sync loop terminates
+        self.cancel_mount(id).await;
+
         let mounts = self.sync_mounts().await;
-        if let Some(target) = mounts.into_iter().find(|m| m.id == id) {
+        let target_opt = mounts.into_iter().find(|m| m.id == id);
+
+        if let Some(ref target) = target_opt {
             let local_path = std::path::PathBuf::from(&target.local_target);
             self.unwatch_mount(&local_path).await;
-
-            let mount_cache = self.account_mounts_dir(&target.account_id).join(id);
-            if mount_cache.exists() {
-                let _ = tokio::fs::remove_dir_all(&mount_cache).await;
-            }
-
-            if clean_local_files && local_path.exists() {
-                let _ = tokio::fs::remove_dir_all(&local_path).await;
-            }
         }
 
         if let Some(client) = self.active_client().await {
@@ -440,6 +437,25 @@ impl DesktopSyncCoordinator {
         }
         if let Some(ref h) = *self.orchestrator_handle.read().await {
             let _ = h.mounts().remove_mount(MountId::from(id.to_string())).await;
+        }
+
+        // Brief yield so any in-flight step checks cancellation and completes safely
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+        if let Some(ref target) = target_opt {
+            let local_path = std::path::PathBuf::from(&target.local_target);
+            let mount_cache = self.account_mounts_dir(&target.account_id).join(id);
+            if mount_cache.exists() {
+                let _ = tokio::fs::remove_dir_all(&mount_cache).await;
+            }
+
+            if clean_local_files && local_path.exists() {
+                let _ = tokio::fs::remove_dir_all(&local_path).await;
+                // Double check to eliminate any resurrected file from a racing write
+                if local_path.exists() {
+                    let _ = tokio::fs::remove_dir_all(&local_path).await;
+                }
+            }
         }
 
         self.event_bus.emit(DesktopEvent::SyncMountRemoved {
