@@ -18,6 +18,6 @@ pub mod pages;
 pub mod tray;
 
 #[cfg(feature = "gtk")]
-pub use gtk_app::{launch_gtk_application, run_headless, suppress_gtk_logs};
+pub use gtk_app::{launch_gtk_application, suppress_gtk_logs};
 #[cfg(feature = "tray")]
 pub use tray::{TrayAction, spawn_app_bar_tray};

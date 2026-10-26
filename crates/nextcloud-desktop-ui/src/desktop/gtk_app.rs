@@ -475,20 +475,3 @@ fn build_ui(
 
     window
 }
-
-/// Fallback runner for headless or non-GUI execution environments.
-pub fn run_headless(controller: DesktopUiController) -> Result<(), UiError> {
-    tracing::info!("Running Nextcloud Desktop in headless mode");
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|err| UiError::Initialization(err.to_string()))?;
-
-    rt.block_on(async {
-        tracing::info!("Headless desktop controller initialized");
-        let path = controller.current_path().await;
-        tracing::info!(current_path = %path, "Virtual mount ready");
-    });
-
-    Ok(())
-}

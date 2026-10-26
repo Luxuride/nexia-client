@@ -15,6 +15,7 @@
 
 pub mod controller;
 pub mod error;
+pub mod headless;
 pub mod model;
 pub mod widget;
 
@@ -32,11 +33,14 @@ uniffi::setup_scaffolding!("nextcloud_desktop_ui");
 
 pub use controller::DesktopUiController;
 #[cfg(feature = "gtk")]
-pub use desktop::gtk_app::{launch_gtk_application, run_headless, suppress_gtk_logs};
+pub use desktop::gtk_app::{launch_gtk_application, suppress_gtk_logs};
 #[cfg(feature = "tray")]
 pub use desktop::tray::{TrayAction, spawn_app_bar_tray};
 pub use error::UiError;
+pub use headless::run_headless;
 pub use model::{
     FileSyncStatus, FileViewItem, FileViewMode, NavigationPage, PathSegment, TransferItem,
 };
-pub use widget::{FileExplorerBackend, ItemCollectionView, ViewComponent};
+#[cfg(feature = "gtk")]
+pub use widget::ItemCollectionView;
+pub use widget::{FileExplorerBackend, ViewComponent};

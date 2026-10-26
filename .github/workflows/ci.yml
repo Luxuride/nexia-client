@@ -39,6 +39,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  headless-build:
+    name: headless build (no default features)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: |
+          cargo build --release --bin nextcloud-desktop-rs \
+            --no-default-features
+
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
