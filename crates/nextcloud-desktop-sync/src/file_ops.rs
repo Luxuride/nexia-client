@@ -1336,15 +1336,17 @@ impl DesktopSyncCoordinator {
                 .and_then(|e| e.file_id)
         };
 
-        if let Some((_, client, auth)) = self.active_dav_context().await {
+        if let Some((user, client, auth)) = self.active_dav_context().await {
             let preview = client.preview(&auth);
+            let dav = client.dav(&auth);
             let clean_no_slash = clean_path.trim_start_matches('/');
 
             let opts = nextcloud_rust_sdk::PreviewOptions::new()
                 .dimensions(effective_size, effective_size)
                 .mode(nextcloud_rust_sdk::PreviewMode::Cover);
 
-            if let Some(bytes) = fetch_preview_bytes(&preview, file_id, clean_no_slash, &opts).await
+            if let Some(bytes) =
+                fetch_preview_bytes(&preview, &dav, &user, file_id, clean_no_slash, &opts).await
             {
                 let png_bytes = crate::freedesktop_thumbs::ensure_png_bytes(&bytes);
                 if tokio::fs::write(&thumb_path, &png_bytes).await.is_ok() {
@@ -1510,6 +1512,8 @@ async fn fetch_preview_bytes<
     A: nextcloud_rust_sdk::AuthProvider,
 >(
     preview: &nextcloud_rust_sdk::PreviewClient<'_, T, A>,
+    dav: &nextcloud_rust_sdk::DavClient<'_, T, A>,
+    user: &str,
     file_id: Option<u64>,
     clean_no_slash: &str,
     opts: &nextcloud_rust_sdk::PreviewOptions,
@@ -1534,7 +1538,21 @@ async fn fetch_preview_bytes<
     {
         return Some(bytes);
     }
-    preview.get_by_path(clean_no_slash, &simple_opts).await.ok()
+    if let Ok(bytes) = preview.get_by_path(clean_no_slash, &simple_opts).await {
+        return Some(bytes);
+    }
+
+    // 4. Fallback for large camera photos: extract embedded EXIF thumbnail via Range request
+    let lower = clean_no_slash.to_ascii_lowercase();
+    if (lower.ends_with(".jpg") || lower.ends_with(".jpeg"))
+        && let Ok(dav_path) = make_dav_path(user, clean_no_slash)
+        && let Ok(header) = dav.get_range(&dav_path, 0, 131071).await
+        && let Some(thumb) = nextcloud_rust_sdk::extract_embedded_jpeg_thumbnail(&header)
+    {
+        return Some(thumb.to_vec());
+    }
+
+    None
 }
 
 fn decode_percent_str(input: &str) -> String {
