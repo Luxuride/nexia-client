@@ -21,17 +21,9 @@ impl std::fmt::Debug for FileSystemWatcher {
 impl FileSystemWatcher {
     /// Initializes a new filesystem watcher tied to the sync coordinator.
     pub fn new(coordinator: DesktopSyncCoordinator) -> Self {
-        let coord_h = coordinator.clone();
         let coord_s = coordinator.clone();
 
         let inner = SdkWatcher::new()
-            .with_hydration_handler(Arc::new(move |path| {
-                let c = coord_h.clone();
-                tokio::spawn(async move {
-                    tracing::info!(path = %path.display(), "Hydrating virtual placeholder on open/access");
-                    let _ = c.hydrate_local_file(&path).await;
-                });
-            }))
             .with_sync_handler(Arc::new(move |mount_id| {
                 let c = coord_s.clone();
                 tokio::spawn(async move {
