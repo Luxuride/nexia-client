@@ -22,6 +22,7 @@ impl FileSystemWatcher {
     /// Initializes a new filesystem watcher tied to the sync coordinator.
     pub fn new(coordinator: DesktopSyncCoordinator) -> Self {
         let coord_s = coordinator.clone();
+        let coord_h = coordinator.clone();
 
         let inner = SdkWatcher::new()
             .with_sync_handler(Arc::new(move |mount_id| {
@@ -31,6 +32,13 @@ impl FileSystemWatcher {
                         tracing::info!(mount_id = %mount_id, "Local file change detected by watcher, triggering upload sync");
                         let _ = c.sync_mount_folder(&mount_id).await;
                     }
+                });
+            }))
+            .with_hydration_handler(Arc::new(move |local_path| {
+                let c = coord_h.clone();
+                tokio::spawn(async move {
+                    tracing::info!(path = %local_path.display(), "On-demand hydration triggered by external access");
+                    let _ = c.hydrate_local_file(&local_path).await;
                 });
             }));
 

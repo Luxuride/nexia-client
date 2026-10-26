@@ -339,6 +339,9 @@ impl DesktopSyncCoordinator {
                         false,
                     ));
                     let _ = journal.save_to_file(&journal_path);
+                    nextcloud_rust_sdk::remove_freedesktop_fail_marker(&target_file);
+                    self.install_freedesktop_previews_for_remote_path(&clean, &bytes)
+                        .await;
                     self.event_bus.emit(DesktopEvent::FileTransferCompleted {
                         relative_path: canonical_rel,
                         kind: nextcloud_desktop_core::events::TransferKind::Hydration,
@@ -419,6 +422,9 @@ impl DesktopSyncCoordinator {
                         false,
                     ));
                     let _ = journal.save_to_file(&journal_path);
+                    nextcloud_rust_sdk::remove_freedesktop_fail_marker(&canonical);
+                    self.install_freedesktop_previews_for_remote_path(&full_remote, &bytes)
+                        .await;
 
                     self.event_bus.emit(DesktopEvent::FileTransferCompleted {
                         relative_path: canonical_rel,
@@ -1240,6 +1246,16 @@ impl DesktopSyncCoordinator {
         remote_path: &str,
         size: u32,
     ) -> Result<Option<PathBuf>, SyncError> {
+        self.fetch_thumbnail_with_id(remote_path, None, size).await
+    }
+
+    /// Fetches or retrieves a cached thumbnail for `remote_path` with an optionally known Nextcloud file ID.
+    pub async fn fetch_thumbnail_with_id(
+        &self,
+        remote_path: &str,
+        known_file_id: Option<u64>,
+        size: u32,
+    ) -> Result<Option<PathBuf>, SyncError> {
         let max_size = self.max_thumbnail_size().await;
         // Snap to standard Nextcloud thumbnail square sizes: 64, 128, 256, 512, 1024
         let standard_size = match size {
@@ -1314,14 +1330,17 @@ impl DesktopSyncCoordinator {
             return Ok(Some(thumb_path));
         }
 
-        // Look up file_id from active VFS
-        let vfs = self.active_vfs().await;
-        let file_id = vfs
-            .entry(remote_path)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|e| e.file_id);
+        // Look up file_id: prefer known_file_id from remote discovery, fallback to active VFS
+        let file_id = if known_file_id.is_some() {
+            known_file_id
+        } else {
+            let vfs = self.active_vfs().await;
+            vfs.entry(remote_path)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|e| e.file_id)
+        };
 
         if let Some((_, client, auth)) = self.active_dav_context().await {
             let preview = client.preview(&auth);
@@ -1384,7 +1403,15 @@ impl DesktopSyncCoordinator {
 
     /// Batch prefetches thumbnails for multiple remote paths in the background.
     pub fn batch_prefetch_thumbnails(&self, paths: Vec<String>, size: u32) {
-        if paths.is_empty() {
+        self.batch_prefetch_thumbnails_with_ids(
+            paths.into_iter().map(|p| (p, None)).collect(),
+            size,
+        );
+    }
+
+    /// Batch prefetches thumbnails for multiple remote paths with known file IDs in the background.
+    pub fn batch_prefetch_thumbnails_with_ids(&self, items: Vec<(String, Option<u64>)>, size: u32) {
+        if items.is_empty() {
             return;
         }
 
@@ -1395,9 +1422,9 @@ impl DesktopSyncCoordinator {
 
             let thumbs_dir = coord.active_thumbnails_dir().await;
             // Only process paths that are not already cached on disk
-            let missing_paths: Vec<String> = paths
+            let missing_items: Vec<(String, Option<u64>)> = items
                 .into_iter()
-                .filter(|p| {
+                .filter(|(p, _)| {
                     let clean = p.trim_matches('/');
                     let mut hasher = std::collections::hash_map::DefaultHasher::new();
                     std::hash::Hash::hash(&clean, &mut hasher);
@@ -1408,13 +1435,13 @@ impl DesktopSyncCoordinator {
                 })
                 .collect();
 
-            if missing_paths.is_empty() {
+            if missing_items.is_empty() {
                 return;
             }
 
-            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(2));
-            let mut tasks = Vec::with_capacity(missing_paths.len());
-            for path in missing_paths {
+            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+            let mut tasks = Vec::with_capacity(missing_items.len());
+            for (path, fid) in missing_items {
                 let c = coord.clone();
                 let sem = semaphore.clone();
                 tasks.push(tokio::spawn(async move {
@@ -1424,7 +1451,7 @@ impl DesktopSyncCoordinator {
                         Err(_) => return,
                     };
                     c.wait_for_priority_ops().await;
-                    let _ = c.fetch_thumbnail(&path, effective_size).await;
+                    let _ = c.fetch_thumbnail_with_id(&path, fid, effective_size).await;
                 }));
             }
             for task in tasks {

@@ -152,11 +152,11 @@ impl FolderSyncEngine {
         if let Ok(entries) =
             FolderSyncRunner::discover_remote(&dav_client, &user, &mount.remote_path).await
         {
-            let candidates: Vec<String> = entries
+            let candidates: Vec<(String, Option<u64>)> = entries
                 .iter()
                 .filter(|e| !e.is_directory && is_thumbnail_candidate(&e.relative_path))
                 .map(|e| {
-                    if mount.remote_path == "/" {
+                    let path = if mount.remote_path == "/" {
                         e.relative_path.clone()
                     } else {
                         format!(
@@ -164,11 +164,13 @@ impl FolderSyncEngine {
                             mount.remote_path.trim_end_matches('/'),
                             e.relative_path.trim_start_matches('/')
                         )
-                    }
+                    };
+                    (path, e.file_id)
                 })
                 .collect();
             if !candidates.is_empty() {
-                self.coordinator.batch_prefetch_thumbnails(candidates, 256);
+                self.coordinator
+                    .batch_prefetch_thumbnails_with_ids(candidates, 256);
             }
         }
 
