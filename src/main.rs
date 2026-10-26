@@ -58,6 +58,10 @@ struct CliArgs {
     #[arg(long)]
     mount_vfs: Option<Option<PathBuf>>,
 
+    /// Update synchronization mode for a mount (e.g. --set-mount-mode <MOUNT_ID> Fuse).
+    #[arg(long, num_args = 2, value_names = ["MOUNT_ID", "MODE"])]
+    set_mount_mode: Option<Vec<String>>,
+
     /// Path to custom configuration file.
     #[arg(long)]
     config: Option<PathBuf>,
@@ -220,6 +224,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
 
+            if let Some(ref mode_args) = args.set_mount_mode
+                && mode_args.len() == 2
+            {
+                let mount_id = &mode_args[0];
+                let mode = &mode_args[1];
+                tracing::info!(mount_id, mode, "Setting mount synchronization mode...");
+                match controller.update_sync_mount_mode(mount_id, mode).await {
+                    Ok(()) => tracing::info!(mount_id, mode, "Mount mode updated successfully"),
+                    Err(e) => tracing::error!(error = %e, "Failed to update mount mode"),
+                }
+            }
+
             if let Some(ref target) = args.mount_vfs {
                 let mp = match target {
                     Some(p) => p.clone(),
@@ -243,6 +259,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 && args.hydrate.is_none()
                 && args.dehydrate.is_none()
                 && args.mount_vfs.is_none()
+                && args.set_mount_mode.is_none()
             {
                 tracing::info!("Running Nextcloud background daemon. Press Ctrl+C to terminate.");
                 tokio::signal::ctrl_c().await?;
