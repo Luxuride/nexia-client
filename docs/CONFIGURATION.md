@@ -1,31 +1,77 @@
 # Configuration Reference
 
-Nextcloud Desktop persists configuration profiles in a standard JSON format under the user's config directory:
+Configuration in `nextcloud-desktop-rs` has two layers:
 
-```
-~/.config/nextcloud-desktop-rs/config.json
-```
+1. **The encrypted settings database** — the authoritative store. It holds the
+   whole `AppConfig` plus per-account and global preferences, encrypted with a
+   key from the platform keychain.
+2. **A JSON fallback** — the same `AppConfig` shape, used when the database
+   cannot be opened (missing keyring, read-only data dir, first run in a
+   container). Never a second source of truth: the runtime prefers the database
+   and only falls back.
+
+Both sides are written by `DesktopSyncCoordinator::persist_config()`, which saves
+to the database *and* to the JSON path. The read order at startup (`src/main.rs:92-108`)
+is: open the database, and use `load_app_config()` **only if it returns `Some`**;
+on an empty database the JSON is loaded instead and then immediately persisted
+into the database, so a pre-existing `config.json` is imported once on first run.
+If the database cannot be opened at all, the app runs on JSON alone and logs
+`Failed to open encrypted desktop storage, falling back to JSON`.
+
+> **The JSON fallback is not encrypted.** `Account.credentials` serialises
+> `password: String` verbatim, so `~/.config/nextcloud-desktop-rs/config.json`
+> contains the app password in cleartext — `AppConfig::save_to_path`
+> (`config.rs:239-253`) uses `fs::write`, so the file gets the process umask
+> (typically `0644`). Only
+> `desktop_config.db` is SQLCipher-encrypted. Treat the JSON file as secret
+> material, and prefer ensuring the keychain works on a real desktop.
 
 ---
 
-## 1. Configuration Schema
+## 1. Locations
+
+| What | Path |
+| --- | --- |
+| Settings database | `~/.local/share/nextcloud-desktop/desktop_config.db` |
+| Keychain-backed key, local fallback key | `<data dir>/nextcloud-desktop/.storage_key` |
+| JSON config fallback | `~/.config/nextcloud-desktop-rs/config.json` |
+| Per-account preferences dump | `~/.config/nextcloud-desktop-rs/accounts/<account_id>.json` |
+| Cache root (`cache_dir`) | `~/.cache/nextcloud-desktop` |
+
+The per-account dump is written by `AppConfig::save_user_config(id)` whenever the
+UI changes an account's display settings
+(`DesktopUiController::set_account_display_config`, `controller.rs:158`). It holds
+only that account's `AccountPreferences` and is **a dump, not a load source** —
+nothing calls `AppConfig::load_user_config()`, so editing the file changes
+nothing. The live value is `account_preferences` in the database/JSON above.
+
+The database key is loaded from the keychain
+(`KeychainKeyStore::new("eu.luxuride.nextcloud-desktop", "desktop-storage-key")`).
+If the keychain is unavailable, `DesktopStorage::resolve_key` reads or creates
+`.storage_key` next to the database. The database therefore survives a missing
+keyring, but a key file is not a substitute for one — if neither is readable the
+app starts on JSON and logs a warning.
+
+---
+
+## 2. Schema
+
+The JSON fallback is the complete `AppConfig`:
 
 ```json
 {
   "accounts": [
     {
       "id": "e3a89182-3d75-4b71-bdfc-2794eb8ec381",
-      "name": "My Nextcloud Server",
-      "server": {
-        "server_url": "https://cloud.example.org"
-      },
-      "credentials": {
-        "username": "alice",
-        "password": "app-token-generated-from-nextcloud"
-      },
-      "status": "Connected"
+      "name": "Work",
+      "server": { "server_url": "https://cloud.example.org" },
+      "credentials": { "username": "alice", "password": "<app password>" },
+      "status": "Connected",
+      "is_system": false,
+      "avatar_path": null
     }
   ],
+  "active_account_id": "e3a89182-3d75-4b71-bdfc-2794eb8ec381",
   "sync_folders": [
     {
       "id": "a93df2c1-84e9-4e76-8022-7f8976b32521",
@@ -37,45 +83,206 @@ Nextcloud Desktop persists configuration profiles in a standard JSON format unde
     }
   ],
   "cache_dir": "/home/alice/.cache/nextcloud-desktop",
-  "sync_interval_secs": 300
+  "sync_interval_secs": 0,
+  "global": {
+    "start_minimized": false,
+    "autostart": true,
+    "default_display": { "folder_items": "DirectOnly", "max_thumbnail_size": 256 }
+  },
+  "account_preferences": {
+    "e3a89182-3d75-4b71-bdfc-2794eb8ec381": {
+      "display": { "show_file_size": true },
+      "default_view_mode": "Grid",
+      "default_zoom_level": "Medium"
+    }
+  }
 }
 ```
 
----
+The file is **not** forgiving at the top level. Only `global` and
+`account_preferences` carry `#[serde(default)]`; `accounts`,
+`active_account_id`, `sync_folders`, `cache_dir` and `sync_interval_secs` are
+required, and a missing one makes `load_from_path` fail with
+`CoreError::ConfigParse`, which drops the app onto `AppConfig::default()`.
 
-## 2. Configuration Options
-
-### `accounts`
-An array of configured Nextcloud user accounts:
-- **`id`**: Unique UUID identifying the account profile.
-- **`name`**: User-defined display name.
-- **`server.server_url`**: Nextcloud base URL (e.g. `https://cloud.example.com`). Trailing slashes are stripped automatically.
-- **`credentials.username`**: Nextcloud login username.
-- **`credentials.password`**: App password or authentication token.
-
-### `sync_folders`
-An array of configured folder pairings:
-- **`id`**: Unique UUID for the pairing.
-- **`account_id`**: Associated account UUID.
-- **`local_path`**: Absolute path on the host filesystem.
-- **`remote_path`**: Relative path on the remote Nextcloud instance (e.g. `/` or `/Documents`).
-- **`mode`**: Synchronization mode:
-  - `"VirtualSync"`: Metadata-only placeholders; downloads file bodies on-demand.
-  - `"FullTwoWaySync"`: Bidirectional file synchronization maintaining offline copies.
-- **`enabled`**: Whether this pairing is included during periodic sync cycles.
-
-### `cache_dir`
-Directory used for storing hydrated virtual files and thumbnails. Defaults to `~/.cache/nextcloud-desktop`.
-
-### `sync_interval_secs`
-Interval in seconds between automatic background sync cycles. Defaults to `300` (5 minutes).
+Within `AdditionalItemsDisplayConfig`, only `folder_items`,
+`show_direct_item_count`, `show_total_item_count`, `show_direct_folder_size`,
+`show_file_size` and `show_last_modified` are serde-defaulted; the other seven
+(`show_total_folder_size`, `show_permissions`, `show_mime_type`,
+`show_size_breakdown`, `show_disk_usage`, `max_thumbnail_size`,
+`autodownload_thumbnails`) must be present in any hand-written block. Copy the
+full example above rather than trimming it.
 
 ---
 
-## 3. Custom Configuration File
+## 3. Options
 
-A custom configuration path can be supplied at launch using the `--config` flag:
+### `accounts: Vec<Account>`
+
+| Field | Meaning |
+| --- | --- |
+| `id` | `AccountId` — a UUID string, or `"system-account"` for the built-in profile. |
+| `name` | Display label. |
+| `server.server_url` | Base URL. Normalised through `ServerUrl::parse` with trailing slashes stripped (`ServerConfig::new`). |
+| `credentials.username` | Nextcloud login, also the WebDAV path segment. |
+| `credentials.password` | App password / token. Redacted as `[REDACTED]` in `Debug` and `Display`. |
+| `status` | `Disconnected` \| `Connecting` \| `Connected` \| `Error`. |
+| `is_system` | True for the host's built-in immutable account (`Account::system_account()`) — no host or credentials to edit. |
+| `avatar_path` | Optional local avatar file (`~/.face`, `~/.face.icon`, or `/var/lib/AccountsService/icons/<user>`). |
+
+### `active_account_id: Option<AccountId>`
+
+Which account the UI opens on. When `None`, the first configured account wins.
+
+### `sync_folders: Vec<SyncFolderConfig>`
+
+| Field | Meaning |
+| --- | --- |
+| `id` | UUID for the pairing. |
+| `account_id` | Owning account. |
+| `local_path` | Absolute host path. |
+| `remote_path` | Remote folder, e.g. `/` or `/Documents`. |
+| `mode` | `VirtualSync` (placeholders, hydrate on demand) or `FullTwoWaySync` (offline copies, local changes pushed). |
+| `enabled` | Would be included in a cycle run over this list — but see the caveat below; nothing iterates this vector. |
+
+`SyncFolderConfig::new(account_id, local_path, remote_path, mode)` generates the
+`id` and defaults `enabled` to `true`.
+
+> **Caveat — this is not the live mount registry.** `AppConfig.sync_folders` is
+> read only by `sync_all_pairs()` (which no caller invokes today) and is
+> populated only by tests. The mounts the application actually runs are
+> `StoredSyncMount` records: same fields (plus `display_name`, and modes spelled
+> `"VirtualVfs"` / `"BidirectionalSync"` / `"Fuse"` as `String`s), stored through
+> `Client::store_sync_mount` / `list_sync_mounts` in the SDK's encrypted config
+> store and enumerated by `DesktopSyncCoordinator::sync_mounts()`.
+>
+> The two shapes disagree on `mode` (`SyncMode` enum vs. string) and use different
+> ids, so **never edit `sync_folders` expecting mounts to change**. Adding a mount
+> goes through `add_sync_mount`; changing one goes through
+> `update_sync_mount_mode`. Reconciling the two is unfinished work, not a
+> supported workflow.
+
+### `cache_dir: Option<PathBuf>`
+
+Root for hydrated payloads, thumbnails, the persisted VFS tree and per-mount
+sync journals, laid out as `accounts/<account_id>/…`. Defaults via
+`AppConfig::default_cache_dir()` to `<XDG cache>/nextcloud-desktop`, then
+`$TMPDIR/nextcloud-desktop`. `resolved_cache_dir()` is what the rest of the app
+calls — do not read `cache_dir` directly.
+
+`src/main.rs` additionally fills `cache_dir` in at startup when it is unset, using
+`<XDG cache>/nextcloud-desktop` and falling back to `$TMPDIR/nc_cache`. The two
+fallbacks differ (`nextcloud-desktop` vs `nc_cache` under the temp dir), so an
+environment with no resolvable cache dir can land on either path depending on
+whether the boot path ran.
+
+### `sync_interval_secs: u64`
+
+Intended period between automatic background cycles. **Persisted but never
+read**: `AppConfig` derives `Default`, so the value is `0` unless a JSON file or
+the settings database supplies one, and no code in `src/main.rs`, the coordinator
+or the UI consults it — `--headless` just blocks on `tokio::signal::ctrl_c()`
+(`src/main.rs:257-267`). Treat it as reserved. Do not describe it as functional
+until a timer actually consumes it.
+
+Note the trap: there **is** a periodic loop in the app, but it does not use this
+field. `DesktopSyncCoordinator::new` spawns a hardcoded **5 s** remote-etag poller
+(`coordinator.rs:250-262`), and the SDK has its own equally-unread
+`OrchestratorConfig.sync_interval_seconds`. Editing `sync_interval_secs` changes
+nothing at all; the poll cadence is a literal in the constructor.
+
+### `global: GlobalPreferences`
+
+| Field | Meaning |
+| --- | --- |
+| `start_minimized` | Persisted "launch hidden" intent. **Not yet read by the launcher** — hiding comes from the `--background` / `-b` flag passed to `launch_gtk_application`. |
+| `autostart` | Persisted autostart intent. **Not yet read by the launcher** — `src/main.rs` calls `register_autostart()` unconditionally on every start. |
+| `default_display` | Display defaults used when an account has no override. |
+
+Because both booleans are persisted but unused, treat them as reserved fields: do
+not assume editing them changes behaviour, and wire them in `src/main.rs` before
+documenting them as functional.
+
+### Autostart mechanics
+
+`register_autostart()` writes, under `AUTOSTART_APP_NAME =
+"eu.luxuride.nextcloud-desktop"`:
+
+| OS | File |
+| --- | --- |
+| Linux | `$XDG_CONFIG_HOME/autostart/eu.luxuride.nextcloud-desktop.desktop` (XDG autostart, `X-GNOME-Autostart-enabled=true`) |
+| macOS | `~/Library/LaunchAgents/eu.luxuride.nextcloud-desktop.plist` (`RunAtLoad`) |
+| Windows | No-op — returns `Ok(())` |
+
+`unregister_autostart()` and `is_autostart_enabled()` read back the same paths.
+
+### `account_preferences: HashMap<String, AccountPreferences>`
+
+Keyed by the account id string. Per-account override of display settings, plus
+`default_view_mode` (`Grid` \| `List`) and `default_zoom_level`
+(`Small` \| `Medium` \| `Large` \| `ExtraLarge`).
+
+### `display: AdditionalItemsDisplayConfig`
+
+Controls what the file view shows. Only six of the thirteen fields carry
+`#[serde(default)]` — see the note in §2 — so the defaults below are what
+`AdditionalItemsDisplayConfig::default()` (`config.rs:112-129`) produces, not what
+a partial JSON block is guaranteed to produce:
+
+| Field | Default | Effect |
+| --- | --- | --- |
+| `folder_items` | `DirectOnly` | `DirectOnly` \| `TotalOnly` \| `Both` |
+| `show_direct_item_count` | `true` | "3 items" on folders |
+| `show_total_item_count` | `false` | Recursive "124 items" |
+| `show_direct_folder_size` | `false` | Direct folder size |
+| `show_total_folder_size` | `false` | Recursive folder size |
+| `show_file_size` | `true` | File size on items |
+| `show_last_modified` | `false` | Modified date on items |
+| `show_permissions` | `true` | Permissions in properties/detail views |
+| `show_mime_type` | `true` | MIME type |
+| `show_size_breakdown` | `true` | Direct vs total breakdown |
+| `show_disk_usage` | `true` | Local size vs remote size |
+| `max_thumbnail_size` | `256` | Thumbnail cap in pixels |
+| `autodownload_thumbnails` | `true` | Fetch thumbnails while browsing |
+
+---
+
+## 4. What lives where
+
+Not everything is `AppConfig`. Knowing the split saves a lot of confusion:
+
+| Data | Store |
+| --- | --- |
+| Accounts, active account | `AppConfig` (database + JSON) |
+| Sync mounts (the live ones) | SDK `ConfigStore` via `Client::store_sync_mount` — per-account `config.db` |
+| `AppConfig.sync_folders` | Written by tests and read by the unused `sync_all_pairs()` only |
+| Display preferences, view mode, zoom | `AccountPreferences` / `GlobalPreferences` |
+| Encrypted per-account SDK state (auth, cache, config DBs) | SDK `StoragePaths` under `accounts/<account_id>/` |
+| Sync journals | `accounts/<account_id>/mounts/<mount_id>/journal.json` |
+| Virtual tree snapshot | `accounts/<account_id>/vfs/tree.json` |
+| Live mount status, pause flags, queue depths | Orchestrator memory only — never persisted |
+
+---
+
+## 5. Using a custom config path
 
 ```sh
 cargo run -- --config /path/to/custom-config.json
 ```
+
+`--config` replaces the JSON fallback path and is remembered by the coordinator
+(`with_config_path`), so later `persist_config()` writes go to the same file. It
+does **not** move the encrypted database, which always lives in the user data
+directory.
+
+---
+
+## 6. Precedence and recovery
+
+- Startup: `DesktopStorage::open_default()` → `load_app_config()`; on any failure
+  the JSON file is loaded; on failure of that, `AppConfig::default()`.
+- The keychain always wins over `.storage_key`; a fresh key is minted and written
+  if neither is usable.
+- `persist_config()` writes both stores and ignores write errors with a warning rather
+  than failing the operation that triggered it — the in-memory config is the
+  source of truth for the running process.

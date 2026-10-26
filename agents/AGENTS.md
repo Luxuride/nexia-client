@@ -6,9 +6,29 @@ Edit here only.
 
 ## What this repo is
 
-A modern Nextcloud desktop application built with GTK 4 and the Nextcloud Rust SDK.
-The repository is split into a workspace of small, focused crates covering core models,
-virtual sync / full two-way synchronization engines, and GTK 4 user interface components.
+A Nextcloud desktop application built with GTK 4 on top of the Nextcloud Rust SDK
+(`nextcloud-rust-sdk`). The repository is a workspace of small, focused crates:
+core models, the coordinator that composes SDK handles, and GTK 4 user interface
+components.
+
+**This repository is a consumer, and downstream of the SDK.** The SDK is the
+engine and does not know this application exists: it holds no reference to this
+repo, names no client, and is not modified to serve a client's needs. Consequences
+for work here:
+
+- Protocol behaviour (WebDAV, VFS state, hydration bookkeeping, journals,
+  reconciliation, retries) belongs upstream in the SDK. Do not re-implement it
+  here, and do not work around an SDK limitation with a parallel implementation —
+  fix the SDK or file it.
+- A change that only exists to satisfy this UI is a change this repository owns:
+  widgets, view models, `DesktopEvent`s, coordinator policy, configuration
+  schema, cache layout, the app bar.
+- Never describe this app as the SDK's reason to exist, and never add SDK-side
+  knowledge of it (feature flags, config fields, branches on "is this client").
+  Anything of that shape is a review rejection.
+- The one-way rule is mechanically enforced: only the `nextcloud_rust_sdk`
+  facade crate may be imported. Internal SDK crates are off limits (see
+  Dependencies).
 
 ## Structure
 
@@ -47,6 +67,25 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 All commands must pass before a change is considered done.
 Commit and push each completed feature or logical change to the remote repository.
 
+## Documentation
+
+Development docs live in `docs/` and are part of the deliverable, not an
+afterthought:
+
+| File | Covers |
+| --- | --- |
+| `docs/ARCHITECTURE.md` | Crate boundaries, runtime/concurrency model, storage layout |
+| `docs/GETTING_STARTED.md` | Toolchain, feature flags, gates, troubleshooting |
+| `docs/BACKGROUND_SERVICE.md` | App bar, background lifespan, CLI/daemon flags |
+| `docs/CONFIGURATION.md` | `AppConfig` schema, two-layer persistence, precedence |
+| `docs/VIRTUAL_SYNC.md` | Hydration/dehydration policy, mount modes, FUSE |
+
+When a change alters a public shape — a config field, a CLI flag, a
+`DesktopEvent` variant, a crate boundary, a storage path — update the matching
+doc in the same change. Docs describe what the code does today: no aspirational
+sections, no documenting a field the code never reads. If a flag or field is
+persisted but unimplemented, say so explicitly in the doc.
+
 ## Code rules
 
 - No `unsafe` without an explicit request and a safety comment explaining
@@ -74,11 +113,27 @@ Commit and push each completed feature or logical change to the remote repositor
 
 ## Features & File Capabilities
 
-- **Virtual Sync**: Recursively discover remote hierarchies via WebDAV PROPFIND, build and maintain an in-memory `VirtualTree` of metadata placeholders without downloading file contents.
-- **On-Demand Hydration**: Download file contents via WebDAV GET only when opened, previewed, or explicitly requested for offline availability.
-- **Dehydration**: Release downloaded bytes and cached files back to lightweight metadata placeholders to conserve local disk space.
-- **Two-Way Synchronization**: Synchronize selected local directories with remote WebDAV folders, using local and remote scanning, reconciliation, conflict tracking, and journal state persistence.
-- **File Operations**: Complete remote file operations including create folder (`MKCOL`), upload file (`PUT`), download file (`GET`), delete (`DELETE`), and rename/move (`MOVE`).
+Capabilities are surfaced here, not implemented here. The SDK owns the mechanism;
+this repository owns the presentation and the policy around it.
+
+- **Virtual Sync**: browse remote hierarchies as metadata placeholders without
+  downloading bodies. Refresh is an SDK crawl driven by
+  `DesktopSyncCoordinator::refresh_virtual_tree()`; the app persists the tree
+  snapshot and renders it.
+- **On-Demand Hydration**: bodies are fetched only when opened, previewed or
+  requested offline. The coordinator fetches bytes and hands them to
+  `VfsHandle::hydrate_local`; the SDK owns the state transition.
+- **Dehydration**: release downloaded payloads back to placeholders. Delegated to
+  `VfsHandle::dehydrate_local`.
+- **Two-Way Synchronization**: local↔remote pairs with journal-backed change
+  tracking. Discovery lives in `FolderSyncEngine`; reconciliation, conflict
+  handling and `SyncJournal` belong to the SDK.
+- **File Operations**: create folder, upload, download, delete, rename/move,
+  share links, thumbnails and search — each a coordinator method that calls an
+  SDK client, never a hand-written HTTP request.
+
+If a capability is missing, check the SDK's public surface before writing any
+code here.
 
 ## Tests
 
