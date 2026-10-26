@@ -42,7 +42,29 @@ impl FileSystemWatcher {
 
         let event_handler = move |res: Result<Event, notify::Error>| match res {
             Ok(event) => {
-                if matches!(
+                if matches!(event.kind, EventKind::Access(_)) {
+                    for path in event.paths {
+                        if path.is_file() {
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::MetadataExt;
+                                if let Ok(meta) = std::fs::metadata(&path)
+                                    && (meta.len() == 0 || meta.blocks() == 0)
+                                {
+                                    let _ = tx.blocking_send((event.kind, path));
+                                }
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                if let Ok(meta) = std::fs::metadata(&path)
+                                    && meta.len() == 0
+                                {
+                                    let _ = tx.blocking_send((event.kind, path));
+                                }
+                            }
+                        }
+                    }
+                } else if matches!(
                     event.kind,
                     EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
                 ) {
@@ -87,11 +109,29 @@ impl FileSystemWatcher {
         tokio::spawn(async move {
             let mut pending_mounts: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
+            let hydrating_paths: Arc<tokio::sync::Mutex<std::collections::HashSet<PathBuf>>> =
+                Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new()));
 
             loop {
                 // Collect events with a 1500ms debounce window
                 tokio::select! {
-                    Some((_kind, changed_path)) = rx.recv() => {
+                    Some((kind, changed_path)) = rx.recv() => {
+                        if matches!(kind, EventKind::Access(_)) {
+                            let mut guard = hydrating_paths.lock().await;
+                            if guard.insert(changed_path.clone()) {
+                                let c = coord.clone();
+                                let p = changed_path.clone();
+                                let set = hydrating_paths.clone();
+                                tokio::spawn(async move {
+                                    info!(path = %p.display(), "Hydrating virtual placeholder on open/access");
+                                    let _ = c.hydrate_local_file(&p).await;
+                                    let mut g = set.lock().await;
+                                    g.remove(&p);
+                                });
+                            }
+                            continue;
+                        }
+
                         if let Ok(guard) = map_for_worker.lock() {
                             for (root, mount_id) in guard.iter() {
                                 if changed_path.starts_with(root) {

@@ -329,7 +329,7 @@ impl FolderSyncEngine {
                 }
                 SyncAction::Download {
                     relative_path,
-                    size: _,
+                    size,
                     etag,
                 } => {
                     let dest = local_target.join(relative_path.trim_start_matches('/'));
@@ -346,14 +346,21 @@ impl FolderSyncEngine {
                         )
                     };
                     if is_vfs {
-                        // In VirtualVfs mode, do not download bulk payload; create placeholder
-                        if !dest.exists() {
-                            let _ = std::fs::File::create(&dest);
+                        // In VirtualVfs mode, do not download bulk payload; create or update sparse placeholder with virtual metadata
+                        let file = if dest.exists() {
+                            std::fs::OpenOptions::new().write(true).open(&dest).ok()
+                        } else {
+                            std::fs::File::create(&dest).ok()
+                        };
+                        if let Some(f) = file
+                            && size > 0
+                        {
+                            let _ = f.set_len(size);
                         }
                         let mtime = std::fs::metadata(&dest)
                             .and_then(|m| m.modified())
                             .unwrap_or(SystemTime::now());
-                        let mut entry = JournalEntry::new(&relative_path, 0, mtime, false);
+                        let mut entry = JournalEntry::new(&relative_path, size, mtime, false);
                         if let Some(e) = etag {
                             entry = entry.with_remote_etag(e);
                         }
