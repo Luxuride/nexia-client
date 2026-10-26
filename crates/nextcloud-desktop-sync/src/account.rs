@@ -695,6 +695,9 @@ impl DesktopSyncCoordinator {
                 }
             }
         }
+
+        // Initialize mounts and watchers for discovered accounts
+        self.init_watcher().await;
     }
 
     /// Returns all configured account profiles.

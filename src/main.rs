@@ -141,6 +141,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || args.resume_sync
         || args.list_mounts
         || args.mount_vfs.is_some()
+        || args.set_mount_mode.is_some()
     {
         rt.block_on(async {
             if args.pause_sync {
