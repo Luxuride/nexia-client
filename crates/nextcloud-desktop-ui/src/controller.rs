@@ -616,6 +616,14 @@ impl DesktopUiController {
         res
     }
 
+    /// Recursively hydrates all unhydrated files within a virtual directory path.
+    pub async fn hydrate_directory(&self, remote_dir: &str) -> Result<usize, UiError> {
+        self.coordinator
+            .hydrate_directory(remote_dir)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))
+    }
+
     /// Dehydrates a file back to a placeholder, freeing disk space.
     pub async fn dehydrate_file(&self, remote_path: &str) -> Result<(), UiError> {
         let clean = format!("/{}", remote_path.trim_matches('/'));
@@ -1072,6 +1080,10 @@ impl FileExplorerBackend for DesktopUiController {
 
     async fn hydrate_file(&self, remote_path: &str) -> Result<PathBuf, UiError> {
         self.hydrate_file(remote_path).await
+    }
+
+    async fn hydrate_directory(&self, remote_dir: &str) -> Result<usize, UiError> {
+        self.hydrate_directory(remote_dir).await
     }
 
     async fn dehydrate_file(&self, remote_path: &str) -> Result<(), UiError> {

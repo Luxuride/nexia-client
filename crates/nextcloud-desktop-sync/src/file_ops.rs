@@ -289,6 +289,7 @@ impl DesktopSyncCoordinator {
     /// Performs on-demand hydration for a virtual file, downloading via SDK or using local cache.
     pub async fn hydrate_file(&self, remote_path: &str) -> Result<PathBuf, SyncError> {
         let _priority = self.priority_permit();
+        let _download_permit = self.download_semaphore.acquire().await.ok();
         let clean = format!("/{}", remote_path.trim_matches('/'));
         self.event_bus.emit(DesktopEvent::NodeHydrationStarted {
             path: clean.clone(),
@@ -369,6 +370,7 @@ impl DesktopSyncCoordinator {
         local_path: &std::path::Path,
     ) -> Result<PathBuf, SyncError> {
         let _priority = self.priority_permit();
+        let _download_permit = self.download_semaphore.acquire().await.ok();
         let mounts = self.sync_mounts().await;
         let canonical = local_path
             .canonicalize()
@@ -441,6 +443,27 @@ impl DesktopSyncCoordinator {
             "No active sync mount found for {}",
             local_path.display()
         )))
+    }
+
+    /// Recursively hydrates all unhydrated files within a virtual directory path.
+    pub async fn hydrate_directory(&self, remote_dir: &str) -> Result<usize, SyncError> {
+        let vfs = self.active_vfs().await;
+        let mut queue = vec![remote_dir.to_string()];
+        let mut count = 0;
+
+        while let Some(current) = queue.pop() {
+            if let Ok(children) = vfs.list_children(&current).await {
+                for child in children {
+                    if child.is_directory {
+                        queue.push(child.path);
+                    } else if self.hydrate_file(&child.path).await.is_ok() {
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(count)
     }
 
     /// Dehydrates a file node, freeing local cache space.

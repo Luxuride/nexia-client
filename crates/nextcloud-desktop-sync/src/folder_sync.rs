@@ -291,6 +291,7 @@ impl FolderSyncEngine {
         let mut downloaded = 0;
         let mut uploaded = 0;
         let mut conflicts = 0;
+        let mut thumbnail_candidates = Vec::new();
 
         // Partition directory creations first so parents exist on disk and remote
         let (dirs, file_actions): (Vec<_>, Vec<_>) = actions.into_iter().partition(|a| {
@@ -363,22 +364,8 @@ impl FolderSyncEngine {
                                 kind: nextcloud_desktop_core::events::TransferKind::Hydration,
                             });
 
-                        // Prefetch Nextcloud thumbnail and register with FreeDesktop system thumbnail cache
                         if is_thumbnail_candidate(&relative_path) {
-                            let coord_for_thumb = self.coordinator.clone();
-                            let full_rem_thumb = full_remote.clone();
-                            let dest_thumb = dest.clone();
-                            tokio::spawn(async move {
-                                if let Ok(Some(thumb_path)) =
-                                    coord_for_thumb.fetch_thumbnail(&full_rem_thumb, 256).await
-                                    && let Ok(bytes) = tokio::fs::read(&thumb_path).await
-                                {
-                                    crate::freedesktop_thumbs::install_freedesktop_thumbnail(
-                                        &dest_thumb,
-                                        &bytes,
-                                    );
-                                }
-                            });
+                            thumbnail_candidates.push(full_remote.clone());
                         }
                     } else {
                         if let Ok(dav_path) = make_dav_path(&user, &full_remote) {
@@ -558,6 +545,11 @@ impl FolderSyncEngine {
         }
 
         let _ = journal.save_to_file(&journal_path);
+
+        if !thumbnail_candidates.is_empty() {
+            self.coordinator
+                .batch_prefetch_thumbnails(thumbnail_candidates, 256);
+        }
 
         progress.status = MountStatus::Idle;
         progress.completed_items = progress.total_items;

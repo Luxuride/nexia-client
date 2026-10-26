@@ -42,16 +42,7 @@ impl FileSystemWatcher {
 
         let event_handler = move |res: Result<Event, notify::Error>| match res {
             Ok(event) => {
-                if matches!(event.kind, EventKind::Access(_)) {
-                    for path in event.paths {
-                        if path.is_file()
-                            && let Ok(meta) = std::fs::metadata(&path)
-                            && meta.len() == 0
-                        {
-                            let _ = tx.blocking_send((event.kind, path));
-                        }
-                    }
-                } else if matches!(
+                if matches!(
                     event.kind,
                     EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
                 ) {
@@ -100,23 +91,7 @@ impl FileSystemWatcher {
             loop {
                 // Collect events with a 1500ms debounce window
                 tokio::select! {
-                    Some((kind, changed_path)) = rx.recv() => {
-                        // Check if 0-byte virtual placeholder file was accessed or opened: hydrate immediately!
-                        if matches!(kind, EventKind::Access(_)) {
-                            if changed_path.is_file()
-                                && let Ok(meta) = std::fs::metadata(&changed_path)
-                                && meta.len() == 0
-                            {
-                                let c = coord.clone();
-                                let p = changed_path.clone();
-                                tokio::spawn(async move {
-                                    let _ = c.hydrate_local_file(&p).await;
-                                });
-                            }
-                            // Access events never trigger upload sync cycles
-                            continue;
-                        }
-
+                    Some((_kind, changed_path)) = rx.recv() => {
                         if let Ok(guard) = map_for_worker.lock() {
                             for (root, mount_id) in guard.iter() {
                                 if changed_path.starts_with(root) {

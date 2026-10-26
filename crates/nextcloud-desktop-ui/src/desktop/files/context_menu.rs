@@ -162,7 +162,35 @@ impl ItemContextMenu {
                 _ => None,
             }
         } else {
-            None
+            let btn = Button::with_label("Download Folder (Keep Offline)");
+            btn.add_css_class("flat");
+            let pop = popover.clone();
+            let b = backend.clone();
+            let toast = toast_overlay.clone();
+            let cb = on_refresh.clone();
+            let p = item.path.clone();
+            let n = item.name.clone();
+            btn.connect_clicked(move |_| {
+                pop.popdown();
+                let b = b.clone();
+                let toast = toast.clone();
+                let cb = cb.clone();
+                let p = p.clone();
+                let n = n.clone();
+                toast.add_toast(adw::Toast::new(&format!("Downloading files in “{n}”…")));
+                glib::MainContext::default().spawn_local(async move {
+                    match b.hydrate_directory(&p).await {
+                        Ok(count) => {
+                            toast.add_toast(adw::Toast::new(&format!(
+                                "Downloaded {count} files in “{n}”"
+                            )));
+                            cb();
+                        }
+                        Err(err) => toast.add_toast(adw::Toast::new(&err.to_string())),
+                    }
+                });
+            });
+            Some(btn)
         };
 
         // 2. Rename action (opens Nautilus modal Rename dialog)

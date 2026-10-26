@@ -202,11 +202,30 @@ pub fn make_png_text_chunk(keyword: &str, text: &str) -> Vec<u8> {
     chunk
 }
 
+/// Converts raw image bytes (such as JPEG returned by Nextcloud previews) to standard PNG format if needed.
+#[must_use]
+pub fn ensure_png_bytes(bytes: &[u8]) -> Vec<u8> {
+    const PNG_SIG: &[u8] = b"\x89PNG\r\n\x1a\n";
+    if bytes.starts_with(PNG_SIG) {
+        return bytes.to_vec();
+    }
+
+    if let Ok(img) = image::load_from_memory(bytes) {
+        let mut out = std::io::Cursor::new(Vec::with_capacity(bytes.len() + 1024));
+        if img.write_to(&mut out, image::ImageFormat::Png).is_ok() {
+            return out.into_inner();
+        }
+    }
+
+    bytes.to_vec()
+}
+
 /// Injects FreeDesktop `Thumb::URI` and `Thumb::MTime` chunks into PNG image bytes.
-pub fn embed_freedesktop_metadata(png_bytes: &[u8], uri: &str, mtime_sec: u64) -> Vec<u8> {
+pub fn embed_freedesktop_metadata(raw_bytes: &[u8], uri: &str, mtime_sec: u64) -> Vec<u8> {
+    let png_bytes = ensure_png_bytes(raw_bytes);
     const PNG_SIG: &[u8] = b"\x89PNG\r\n\x1a\n";
     if !png_bytes.starts_with(PNG_SIG) || png_bytes.len() < 33 {
-        return png_bytes.to_vec();
+        return png_bytes;
     }
 
     let chunk_uri = make_png_text_chunk("Thumb::URI", uri);

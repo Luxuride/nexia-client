@@ -103,7 +103,8 @@ impl SyncMountSettingsDialog {
                     let desc = if new_mode == "VirtualVfs" {
                         "Switched to Virtual Filesystem"
                     } else {
-                        "Switched to Two-Way Synchronization"
+                        let _ = b.trigger_sync().await;
+                        "Switched to Two-Way Synchronization (Downloading…)"
                     };
                     toast.add_toast(adw::Toast::new(desc));
                     cb();
