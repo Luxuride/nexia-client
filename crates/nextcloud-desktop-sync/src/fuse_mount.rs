@@ -108,6 +108,22 @@ impl AsyncHydrator for DesktopHydrator {
             Ok(())
         })
     }
+
+    fn on_readdir(&self, paths: &[String]) {
+        let coord = self.coordinator.clone();
+        let paths = paths.to_vec();
+        tokio::spawn(async move {
+            coord.batch_prefetch_thumbnails(paths, 256);
+        });
+    }
+
+    fn on_directory_read(&self, path: &str) {
+        let coord = self.coordinator.clone();
+        let p = path.to_string();
+        tokio::spawn(async move {
+            let _ = coord.refresh_path(&p).await;
+        });
+    }
 }
 
 impl DesktopSyncCoordinator {
@@ -182,6 +198,10 @@ impl DesktopSyncCoordinator {
                     .lock()
                     .await
                     .insert(mount_id.to_string(), session);
+                let coord = self.clone();
+                tokio::spawn(async move {
+                    coord.preload_cached_freedesktop_thumbnails().await;
+                });
                 Ok(())
             }
             Err(e) => {

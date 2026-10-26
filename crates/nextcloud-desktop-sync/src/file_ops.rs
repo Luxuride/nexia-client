@@ -1422,21 +1422,17 @@ impl DesktopSyncCoordinator {
             let max_size = coord.max_thumbnail_size().await;
             let effective_size = size.clamp(64, max_size);
 
-            let thumbs_dir = coord.active_thumbnails_dir().await;
             let mut missing_items: Vec<(String, Option<u64>)> = Vec::new();
             for (path, fid) in items {
-                let clean = path.trim_matches('/');
-                let hash = nextcloud_rust_sdk::md5_hex(clean.as_bytes());
-                let thumb_path = thumbs_dir.join(format!("{hash}_{effective_size}.png"));
-                if thumb_path.exists() {
-                    if let Ok(bytes) = tokio::fs::read(&thumb_path).await {
-                        coord
-                            .install_freedesktop_previews_for_remote_path(&path, &bytes)
-                            .await;
-                    }
-                } else {
-                    missing_items.push((path, fid));
+                if let Some(cached_file) = coord.cached_thumbnail_path(&path, Some(effective_size))
+                    && let Ok(bytes) = tokio::fs::read(&cached_file).await
+                {
+                    coord
+                        .install_freedesktop_previews_for_remote_path(&path, &bytes)
+                        .await;
+                    continue;
                 }
+                missing_items.push((path, fid));
             }
 
             if missing_items.is_empty() {
@@ -1462,6 +1458,32 @@ impl DesktopSyncCoordinator {
                 let _ = task.await;
             }
         });
+    }
+
+    /// Pre-populates FreeDesktop system thumbnails for all files in the virtual tree that already have local cached previews.
+    pub async fn preload_cached_freedesktop_thumbnails(&self) {
+        let tree = self.get_or_create_fuse_tree().await;
+        let entries: Vec<String> = {
+            let t = match tree.read() {
+                Ok(guard) => guard,
+                Err(_) => return,
+            };
+            t.paths()
+                .filter(|p| {
+                    t.get(p)
+                        .map(|n| {
+                            !n.is_directory()
+                                && (n.metadata.has_preview
+                                    || crate::folder_sync::is_thumbnail_candidate(n.name()))
+                        })
+                        .unwrap_or(false)
+                })
+                .map(|p| p.to_string())
+                .collect()
+        };
+        if !entries.is_empty() {
+            self.batch_prefetch_thumbnails(entries, 256);
+        }
     }
 
     /// Triggers background crawling and preloading of unpopulated virtual directory trees.
