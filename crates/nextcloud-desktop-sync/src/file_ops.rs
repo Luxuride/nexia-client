@@ -340,8 +340,7 @@ impl DesktopSyncCoordinator {
                     ));
                     let _ = journal.save_to_file(&journal_path);
                     nextcloud_rust_sdk::remove_freedesktop_fail_marker(&target_file);
-                    self.install_freedesktop_previews_for_remote_path(&clean, &bytes)
-                        .await;
+                    let _ = self.fetch_thumbnail(&clean, 256).await;
                     self.event_bus.emit(DesktopEvent::FileTransferCompleted {
                         relative_path: canonical_rel,
                         kind: nextcloud_desktop_core::events::TransferKind::Hydration,
@@ -423,8 +422,7 @@ impl DesktopSyncCoordinator {
                     ));
                     let _ = journal.save_to_file(&journal_path);
                     nextcloud_rust_sdk::remove_freedesktop_fail_marker(&canonical);
-                    self.install_freedesktop_previews_for_remote_path(&full_remote, &bytes)
-                        .await;
+                    let _ = self.fetch_thumbnail(&full_remote, 256).await;
 
                     self.event_bus.emit(DesktopEvent::FileTransferCompleted {
                         relative_path: canonical_rel,
