@@ -157,6 +157,46 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 Run them where GTK headers exist (the devcontainer) or the `-sys` crates will fail
 before your code is even compiled.
 
+### Flatpak bundle
+
+`flatpak/eu.luxuride.nextcloud-desktop.yml` builds the release bundle on
+`org.gnome.Platform//49`. Two things about that manifest are load-bearing:
+
+- **`flatpak/cargo-sources.json` is generated, never hand-edited.** It vendors
+every crate in `Cargo.lock`, including the `nextcloud-rust-sdk` git dependency,
+because the build runs with `CARGO_NET_OFFLINE=true`. A `Cargo.lock` change that
+is not accompanied by a regenerated `cargo-sources.json` fails the build:
+
+    ```sh
+    pip install flatpak-cargo-generator==0.1.5
+    flatpak-cargo-generator Cargo.lock -o flatpak/cargo-sources.json
+    ```
+
+- **The build needs the flathub builder image.** `flatpak-builder` is not present
+on a plain Ubuntu runner, so the job runs in
+`ghcr.io/flathub-infra/flatpak-github-actions:gnome-49` with `--privileged`
+(bwrap needs it). The GNOME minor version in the image tag must match
+`runtime-version` in the manifest.
+
+Build and bundle locally:
+
+```sh
+podman run --rm --privileged \
+  -v "$PWD:/src:ro" -v flatpak-build:/build \
+  -v flatpak-runtimes:/var/lib/flatpak \
+  -w /build ghcr.io/flathub-infra/flatpak-github-actions:gnome-49 \
+  flatpak-builder --repo=repo --disable-rofiles-fuse \
+    --install-deps-from=flathub --force-clean --default-branch=master \
+    --arch=x86_64 --state-dir=.flatpak-builder flatpak_app \
+    /src/flatpak/eu.luxuride.nextcloud-desktop.yml
+```
+
+Both `/build` and `/var/lib/flatpak` must be named podman volumes: flatpak
+hardlinks objects across them and dies with `Invalid cross-device link` on a bind
+mount. Then `flatpak build-bundle repo nextcloud-desktop.flatpak \
+--runtime-repo=https://flathub.org/repo/flathub.flatpakrepo --arch=x86_64 \
+eu.luxuride.nextcloud-desktop master`.
+
 ### Where to look when something breaks
 
 | Symptom | Likely cause |
@@ -166,6 +206,10 @@ before your code is even compiled.
 | UI event lag after long uptime | `EventBus` reported `RecvError::Lagged` — expected; the UI re-reads state instead of replaying. |
 | A file never hydrates | Check `--list-mounts` for a paused mount, and the `DesktopEvent::NodeHydrationStarted` log line. |
 | `--mount-vfs` fails with `Unsupported` or an `ENODEV`/`ENOENT` on `/dev/fuse` | No `/dev/fuse` in this namespace (typical inside the devcontainer), or no `fusermount3` on `PATH`. FUSE mounting is Linux-only: other targets return `io::ErrorKind::Unsupported` from `mount_virtual_fs`. |
+| `flatpak-builder: not found` in CI | The job lost its `container:` block — the action does not install `flatpak-builder` on the runner, and `xvfb-run` reports the binary as missing. |
+| Flatpak build fails with `can't checkout from 'https://github.com/Luxuride/nextcloud-rust-sdk': you are in the offline mode` | `flatpak/cargo-sources.json` is stale or not listed in the manifest's `sources`; regenerate it from `Cargo.lock`. |
+| Flatpak build dies with `Invalid cross-device link` | `--repo`/`--state-dir` and `/var/lib/flatpak` are on different filesystems; use one podman volume for both. |
+| `flatpak-builder` reports the manifest's runtime as end-of-life | Move `runtime-version` and the builder image tag together; flathub drops EOL GNOME branches. |
 | Config edits appear to do nothing | `sync_folders`, `sync_interval_secs`, `global.autostart` and `global.start_minimized` are persisted but not read — see [`CONFIGURATION.md`](CONFIGURATION.md) §3. |
 | `--set-mount-mode` does nothing and prints no error | It takes exactly **two** values (`--set-mount-mode <MOUNT_ID> Fuse`; `num_args = 2` at `src/main.rs:61-63`). An **unknown mount id is a silent no-op** — `update_sync_mount_mode` (`account.rs:478-534`) only emits `SyncMountUpdated` inside `if let Some(target) = ... find(|m| m.id == id)`, and returns `Ok(())` otherwise. An unknown mode string is also accepted: it is stored verbatim, and anything that is not `"BidirectionalSync"` is mapped to `MountMode::VirtualVfs`. |
 | `--mount-vfs` leaves a stale mountpoint behind | An interrupted run can leave the FUSE mount attached. Unmount with `fusermount3 -u -z <MOUNTPOINT>`; the coordinator also tries this itself before mounting. |

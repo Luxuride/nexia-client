@@ -62,14 +62,23 @@ jobs:
   build-flatpak:
     name: Build Flatpak Bundle (Linux x86_64)
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-49
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
+      - name: Verify vendored cargo sources are current
+        run: |
+          pip install --quiet --root-user-action=ignore \
+            flatpak-cargo-generator==0.1.5
+          flatpak-cargo-generator Cargo.lock -o /tmp/cargo-sources.json
+          diff -u flatpak/cargo-sources.json /tmp/cargo-sources.json
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: nextcloud-desktop.flatpak
           manifest-path: flatpak/eu.luxuride.nextcloud-desktop.yml
-          app-id: eu.luxuride.nextcloud-desktop
           run-tests: false
+          upload-artifact: false
       - uses: actions/upload-artifact@v4
         with:
           name: flatpak-bundle

@@ -1,6 +1,6 @@
 app-id: eu.luxuride.nextcloud-desktop
 runtime: org.gnome.Platform
-runtime-version: '47'
+runtime-version: '49'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
@@ -20,17 +20,35 @@ finish-args:
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:
-    CARGO_HOME: /run/build/cargo
+    CARGO_HOME: /run/build/nextcloud-desktop-rs/cargo
+    CARGO_NET_OFFLINE: 'true'
 
 modules:
   - name: nextcloud-desktop-rs
     buildsystem: simple
     build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
       - cargo --offline build --release
-      - install -Dm755 target/release/nextcloud-desktop-rs /app/bin/nextcloud-desktop-rs
-      - install -Dm644 data/eu.luxuride.nextcloud-desktop.desktop /app/share/applications/eu.luxuride.nextcloud-desktop.desktop
-      - install -Dm644 data/eu.luxuride.nextcloud-desktop.metainfo.xml /app/share/metainfo/eu.luxuride.nextcloud-desktop.metainfo.xml
-      - install -Dm644 data/icons/hicolor/scalable/apps/eu.luxuride.nextcloud-desktop.svg /app/share/icons/hicolor/scalable/apps/eu.luxuride.nextcloud-desktop.svg
+      - |
+        install -Dm755 target/release/nextcloud-desktop-rs \
+          ${FLATPAK_DEST}/bin/nextcloud-desktop-rs
+      - |
+        install -Dm644 data/${FLATPAK_ID}.desktop \
+          ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
+      - |
+        install -Dm644 data/${FLATPAK_ID}.metainfo.xml \
+          ${FLATPAK_DEST}/share/metainfo/${FLATPAK_ID}.metainfo.xml
+      - |
+        install -Dm644 data/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg \
+          ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg
     sources:
       - type: dir
         path: ..
+        skip:
+          - .git
+          - .devcontainer
+          - target
+          - .flatpak-builder
+          - flatpak_app
+          - repo
+      - cargo-sources.json
