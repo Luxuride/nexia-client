@@ -71,10 +71,15 @@ impl SyncMountSettingsDialog {
         // Changeable Synchronization Mode
         let mode_options = [
             "Two-Way Synchronization (Local files mirrored to cloud)",
-            "Virtual Filesystem (On-demand hydrated placeholders)",
+            "Virtual Filesystem (Sparse placeholders on ext4/btrfs)",
+            "FUSE Virtual Filesystem (Transparent on-demand kernel hydration)",
         ];
         let mode_model = gtk4::StringList::new(&mode_options);
-        let initial_selected = if mount.mode == "VirtualVfs" { 1 } else { 0 };
+        let initial_selected = match mount.mode.as_str() {
+            "Fuse" => 2,
+            "VirtualVfs" => 1,
+            _ => 0,
+        };
 
         let mode_combo = adw::ComboRow::builder()
             .title("Synchronization Mode")
@@ -95,16 +100,19 @@ impl SyncMountSettingsDialog {
             let toast = toast_mode.clone();
             let cb = on_change_mode.clone();
             let new_mode = match combo.selected() {
+                2 => "Fuse",
                 1 => "VirtualVfs",
                 _ => "BidirectionalSync",
             };
             glib::MainContext::default().spawn_local(async move {
                 if b.update_sync_mount_mode(&m_id, new_mode).await.is_ok() {
-                    let desc = if new_mode == "VirtualVfs" {
-                        "Switched to Virtual Filesystem"
-                    } else {
-                        let _ = b.trigger_sync().await;
-                        "Switched to Two-Way Synchronization (Downloading…)"
+                    let desc = match new_mode {
+                        "Fuse" => "Switched to FUSE Virtual Filesystem",
+                        "VirtualVfs" => "Switched to Virtual Filesystem",
+                        _ => {
+                            let _ = b.trigger_sync().await;
+                            "Switched to Two-Way Synchronization (Downloading…)"
+                        }
                     };
                     toast.add_toast(adw::Toast::new(desc));
                     cb();

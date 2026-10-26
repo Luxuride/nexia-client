@@ -383,23 +383,31 @@ impl DesktopSyncCoordinator {
             desc = desc.with_display_name(name);
         }
 
-        if let Some(ref h) = *self.orchestrator_handle.read().await {
-            let _ = h.mounts().add_mount(desc).await;
-        }
+        if mode == "Fuse" {
+            let _ = self
+                .mount_fuse_folder(&mount_id, &remote_str, &local_buf)
+                .await;
+        } else {
+            if let Some(ref h) = *self.orchestrator_handle.read().await {
+                let _ = h.mounts().add_mount(desc).await;
+            }
 
-        // Register with filesystem watcher to monitor for local edits & additions
-        self.watch_mount(&local_buf, &mount_id).await;
+            // Register with filesystem watcher to monitor for local edits & additions
+            self.watch_mount(&local_buf, &mount_id).await;
+        }
 
         self.event_bus.emit(DesktopEvent::SyncMountAdded {
             mount_id: mount_id.clone(),
         });
 
-        // Immediately trigger initial sync for the newly registered mount
-        let coord = self.clone();
-        let mid = mount_id.clone();
-        tokio::spawn(async move {
-            let _ = coord.sync_mount_folder(&mid).await;
-        });
+        if mode != "Fuse" {
+            // Immediately trigger initial sync for the newly registered mount
+            let coord = self.clone();
+            let mid = mount_id.clone();
+            tokio::spawn(async move {
+                let _ = coord.sync_mount_folder(&mid).await;
+            });
+        }
 
         Ok(mount_id)
     }
@@ -423,6 +431,7 @@ impl DesktopSyncCoordinator {
 
         // 1. Immediately mark mount as cancelled so any running sync loop terminates
         self.cancel_mount(id).await;
+        self.unmount_fuse_folder(id).await;
 
         let mounts = self.sync_mounts().await;
         let target_opt = mounts.into_iter().find(|m| m.id == id);
@@ -473,26 +482,45 @@ impl DesktopSyncCoordinator {
 
         let mounts = client.list_sync_mounts().await.unwrap_or_default();
         if let Some(target) = mounts.into_iter().find(|m| m.id == id) {
+            let old_mode = target.mode.clone();
             let mut updated = target.clone();
             updated.mode = new_mode.to_string();
             let _ = client.store_sync_mount(updated).await;
 
-            if let Some(ref h) = *self.orchestrator_handle.read().await {
-                let mount_mode = match new_mode {
-                    "BidirectionalSync" => MountMode::BidirectionalSync,
-                    _ => MountMode::VirtualVfs,
-                };
-                let mut desc = MountDescriptor::new(
-                    &target.account_id,
-                    &target.remote_path,
-                    std::path::PathBuf::from(&target.local_target),
-                    mount_mode,
-                )
-                .with_id(MountId::from(id.to_string()));
-                if let Some(name) = target.display_name {
-                    desc = desc.with_display_name(name);
+            let local_path = std::path::PathBuf::from(&target.local_target);
+
+            if old_mode == "Fuse" && new_mode != "Fuse" {
+                self.unmount_fuse_folder(id).await;
+            }
+
+            if new_mode == "Fuse" {
+                let _ = self
+                    .mount_fuse_folder(id, &target.remote_path, &local_path)
+                    .await;
+                self.unwatch_mount(&local_path).await;
+                if let Some(ref h) = *self.orchestrator_handle.read().await {
+                    let _ = h.mounts().remove_mount(MountId::from(id.to_string())).await;
                 }
-                let _ = h.mounts().add_mount(desc).await;
+            } else {
+                self.watch_mount(&local_path, id).await;
+
+                if let Some(ref h) = *self.orchestrator_handle.read().await {
+                    let mount_mode = match new_mode {
+                        "BidirectionalSync" => MountMode::BidirectionalSync,
+                        _ => MountMode::VirtualVfs,
+                    };
+                    let mut desc = MountDescriptor::new(
+                        &target.account_id,
+                        &target.remote_path,
+                        local_path,
+                        mount_mode,
+                    )
+                    .with_id(MountId::from(id.to_string()));
+                    if let Some(name) = target.display_name {
+                        desc = desc.with_display_name(name);
+                    }
+                    let _ = h.mounts().add_mount(desc).await;
+                }
             }
 
             self.event_bus.emit(DesktopEvent::SyncMountUpdated {

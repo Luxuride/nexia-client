@@ -848,7 +848,7 @@ impl DesktopUiController {
 
     /// Unmounts the running FUSE virtual filesystem.
     pub async fn unmount_fuse_vfs(&self) {
-        self.coordinator.unmount_fuse_vfs().await;
+        self.coordinator.unmount_all_fuse().await;
     }
 
     /// Returns `true` if the FUSE virtual filesystem is actively mounted.
@@ -1274,7 +1274,7 @@ impl FileExplorerBackend for DesktopUiController {
     }
 
     async fn unmount_fuse_vfs(&self) {
-        self.coordinator.unmount_fuse_vfs().await;
+        self.coordinator.unmount_all_fuse().await;
     }
 
     async fn is_fuse_mounted(&self) -> bool {

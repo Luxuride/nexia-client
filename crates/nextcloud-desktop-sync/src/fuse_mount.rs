@@ -75,22 +75,27 @@ impl AsyncHydrator for DesktopHydrator {
             let _ = coord.refresh_path(&p).await;
         });
     }
+
+    fn hydrate_directory(
+        &self,
+        canonical_path: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<(), VfsError>> + Send + '_>> {
+        let path = canonical_path.to_string();
+        let coord = self.coordinator.clone();
+        Box::pin(async move {
+            let _ = coord.refresh_path(&path).await;
+            Ok(())
+        })
+    }
 }
 
 impl DesktopSyncCoordinator {
-    /// Mounts the active Nextcloud account's virtual filesystem at `mountpoint`.
-    pub async fn mount_fuse_vfs(&self, mountpoint: impl AsRef<Path>) -> Result<(), SyncError> {
-        let mp = mountpoint.as_ref().to_path_buf();
-        if !mp.exists() {
-            std::fs::create_dir_all(&mp).map_err(|e| SyncError::LocalIo {
-                path: mp.clone(),
-                context: "creating FUSE mountpoint directory".to_string(),
-                source: e,
-            })?;
+    /// Returns the shared in-memory virtual tree for FUSE, loading from disk cache if not already loaded.
+    pub(crate) async fn get_or_create_fuse_tree(&self) -> Arc<RwLock<VirtualTree>> {
+        let mut tree_guard = self.fuse_tree.write().await;
+        if let Some(ref tree) = *tree_guard {
+            return tree.clone();
         }
-
-        // Unmount any existing session first
-        self.unmount_fuse_vfs().await;
 
         let active_account = self.active_account().await;
         let account_id_str = active_account
@@ -111,20 +116,58 @@ impl DesktopSyncCoordinator {
         };
 
         let shared_tree = Arc::new(RwLock::new(tree));
-        *self.fuse_tree.write().await = Some(shared_tree.clone());
+        *tree_guard = Some(shared_tree.clone());
+        shared_tree
+    }
 
+    /// Mounts a specific sync mount as a FUSE virtual filesystem at `local_target`.
+    pub async fn mount_fuse_folder(
+        &self,
+        mount_id: &str,
+        remote_path: &str,
+        local_target: &Path,
+    ) -> Result<(), SyncError> {
+        let mp = local_target.to_path_buf();
+        if !mp.exists() {
+            std::fs::create_dir_all(&mp).map_err(|e| SyncError::LocalIo {
+                path: mp.clone(),
+                context: "creating FUSE mountpoint directory".to_string(),
+                source: e,
+            })?;
+        }
+
+        // Unmount any existing session for this mount_id first
+        self.unmount_fuse_folder(mount_id).await;
+
+        let shared_tree = self.get_or_create_fuse_tree().await;
         let hydrator = Arc::new(DesktopHydrator::new(self.clone()));
-        let driver = FuseDriver::with_hydrator(shared_tree, hydrator);
+        let mut driver = FuseDriver::with_hydrator_and_root(shared_tree, hydrator, remote_path);
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            driver = driver.with_runtime(rt);
+        }
 
         match mount_virtual_fs(driver, &mp) {
             Ok(session) => {
-                info!(mountpoint = %mp.display(), "Virtual FUSE filesystem mounted successfully");
-                *self.fuse_session.lock().await = Some(session);
-                *self.fuse_mountpoint.write().await = Some(mp);
+                info!(
+                    mount_id,
+                    remote_path,
+                    mountpoint = %mp.display(),
+                    "FUSE virtual folder mounted successfully"
+                );
+                self.fuse_sessions
+                    .lock()
+                    .await
+                    .insert(mount_id.to_string(), session);
                 Ok(())
             }
             Err(e) => {
-                error!(mountpoint = %mp.display(), error = %e, "Failed to mount FUSE virtual filesystem");
+                error!(
+                    mount_id,
+                    remote_path,
+                    mountpoint = %mp.display(),
+                    error = %e,
+                    "Failed to mount FUSE virtual folder"
+                );
                 Err(SyncError::LocalIo {
                     path: mp,
                     context: "mounting FUSE filesystem".to_string(),
@@ -134,20 +177,48 @@ impl DesktopSyncCoordinator {
         }
     }
 
-    /// Unmounts the running FUSE virtual filesystem if active.
+    /// Unmounts the running FUSE virtual filesystem for `mount_id` if active.
+    pub async fn unmount_fuse_folder(&self, mount_id: &str) {
+        let mut sessions = self.fuse_sessions.lock().await;
+        if let Some(session) = sessions.remove(mount_id) {
+            debug!(mount_id, "Unmounting FUSE virtual folder session");
+            drop(session);
+        }
+    }
+
+    /// Mounts the active Nextcloud account's virtual filesystem at `mountpoint`.
+    pub async fn mount_fuse_vfs(&self, mountpoint: impl AsRef<Path>) -> Result<(), SyncError> {
+        let mp = mountpoint.as_ref().to_path_buf();
+        self.mount_fuse_folder("default", "/", &mp).await?;
+        *self.fuse_mountpoint.write().await = Some(mp);
+        Ok(())
+    }
+
+    /// Unmounts the default FUSE virtual filesystem if active.
     pub async fn unmount_fuse_vfs(&self) {
-        let mut session_guard = self.fuse_session.lock().await;
-        if let Some(session) = session_guard.take() {
-            debug!("Unmounting FUSE virtual filesystem session");
+        self.unmount_fuse_folder("default").await;
+        *self.fuse_mountpoint.write().await = None;
+    }
+
+    /// Unmounts all active FUSE virtual filesystem sessions.
+    pub async fn unmount_all_fuse(&self) {
+        let mut sessions = self.fuse_sessions.lock().await;
+        for (id, session) in sessions.drain() {
+            debug!(mount_id = %id, "Unmounting FUSE session");
             drop(session);
         }
         *self.fuse_tree.write().await = None;
         *self.fuse_mountpoint.write().await = None;
     }
 
-    /// Returns `true` if the FUSE virtual filesystem is actively mounted.
+    /// Returns `true` if any FUSE virtual filesystem is actively mounted.
     pub async fn is_fuse_mounted(&self) -> bool {
-        self.fuse_session.lock().await.is_some()
+        !self.fuse_sessions.lock().await.is_empty()
+    }
+
+    /// Returns `true` if a specific FUSE virtual mount is active.
+    pub async fn is_folder_fuse_mounted(&self, mount_id: &str) -> bool {
+        self.fuse_sessions.lock().await.contains_key(mount_id)
     }
 
     /// Returns the active FUSE mountpoint path if mounted.

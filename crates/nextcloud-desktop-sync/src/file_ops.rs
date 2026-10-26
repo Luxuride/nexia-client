@@ -323,7 +323,7 @@ impl DesktopSyncCoordinator {
                 if let Some(parent) = target_file.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                if std::fs::write(&target_file, &bytes).is_ok() {
+                if mount.mode != "Fuse" && std::fs::write(&target_file, &bytes).is_ok() {
                     let journal_path = self.mount_journal_path(&mount.account_id, &mount.id);
                     let mut journal =
                         nextcloud_rust_sdk::SyncJournal::load_from_file(&journal_path)

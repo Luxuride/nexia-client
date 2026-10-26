@@ -52,7 +52,11 @@ pub struct DesktopSyncCoordinator {
             std::collections::HashMap<String, nextcloud_rust_sdk::MountProgressSnapshot>,
         >,
     >,
-    pub(crate) fuse_session: Arc<tokio::sync::Mutex<Option<nextcloud_rust_sdk::BackgroundSession>>>,
+    pub(crate) fuse_sessions: Arc<
+        tokio::sync::Mutex<
+            std::collections::HashMap<String, nextcloud_rust_sdk::BackgroundSession>,
+        >,
+    >,
     pub(crate) fuse_tree:
         Arc<tokio::sync::RwLock<Option<Arc<std::sync::RwLock<nextcloud_rust_sdk::VirtualTree>>>>>,
     pub(crate) fuse_mountpoint: Arc<tokio::sync::RwLock<Option<PathBuf>>>,
@@ -168,7 +172,7 @@ impl DesktopSyncCoordinator {
             mount_progress_cache: Arc::new(
                 std::sync::RwLock::new(std::collections::HashMap::new()),
             ),
-            fuse_session: Arc::new(tokio::sync::Mutex::new(None)),
+            fuse_sessions: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             fuse_tree: Arc::new(tokio::sync::RwLock::new(None)),
             fuse_mountpoint: Arc::new(tokio::sync::RwLock::new(None)),
             last_root_etags: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -598,26 +602,33 @@ impl DesktopSyncCoordinator {
             if Self::is_internal_vfs(&mount.id) || !mount.enabled {
                 continue;
             }
-            if let Some(ref h) = orch_handle {
-                let m_mode = match mount.mode.as_str() {
-                    "BidirectionalSync" => nextcloud_rust_sdk::MountMode::BidirectionalSync,
-                    _ => nextcloud_rust_sdk::MountMode::VirtualVfs,
-                };
-                let mut desc = nextcloud_rust_sdk::MountDescriptor::new(
-                    &mount.account_id,
-                    &mount.remote_path,
-                    PathBuf::from(&mount.local_target),
-                    m_mode,
-                )
-                .with_id(MountId::from(mount.id.clone()));
-                if let Some(name) = mount.display_name.clone() {
-                    desc = desc.with_display_name(name);
-                }
-                let _ = h.mounts().add_mount(desc).await;
-            }
-            if let Some(ref mut w) = *watcher_guard {
+            if mount.mode == "Fuse" {
                 let local_path = PathBuf::from(&mount.local_target);
-                let _ = w.watch_folder(&local_path, &mount.id);
+                let _ = self
+                    .mount_fuse_folder(&mount.id, &mount.remote_path, &local_path)
+                    .await;
+            } else {
+                if let Some(ref h) = orch_handle {
+                    let m_mode = match mount.mode.as_str() {
+                        "BidirectionalSync" => nextcloud_rust_sdk::MountMode::BidirectionalSync,
+                        _ => nextcloud_rust_sdk::MountMode::VirtualVfs,
+                    };
+                    let mut desc = nextcloud_rust_sdk::MountDescriptor::new(
+                        &mount.account_id,
+                        &mount.remote_path,
+                        PathBuf::from(&mount.local_target),
+                        m_mode,
+                    )
+                    .with_id(MountId::from(mount.id.clone()));
+                    if let Some(name) = mount.display_name.clone() {
+                        desc = desc.with_display_name(name);
+                    }
+                    let _ = h.mounts().add_mount(desc).await;
+                }
+                if let Some(ref mut w) = *watcher_guard {
+                    let local_path = PathBuf::from(&mount.local_target);
+                    let _ = w.watch_folder(&local_path, &mount.id);
+                }
             }
         }
     }

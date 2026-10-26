@@ -130,7 +130,8 @@ impl AddSyncFolderDialog {
         // 3. Mode selector
         let mode_options = [
             "Two-Way Synchronization (Bidirectional)",
-            "Virtual Filesystem (On-demand hydrated placeholders)",
+            "Virtual Filesystem (Sparse placeholders on ext4/btrfs)",
+            "FUSE Virtual Filesystem (Transparent on-demand kernel hydration)",
         ];
         let mode_model = gtk4::StringList::new(&mode_options);
         let mode_row = adw::ComboRow::builder()
@@ -178,6 +179,7 @@ impl AddSyncFolderDialog {
             };
 
             let mode = match m_row.selected() {
+                2 => "Fuse".to_string(),
                 1 => "VirtualVfs".to_string(),
                 _ => "BidirectionalSync".to_string(),
             };
