@@ -16,12 +16,16 @@ use crate::file_ops::make_dav_path;
 /// On-demand file hydrator pulling payloads from Nextcloud WebDAV for FUSE reads.
 pub struct DesktopHydrator {
     coordinator: DesktopSyncCoordinator,
+    runtime: Option<tokio::runtime::Handle>,
 }
 
 impl DesktopHydrator {
     /// Creates a new hydrator attached to `coordinator`.
     pub fn new(coordinator: DesktopSyncCoordinator) -> Self {
-        Self { coordinator }
+        Self {
+            coordinator,
+            runtime: tokio::runtime::Handle::try_current().ok(),
+        }
     }
 }
 
@@ -112,17 +116,21 @@ impl AsyncHydrator for DesktopHydrator {
     fn on_readdir(&self, paths: &[String]) {
         let coord = self.coordinator.clone();
         let paths = paths.to_vec();
-        tokio::spawn(async move {
-            coord.batch_prefetch_thumbnails(paths, 256);
-        });
+        if let Some(ref rt) = self.runtime {
+            rt.spawn(async move {
+                coord.batch_prefetch_thumbnails(paths, 256);
+            });
+        }
     }
 
     fn on_directory_read(&self, path: &str) {
         let coord = self.coordinator.clone();
         let p = path.to_string();
-        tokio::spawn(async move {
-            let _ = coord.refresh_path(&p).await;
-        });
+        if let Some(ref rt) = self.runtime {
+            rt.spawn(async move {
+                let _ = coord.refresh_path(&p).await;
+            });
+        }
     }
 }
 
