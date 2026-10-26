@@ -69,7 +69,7 @@ impl FolderSyncEngine {
 
         let mounts = self.coordinator.sync_mounts().await;
         let mount = match mounts.into_iter().find(|m| m.id == mount_id) {
-            Some(m) if m.enabled => m,
+            Some(m) if m.enabled && m.mode != "Fuse" => m,
             _ => return Ok(0),
         };
 
@@ -205,7 +205,7 @@ impl FolderSyncEngine {
         let _priority = self.coordinator.priority_permit();
         let mounts = self.coordinator.sync_mounts().await;
         for mount in mounts {
-            if mount.id.starts_with("app-") || !mount.enabled {
+            if mount.id.starts_with("app-") || !mount.enabled || mount.mode == "Fuse" {
                 continue;
             }
             let m_id = MountId::from(mount.id.clone());
