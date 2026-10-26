@@ -401,6 +401,7 @@ fn build_ui(
                 }
                 TrayAction::Quit => {
                     tracing::info!("Quitting Nextcloud Desktop from app bar tray");
+                    ctrl_for_tray.unmount_fuse_vfs().await;
                     app_for_tray.quit();
                     std::process::exit(0);
                 }

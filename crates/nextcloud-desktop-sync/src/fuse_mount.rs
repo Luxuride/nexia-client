@@ -122,6 +122,9 @@ impl DesktopSyncCoordinator {
 
         // Unmount any existing session for this mount_id first
         self.unmount_fuse_folder(mount_id).await;
+        let _ = std::process::Command::new("fusermount3")
+            .args(["-u", "-z", &mp.to_string_lossy()])
+            .status();
 
         let shared_tree = self.get_or_create_fuse_tree().await;
         let hydrator = Arc::new(DesktopHydrator::new(self.clone()));
@@ -168,6 +171,13 @@ impl DesktopSyncCoordinator {
             debug!(mount_id, "Unmounting FUSE virtual folder session");
             drop(session);
         }
+        for m in self.sync_mounts().await {
+            if m.id == mount_id {
+                let _ = std::process::Command::new("fusermount3")
+                    .args(["-u", "-z", &m.local_target])
+                    .status();
+            }
+        }
     }
 
     /// Mounts the active Nextcloud account's virtual filesystem at `mountpoint`.
@@ -190,6 +200,18 @@ impl DesktopSyncCoordinator {
         for (id, session) in sessions.drain() {
             debug!(mount_id = %id, "Unmounting FUSE session");
             drop(session);
+        }
+        for m in self.sync_mounts().await {
+            if m.mode == "Fuse" {
+                let _ = std::process::Command::new("fusermount3")
+                    .args(["-u", "-z", &m.local_target])
+                    .status();
+            }
+        }
+        if let Some(ref mp) = *self.fuse_mountpoint.read().await {
+            let _ = std::process::Command::new("fusermount3")
+                .args(["-u", "-z", &mp.to_string_lossy()])
+                .status();
         }
         *self.fuse_tree.write().await = None;
         *self.fuse_mountpoint.write().await = None;
