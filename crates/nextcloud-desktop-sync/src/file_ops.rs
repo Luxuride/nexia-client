@@ -53,6 +53,9 @@ impl DesktopSyncCoordinator {
                 if let Some(ref etag) = res.etag {
                     sum = sum.with_etag(etag);
                 }
+                if let Some(ref lm) = res.last_modified {
+                    sum = sum.with_last_modified(lm);
+                }
                 if let Some(ref mime) = res.content_type {
                     sum = sum.with_content_type(mime);
                 }
@@ -164,6 +167,9 @@ impl DesktopSyncCoordinator {
                 }
                 if let Some(ref etag) = res.etag {
                     sum = sum.with_etag(etag);
+                }
+                if let Some(ref lm) = res.last_modified {
+                    sum = sum.with_last_modified(lm);
                 }
                 if let Some(ref mime) = res.content_type {
                     sum = sum.with_content_type(mime);
@@ -1160,7 +1166,7 @@ impl DesktopSyncCoordinator {
             .ok()
             .flatten()
             .and_then(|e| e.modified_at)
-            .and_then(|s| s.trim().parse::<u64>().ok())
+            .and_then(|s| nextcloud_rust_sdk::parse_date_to_unix_secs(&s))
             .unwrap_or_else(|| {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)

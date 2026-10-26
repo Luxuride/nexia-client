@@ -60,6 +60,43 @@ impl AsyncHydrator for DesktopHydrator {
         })
     }
 
+    fn hydrate_range(
+        &self,
+        canonical_path: &str,
+        offset: u64,
+        size: u32,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<u8>, VfsError>> + Send + '_>> {
+        let path = canonical_path.to_string();
+        let coord = self.coordinator.clone();
+
+        Box::pin(async move {
+            let _priority = coord.priority_permit();
+            let Some((user, client, auth)) = coord.active_dav_context().await else {
+                return Err(VfsError::NotFound(path));
+            };
+
+            let dav_client = client.dav(&auth);
+            let dav_path =
+                make_dav_path(&user, &path).map_err(|e| VfsError::InvalidPath(e.to_string()))?;
+
+            let end = offset.saturating_add(size as u64).saturating_sub(1);
+            match dav_client.get_range(&dav_path, offset, end).await {
+                Ok(bytes) => Ok(bytes),
+                Err(e) => {
+                    debug!(path = %path, offset, size, error = %e, "Range request failed, falling back to full hydration");
+                    match dav_client.get(&dav_path).await {
+                        Ok(full) => {
+                            let start = (offset as usize).min(full.len());
+                            let end = (start + size as usize).min(full.len());
+                            Ok(full[start..end].to_vec())
+                        }
+                        Err(_) => Err(VfsError::NotFound(path)),
+                    }
+                }
+            }
+        })
+    }
+
     fn hydrate_directory(
         &self,
         canonical_path: &str,
