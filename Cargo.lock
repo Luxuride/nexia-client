@@ -2029,7 +2029,7 @@ checksum = "743fb55ba31b18fb1ecef6bdc9aa2743314978ac084044301a7eee33fb99a20d"
 [[package]]
 name = "nextcloud-activity"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-ocs",
  "nextcloud-sdk-core",
@@ -2041,7 +2041,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-auth"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "base64",
  "nextcloud-sdk-core",
@@ -2051,7 +2051,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-client-config"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-sdk-core",
  "nextcloud-sdk-keyring",
@@ -2062,7 +2062,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-dav"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-sdk-core",
  "tracing",
@@ -2071,7 +2071,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-deck"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-auth",
  "nextcloud-sdk-core",
@@ -2148,7 +2148,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-goa"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-auth",
  "nextcloud-sdk-core",
@@ -2160,7 +2160,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-kaccounts"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-sdk-core",
  "nextcloud-sdk-keyring",
@@ -2172,7 +2172,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-notifications"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-ocs",
  "nextcloud-sdk-core",
@@ -2184,7 +2184,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-ocs"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-sdk-core",
  "serde",
@@ -2195,8 +2195,9 @@ dependencies = [
 [[package]]
 name = "nextcloud-preview"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
+ "image",
  "nextcloud-auth",
  "nextcloud-sdk-core",
  "tracing",
@@ -2205,7 +2206,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-rust-sdk"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-activity",
  "nextcloud-auth",
@@ -2246,12 +2247,12 @@ dependencies = [
 [[package]]
 name = "nextcloud-sdk-core"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 
 [[package]]
 name = "nextcloud-sdk-fuse"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "fuser",
  "nextcloud-sdk-core",
@@ -2263,7 +2264,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-sdk-keyring"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "keyring",
  "oo7",
@@ -2273,7 +2274,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-sdk-orchestrator"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-dav",
  "nextcloud-sdk-core",
@@ -2282,6 +2283,7 @@ dependencies = [
  "nextcloud-shares",
  "nextcloud-sync",
  "nextcloud-theming",
+ "notify",
  "serde",
  "serde_json",
  "tokio",
@@ -2291,7 +2293,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-sdk-ratelimit"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "tokio",
  "tracing",
@@ -2300,7 +2302,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-sdk-request"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-sdk-core",
  "tracing",
@@ -2309,7 +2311,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-sdk-session"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-auth",
  "nextcloud-sdk-core",
@@ -2319,7 +2321,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-sdk-storage"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "getrandom 0.3.4",
  "nextcloud-sdk-keyring",
@@ -2330,7 +2332,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-sdk-vfs"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-sdk-core",
  "serde",
@@ -2341,7 +2343,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-search"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-ocs",
  "nextcloud-sdk-core",
@@ -2353,7 +2355,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-shares"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-ocs",
  "nextcloud-sdk-core",
@@ -2365,7 +2367,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-sync"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-sdk-core",
  "serde",
@@ -2377,7 +2379,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-talk"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-ocs",
  "nextcloud-sdk-core",
@@ -2389,7 +2391,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-theming"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-ocs",
  "nextcloud-sdk-core",
@@ -2401,7 +2403,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-transport"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "futures-util",
  "nextcloud-sdk-core",
@@ -2413,7 +2415,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-trashbin"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-auth",
  "nextcloud-dav",
@@ -2424,7 +2426,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-uploads"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-auth",
  "nextcloud-dav",
@@ -2435,7 +2437,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-users"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-ocs",
  "nextcloud-sdk-core",
@@ -2447,7 +2449,7 @@ dependencies = [
 [[package]]
 name = "nextcloud-versions"
 version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#8423bf063d3d4df16a657588fa23b82253372022"
+source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#e6fe9c56652c2aa2b6651487732f5ca36eb58763"
 dependencies = [
  "nextcloud-auth",
  "nextcloud-dav",

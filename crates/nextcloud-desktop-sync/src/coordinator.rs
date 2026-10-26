@@ -202,14 +202,25 @@ impl DesktopSyncCoordinator {
                             OrchestratorEvent::FileDehydrated { remote_path, .. } => {
                                 bus.emit(DesktopEvent::NodeDehydrated { path: remote_path });
                             }
+                            OrchestratorEvent::SyncCycleStarted { mount_id } => {
+                                bus.emit(DesktopEvent::SyncStarted {
+                                    pairing_id: mount_id.to_string(),
+                                });
+                            }
                             OrchestratorEvent::SyncCycleCompleted {
-                                items_processed, ..
+                                mount_id,
+                                items_processed,
                             } => {
                                 bus.emit(DesktopEvent::SyncCompleted {
-                                    pairing_id: "default".to_string(),
+                                    pairing_id: mount_id.to_string(),
                                     uploaded: 0,
                                     downloaded: items_processed as usize,
                                     conflicts: 0,
+                                });
+                            }
+                            OrchestratorEvent::AccountChanged { active_account_id } => {
+                                bus.emit(DesktopEvent::AccountSwitched {
+                                    account_id: active_account_id,
                                 });
                             }
                             OrchestratorEvent::MountProgress(snapshot) => {

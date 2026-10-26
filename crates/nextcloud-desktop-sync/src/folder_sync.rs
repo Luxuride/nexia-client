@@ -1,18 +1,16 @@
 //! Two-way folder synchronization engine coordinating local and remote directory pairings.
 
 use std::path::PathBuf;
-use std::time::SystemTime;
 
-use tracing::{error, info, warn};
+use tracing::info;
 
 use crate::coordinator::DesktopSyncCoordinator;
 use crate::error::SyncError;
-use crate::file_ops::make_dav_path;
+pub use crate::freedesktop_thumbs::path_to_file_uri;
 use nextcloud_desktop_core::events::DesktopEvent;
 use nextcloud_rust_sdk::{
-    AuthProvider, DavClient, Depth, DiscoveredRemoteFile, JournalEntry, MountId,
-    MountProgressSnapshot, MountStatus, PropfindBody, SyncAction, SyncJournal, Transport,
-    reconcile, scan_local_directory,
+    AuthProvider, DavClient, DiscoveredRemoteFile, FolderSyncOutcome, FolderSyncRunner, MountId,
+    MountProgressSnapshot, MountStatus, Transport,
 };
 
 /// High-level engine executing synchronization cycles for local and remote folder pairings.
@@ -40,92 +38,9 @@ impl FolderSyncEngine {
         user: &str,
         remote_root: &str,
     ) -> Result<Vec<DiscoveredRemoteFile>, SyncError> {
-        let dav_prefix = format!("/remote.php/dav/files/{user}");
-        let mut collected = Vec::new();
-        let mut dir_queue = vec![remote_root.to_string()];
-        let mut visited = std::collections::HashSet::new();
-        let body = PropfindBody::all();
-
-        while let Some(current_dir) = dir_queue.pop() {
-            let clean_current = if current_dir.is_empty() || current_dir == "/" {
-                "/".to_string()
-            } else {
-                format!("/{}", current_dir.trim_matches('/'))
-            };
-
-            if !visited.insert(clean_current.clone()) {
-                continue;
-            }
-
-            let dav_path = make_dav_path(user, &clean_current)?;
-            let resources = match dav_client.propfind(&dav_path, Depth::One, &body).await {
-                Ok(r) => r,
-                Err(e) => {
-                    error!(dir = %clean_current, error = %e, "WebDAV propfind failed during discovery; aborting remote scan to prevent accidental data loss");
-                    return Err(SyncError::WebDav(e));
-                }
-            };
-
-            for res in resources {
-                let decoded_href = percent_decode(&res.href);
-                let path_after_prefix = if let Some(idx) = decoded_href.find(&dav_prefix) {
-                    &decoded_href[idx + dav_prefix.len()..]
-                } else if let Some(p) = decoded_href.strip_prefix(&dav_prefix) {
-                    p
-                } else if let Some(idx) = decoded_href.find("/remote.php/dav/files/") {
-                    let after_files = &decoded_href[idx + "/remote.php/dav/files/".len()..];
-                    if let Some(slash) = after_files.find('/') {
-                        &after_files[slash..]
-                    } else {
-                        ""
-                    }
-                } else if let Some(idx) = decoded_href.find("/remote.php/webdav") {
-                    &decoded_href[idx + "/remote.php/webdav".len()..]
-                } else {
-                    continue;
-                };
-
-                let clean_path = format!("/{}", path_after_prefix.trim_matches('/'));
-
-                // Skip the queried collection directory itself
-                if clean_path == clean_current || (clean_path == "/" && clean_current == "/") {
-                    continue;
-                }
-
-                // Calculate relative path within the mount root
-                let clean_mount_root = if remote_root.is_empty() || remote_root == "/" {
-                    "/".to_string()
-                } else {
-                    format!("/{}", remote_root.trim_matches('/'))
-                };
-
-                let relative_path = if clean_mount_root == "/" {
-                    clean_path.clone()
-                } else if let Some(rel) = clean_path.strip_prefix(&clean_mount_root) {
-                    format!("/{}", rel.trim_matches('/'))
-                } else {
-                    continue;
-                };
-
-                let is_col = res.is_collection;
-                let size = res.content_length.unwrap_or(0);
-                let etag = res.etag.clone();
-
-                collected.push(DiscoveredRemoteFile {
-                    relative_path: relative_path.clone(),
-                    href: res.href.clone(),
-                    size,
-                    etag,
-                    is_directory: is_col,
-                });
-
-                if is_col && !visited.contains(&clean_path) {
-                    dir_queue.push(clean_path);
-                }
-            }
-        }
-
-        Ok(collected)
+        FolderSyncRunner::discover_remote(dav_client, user, remote_root)
+            .await
+            .map_err(SyncError::Orchestrator)
     }
 
     /// Synchronizes a single sync mount by ID.
@@ -184,393 +99,77 @@ impl FolderSyncEngine {
             "Starting folder synchronization cycle"
         );
 
-        let remote_files = match Self::discover_remote(&dav_client, &user, &mount.remote_path).await
-        {
-            Ok(rf) => rf,
-            Err(e) => {
-                progress.status = MountStatus::Idle;
-                self.coordinator.set_mount_progress(progress.clone());
-                self.coordinator
-                    .event_bus
-                    .emit(DesktopEvent::MountProgress(progress));
-                return Err(e);
-            }
-        };
-        let local_files = match scan_local_directory(&local_target) {
-            Ok(lf) => lf,
-            Err(e) => {
-                progress.status = MountStatus::Idle;
-                self.coordinator.set_mount_progress(progress.clone());
-                self.coordinator
-                    .event_bus
-                    .emit(DesktopEvent::MountProgress(progress));
-                return Err(SyncError::SdkSync(e));
-            }
-        };
-
         let journal_path = self
             .coordinator
             .mount_journal_path(&mount.account_id, mount_id);
-        let mut journal =
-            SyncJournal::load_from_file(&journal_path).unwrap_or_else(|_| SyncJournal::new());
-
-        let mut actions = reconcile(&local_files, &remote_files, &journal);
         let is_vfs = mount.mode == "VirtualVfs";
 
-        let local_deletes_count = actions
-            .iter()
-            .filter(|a| matches!(a, SyncAction::DeleteLocal { .. }))
-            .count();
+        let runner = FolderSyncRunner::new(&local_target, &mount.remote_path, &journal_path);
 
-        if local_deletes_count > 0 {
-            // Safeguard 1: Remote discovery returned 0 files while local files exist
-            if remote_files.is_empty() && !local_files.is_empty() {
-                warn!(
-                    mount_id,
-                    local_files = local_files.len(),
-                    "Mass deletion safeguard: remote listing was empty while local files exist. Aborting to prevent accidental data loss."
-                );
-                return Err(SyncError::Reconciliation(
-                    "Safety safeguard: remote listing returned 0 files; refusing to delete local files".into(),
-                ));
-            }
-
-            // Safeguard 2: Bulk deletion exceeds 50% threshold when local file count > 5
-            if local_files.len() > 5 && local_deletes_count > local_files.len() / 2 {
-                warn!(
-                    mount_id,
-                    local_deletes_count,
-                    local_files = local_files.len(),
-                    "Mass deletion safeguard: deletion count exceeds 50% threshold. Aborting sync cycle."
-                );
-                return Err(SyncError::Reconciliation(
-                    "Safety safeguard: bulk deletion of more than 50% of files requires manual review".into(),
-                ));
-            }
-
-            // Safeguard 3: In VirtualVfs mode, do not delete local files or placeholders automatically
-            if is_vfs {
-                actions.retain(|a| !matches!(a, SyncAction::DeleteLocal { .. }));
-            }
-        }
-
-        // Normal sync is VFS that eagerly hydrates everything:
-        // Convert any InSync placeholders (0 bytes locally but > 0 bytes remotely) to Download actions
-        if !is_vfs {
-            for action in &mut actions {
-                if let SyncAction::InSync { relative_path } = action
-                    && let Some(rem) = remote_files
-                        .iter()
-                        .find(|r| &r.relative_path == relative_path)
-                {
-                    let local_p = local_target.join(relative_path.trim_start_matches('/'));
-                    let local_len = std::fs::metadata(&local_p).map(|m| m.len()).unwrap_or(0);
-                    if rem.size > 0 && local_len == 0 {
-                        let rel = relative_path.clone();
-                        let sz = rem.size;
-                        let et = rem.etag.clone();
-                        *action = SyncAction::Download {
-                            relative_path: rel,
-                            size: sz,
-                            etag: et,
-                        };
-                    }
-                }
-            }
-        }
-        let total_actions = actions.len();
-        progress.total_items = total_actions;
-        self.coordinator.set_mount_progress(progress.clone());
-        self.coordinator
-            .event_bus
-            .emit(DesktopEvent::MountProgress(progress.clone()));
         self.coordinator.event_bus.emit(DesktopEvent::SyncStarted {
             pairing_id: mount_id.to_string(),
         });
 
-        let mut downloaded = 0;
-        let mut uploaded = 0;
-        let mut conflicts = 0;
-        let mut thumbnail_candidates = Vec::new();
+        let coord = self.coordinator.clone();
+        let m_id_str = mount_id.to_string();
+        let is_cancelled = move || {
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(async { coord.is_mount_cancelled(&m_id_str).await })
+            })
+        };
 
-        // Partition directory creations first so parents exist on disk and remote
-        let (dirs, file_actions): (Vec<_>, Vec<_>) = actions.into_iter().partition(|a| {
-            matches!(
-                a,
-                SyncAction::CreateLocalDirectory { .. } | SyncAction::CreateRemoteDirectory { .. }
-            )
-        });
+        let coord_prog = self.coordinator.clone();
+        let m_id_prog = m_id_typed.clone();
+        let on_progress = move |completed: usize, total: usize, rel_path: &str| {
+            let mut prog = MountProgressSnapshot::new(m_id_prog.clone(), MountStatus::Syncing);
+            prog.total_items = total;
+            prog.completed_items = completed;
+            coord_prog.set_mount_progress(prog.clone());
+            coord_prog.event_bus.emit(DesktopEvent::MountProgress(prog));
+            coord_prog
+                .event_bus
+                .emit(DesktopEvent::FileTransferCompleted {
+                    relative_path: rel_path.to_string(),
+                    kind: nextcloud_desktop_core::events::TransferKind::Hydration,
+                });
+        };
 
-        for action in dirs.into_iter().chain(file_actions) {
-            if self.coordinator.is_mount_cancelled(mount_id).await {
-                info!(
-                    mount_id,
-                    "Sync mount was cancelled or removed; aborting sync loop immediately"
-                );
-                break;
-            }
-            match action {
-                SyncAction::CreateLocalDirectory { relative_path } => {
-                    let dest = local_target.join(relative_path.trim_start_matches('/'));
-                    if let Err(e) = std::fs::create_dir_all(&dest) {
-                        error!(
-                            path = %dest.display(),
-                            error = %e,
-                            "Failed to create local sync directory"
-                        );
-                    } else {
-                        journal.record(JournalEntry::new(
-                            &relative_path,
-                            0,
-                            SystemTime::now(),
-                            true,
-                        ));
-                    }
-                }
-                SyncAction::Download {
-                    relative_path,
-                    size,
-                    etag,
-                } => {
-                    let dest = local_target.join(relative_path.trim_start_matches('/'));
-                    if let Some(parent) = dest.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    let full_remote = if mount.remote_path == "/" {
-                        relative_path.clone()
-                    } else {
-                        format!(
-                            "{}/{}",
-                            mount.remote_path.trim_end_matches('/'),
-                            relative_path.trim_start_matches('/')
-                        )
-                    };
-                    if is_vfs {
-                        // In VirtualVfs mode, do not download bulk payload; create or update sparse placeholder with virtual metadata
-                        let file = if dest.exists() {
-                            std::fs::OpenOptions::new().write(true).open(&dest).ok()
-                        } else {
-                            std::fs::File::create(&dest).ok()
-                        };
-                        if let Some(f) = file
-                            && size > 0
-                        {
-                            let _ = f.set_len(size);
-                        }
-                        let mtime = std::fs::metadata(&dest)
-                            .and_then(|m| m.modified())
-                            .unwrap_or(SystemTime::now());
-                        let mut entry = JournalEntry::new(&relative_path, size, mtime, false);
-                        if let Some(e) = etag {
-                            entry = entry.with_remote_etag(e);
-                        }
-                        journal.record(entry);
-                        downloaded += 1;
-                        progress.completed_items += 1;
-                        self.coordinator.set_mount_progress(progress.clone());
-                        self.coordinator
-                            .event_bus
-                            .emit(DesktopEvent::MountProgress(progress.clone()));
-                        self.coordinator
-                            .event_bus
-                            .emit(DesktopEvent::FileTransferCompleted {
-                                relative_path: relative_path.clone(),
-                                kind: nextcloud_desktop_core::events::TransferKind::Hydration,
-                            });
-
-                        if is_thumbnail_candidate(&relative_path) {
-                            thumbnail_candidates.push(full_remote.clone());
-                        }
-                    } else {
-                        if let Ok(dav_path) = make_dav_path(&user, &full_remote) {
-                            match dav_client.get(&dav_path).await {
-                                Ok(bytes) => {
-                                    if let Err(e) = std::fs::write(&dest, &bytes) {
-                                        error!(
-                                            dest = %dest.display(),
-                                            error = %e,
-                                            "Failed to write downloaded sync file"
-                                        );
-                                    } else {
-                                        let mtime = std::fs::metadata(&dest)
-                                            .and_then(|m| m.modified())
-                                            .unwrap_or(SystemTime::now());
-                                        let mut entry = JournalEntry::new(
-                                            &relative_path,
-                                            bytes.len() as u64,
-                                            mtime,
-                                            false,
-                                        );
-                                        if let Some(e) = etag {
-                                            entry = entry.with_remote_etag(e);
-                                        }
-                                        journal.record(entry);
-                                        downloaded += 1;
-                                        progress.completed_items += 1;
-                                        progress.bytes_transferred += bytes.len() as u64;
-                                        self.coordinator.set_mount_progress(progress.clone());
-                                        self.coordinator
-                                            .event_bus
-                                            .emit(DesktopEvent::MountProgress(progress.clone()));
-                                        self.coordinator
-                                            .event_bus
-                                            .emit(DesktopEvent::FileTransferCompleted {
-                                                relative_path: relative_path.clone(),
-                                                kind: nextcloud_desktop_core::events::TransferKind::Download,
-                                            });
-
-                                        let bytes_len = bytes.len() as u64;
-                                        // Keep VFS state in sync: mark hydrated in virtual drive
-                                        let vfs = self.coordinator.active_vfs().await;
-                                        let _ = vfs.hydrate_local(&full_remote, bytes).await;
-                                        self.coordinator.event_bus.emit(
-                                            DesktopEvent::NodeHydrated {
-                                                path: full_remote.clone(),
-                                                size: bytes_len,
-                                            },
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    error!(
-                                        path = %full_remote,
-                                        error = %e,
-                                        "Failed to download remote file during sync"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                SyncAction::CreateRemoteDirectory { relative_path } => {
-                    let full_remote = if mount.remote_path == "/" {
-                        relative_path.clone()
-                    } else {
-                        format!(
-                            "{}/{}",
-                            mount.remote_path.trim_end_matches('/'),
-                            relative_path.trim_start_matches('/')
-                        )
-                    };
-                    if let Ok(dav_path) = make_dav_path(&user, &full_remote) {
-                        let _ = dav_client.mkcol(&dav_path).await;
-                        journal.record(JournalEntry::new(
-                            &relative_path,
-                            0,
-                            SystemTime::now(),
-                            true,
-                        ));
-                    }
-                }
-                SyncAction::Upload {
-                    relative_path,
-                    local_path,
-                    size,
-                } => {
-                    let full_remote = if mount.remote_path == "/" {
-                        relative_path.clone()
-                    } else {
-                        format!(
-                            "{}/{}",
-                            mount.remote_path.trim_end_matches('/'),
-                            relative_path.trim_start_matches('/')
-                        )
-                    };
-                    if let Ok(content) = std::fs::read(&local_path)
-                        && let Ok(dav_path) = make_dav_path(&user, &full_remote)
-                    {
-                        match dav_client.put(&dav_path, content, None).await {
-                            Ok(_) => {
-                                let mtime = std::fs::metadata(&local_path)
-                                    .and_then(|m| m.modified())
-                                    .unwrap_or(SystemTime::now());
-                                let entry = JournalEntry::new(&relative_path, size, mtime, false);
-                                journal.record(entry);
-                                uploaded += 1;
-                                progress.completed_items += 1;
-                                progress.bytes_transferred += size;
-                                self.coordinator.set_mount_progress(progress.clone());
-                                self.coordinator
-                                    .event_bus
-                                    .emit(DesktopEvent::MountProgress(progress.clone()));
-                                self.coordinator.event_bus.emit(
-                                    DesktopEvent::FileTransferCompleted {
-                                        relative_path: relative_path.clone(),
-                                        kind: nextcloud_desktop_core::events::TransferKind::Upload,
-                                    },
-                                );
-                            }
-                            Err(e) => {
-                                error!(
-                                    path = %full_remote,
-                                    error = %e,
-                                    "Failed to upload local file during sync"
-                                );
-                            }
-                        }
-                    }
-                }
-                SyncAction::DeleteLocal {
-                    relative_path,
-                    local_path,
-                    is_directory,
-                } => {
-                    if is_directory {
-                        let _ = std::fs::remove_dir_all(&local_path);
-                    } else {
-                        let _ = std::fs::remove_file(&local_path);
-                    }
-                    journal.remove(&relative_path);
-                    progress.completed_items += 1;
-                }
-                SyncAction::DeleteRemote {
-                    relative_path,
-                    is_directory: _,
-                } => {
-                    let full_remote = if mount.remote_path == "/" {
-                        relative_path.clone()
-                    } else {
-                        format!(
-                            "{}/{}",
-                            mount.remote_path.trim_end_matches('/'),
-                            relative_path.trim_start_matches('/')
-                        )
-                    };
-                    if let Ok(dav_path) = make_dav_path(&user, &full_remote) {
-                        let _ = dav_client.delete(&dav_path).await;
-                    }
-                    journal.remove(&relative_path);
-                    progress.completed_items += 1;
-                }
-                SyncAction::Conflict {
-                    relative_path,
-                    reason,
-                } => {
-                    warn!(
-                        path = %relative_path,
-                        reason = %reason,
-                        "Sync conflict detected"
-                    );
-                    conflicts += 1;
-                    progress.completed_items += 1;
-                }
-                SyncAction::InSync { relative_path: _ } => {}
-            }
-        }
+        let outcome: FolderSyncOutcome = runner
+            .execute_sync_cycle(&dav_client, &user, is_vfs, is_cancelled, on_progress)
+            .await
+            .map_err(SyncError::Orchestrator)?;
 
         if self.coordinator.is_mount_cancelled(mount_id).await {
             info!(
                 mount_id,
                 "Sync mount was cancelled; skipping thumbnail prefetching and progress"
             );
-            return Ok(downloaded);
+            return Ok(outcome.downloaded);
         }
 
-        let _ = journal.save_to_file(&journal_path);
-
-        if !thumbnail_candidates.is_empty() {
-            self.coordinator
-                .batch_prefetch_thumbnails(thumbnail_candidates, 256);
+        // Prefetch thumbnails for candidates if needed
+        if let Ok(entries) =
+            FolderSyncRunner::discover_remote(&dav_client, &user, &mount.remote_path).await
+        {
+            let candidates: Vec<String> = entries
+                .iter()
+                .filter(|e| !e.is_directory && is_thumbnail_candidate(&e.relative_path))
+                .map(|e| {
+                    if mount.remote_path == "/" {
+                        e.relative_path.clone()
+                    } else {
+                        format!(
+                            "{}/{}",
+                            mount.remote_path.trim_end_matches('/'),
+                            e.relative_path.trim_start_matches('/')
+                        )
+                    }
+                })
+                .collect();
+            if !candidates.is_empty() {
+                self.coordinator.batch_prefetch_thumbnails(candidates, 256);
+            }
         }
 
         progress.status = MountStatus::Idle;
@@ -583,17 +182,20 @@ impl FolderSyncEngine {
             .event_bus
             .emit(DesktopEvent::SyncCompleted {
                 pairing_id: mount_id.to_string(),
-                uploaded,
-                downloaded,
-                conflicts,
+                uploaded: outcome.uploaded,
+                downloaded: outcome.downloaded,
+                conflicts: outcome.conflicts,
             });
 
         info!(
             mount_id,
-            downloaded, uploaded, conflicts, "Folder synchronization cycle completed successfully"
+            downloaded = outcome.downloaded,
+            uploaded = outcome.uploaded,
+            conflicts = outcome.conflicts,
+            "Folder synchronization cycle completed successfully"
         );
 
-        Ok(downloaded + uploaded)
+        Ok(outcome.downloaded + outcome.uploaded)
     }
 
     /// Synchronizes all configured active folder mounts across the account.
@@ -618,30 +220,8 @@ impl FolderSyncEngine {
     }
 }
 
-pub(crate) fn percent_decode(s: &str) -> String {
-    let mut bytes = Vec::with_capacity(s.len());
-    let mut chars = s.bytes();
-    while let Some(b) = chars.next() {
-        if b == b'%' {
-            let h1 = chars.next();
-            let h2 = chars.next();
-            if let (Some(h1), Some(h2)) = (h1, h2) {
-                let hex_str = [h1, h2];
-                if let Ok(hex) = std::str::from_utf8(&hex_str)
-                    && let Ok(val) = u8::from_str_radix(hex, 16)
-                {
-                    bytes.push(val);
-                    continue;
-                }
-            }
-        }
-        bytes.push(b);
-    }
-    String::from_utf8(bytes).unwrap_or_else(|_| s.to_string())
-}
-
 pub(crate) fn extract_clean_dav_path(href: &str, base_dav_prefix: &str) -> String {
-    let decoded = percent_decode(href);
+    let decoded = href;
     let prefix = base_dav_prefix.trim_end_matches('/');
 
     let path_after_prefix = if let Some(idx) = decoded.find(prefix) {
@@ -662,10 +242,10 @@ pub(crate) fn extract_clean_dav_path(href: &str, base_dav_prefix: &str) -> Strin
         if let Some(first_slash) = after_scheme.find('/') {
             &after_scheme[first_slash..]
         } else {
-            &decoded
+            decoded
         }
     } else {
-        &decoded
+        decoded
     };
 
     let trimmed = path_after_prefix.trim_matches('/');
@@ -676,7 +256,7 @@ pub(crate) fn extract_clean_dav_path(href: &str, base_dav_prefix: &str) -> Strin
     }
 }
 
-fn is_thumbnail_candidate(path: &str) -> bool {
+pub(crate) fn is_thumbnail_candidate(path: &str) -> bool {
     let lower = path.to_lowercase();
     lower.ends_with(".jpg")
         || lower.ends_with(".jpeg")
@@ -699,21 +279,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn percent_decode_basic() {
-        assert_eq!(percent_decode("hello%20world"), "hello world");
-        assert_eq!(percent_decode("plain_text"), "plain_text");
-        assert_eq!(
-            percent_decode("%2FDocuments%2Ffile.txt"),
-            "/Documents/file.txt"
-        );
-    }
-
-    #[test]
-    fn path_prefix_stripping() {
-        let dav_prefix = "/remote.php/dav/files/user";
-        let href = "https://nextcloud.example.com/remote.php/dav/files/user/Documents/report.pdf";
-        let idx = href.find(dav_prefix).expect("prefix found");
-        let path_after = &href[idx + dav_prefix.len()..];
-        assert_eq!(path_after, "/Documents/report.pdf");
+    fn thumbnail_candidate_matching() {
+        assert!(is_thumbnail_candidate("picture.png"));
+        assert!(is_thumbnail_candidate("video.mp4"));
+        assert!(!is_thumbnail_candidate("text.txt"));
     }
 }
