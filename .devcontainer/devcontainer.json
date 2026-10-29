@@ -1,5 +1,5 @@
 {
-  "name": "nextcloud-desktop-rs",
+  "name": "nexia-client",
   "build": {
     "dockerfile": "Dockerfile"
   },

@@ -1,6 +1,6 @@
 # Background Service & App Bar Status Notifier
 
-`nextcloud-desktop-rs` is built to run continuously: transfers and virtual-drive
+`nexia-client` is built to run continuously: transfers and virtual-drive
 hydration must keep working after the window is closed, and the application must
 be reachable from the desktop's app bar. This document covers that lifecycle —
 the `ksni` StatusNotifierItem, the window-hide behaviour, and the headless and
@@ -77,7 +77,7 @@ let builder = tray
 
 Both options exist for sandboxes:
 
-- `disable_dbus_name(true)` under `nextcloud_desktop_core::is_flatpak()` skips the
+- `disable_dbus_name(true)` under `nexia_core::is_flatpak()` skips the
   `RequestName` call for `org.kde.StatusNotifierItem-<pid>-<n>`. A Flatpak
   sandbox rejects that name with `org.freedesktop.DBus.Error.ServiceUnknown`
   unless the exact instance name is in `--own-name`, which cannot be known ahead
@@ -98,7 +98,7 @@ window guard degrades to "always show" instead of "never settle".
 
 Even with the unique name, `org.kde.StatusNotifierWatcher` must be reachable, so
 the Flatpak manifest grants `--talk-name=org.kde.StatusNotifierWatcher`
-(`flatpak/eu.luxuride.nextcloud-desktop.yml`). Every other Flathub app with a tray
+(`flatpak/eu.luxuride.nexia.yml`). Every other Flathub app with a tray
 icon grants the same permission; without it the whole registration is refused by
 the sandbox before the watcher is ever contacted, which is exactly the
 `D-Bus connection error: … ServiceUnknown` seen in the journal.
@@ -185,14 +185,14 @@ the app bar indicator:
 
 | Environment | Generated `Exec=` | File written |
 | --- | --- | --- |
-| Native | `/abs/path/to/nextcloud-desktop-rs --background` | `$XDG_CONFIG_HOME/autostart/eu.luxuride.nextcloud-desktop.desktop` |
-| Flatpak | `flatpak run eu.luxuride.nextcloud-desktop --background` | `$HOME/.config/autostart/eu.luxuride.nextcloud-desktop.desktop` |
+| Native | `/abs/path/to/nexia-client --background` | `$XDG_CONFIG_HOME/autostart/eu.luxuride.nexia.desktop` |
+| Flatpak | `flatpak run eu.luxuride.nexia --background` | `$HOME/.config/autostart/eu.luxuride.nexia.desktop` |
 
 Two details make the Flatpak row work. The sandbox sets `XDG_CONFIG_HOME` to
-`~/.var/app/eu.luxuride.nextcloud-desktop/config`, which the **host** session
+`~/.var/app/eu.luxuride.nexia/config`, which the **host** session
 never reads, so `autostart_config_dir()` writes to `$HOME/.config` instead — the
 manifest's `--filesystem=xdg-config/autostart:create` makes that path writable.
-And `flatpak run …` is used rather than `/app/bin/nextcloud-desktop-rs`, which
+And `flatpak run …` is used rather than `/app/bin/nexia-client`, which
 does not exist outside the sandbox. The entry carries `X-Flatpak=<app id>` so
 portals and desktop shells recognise it as a Flatpak app.
 

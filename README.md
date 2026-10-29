@@ -1,9 +1,16 @@
-# Nextcloud Desktop (Rust / GTK 4)
+# Nexia Client (Rust / GTK 4)
 
-A Nextcloud desktop application in Rust and GTK 4, built on
+An independent, unofficial desktop client for Nextcloud servers, written in Rust
+and GTK 4 on top of
 [`nextcloud-rust-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk): virtual
 synchronisation with on-demand hydration, two-way folder sync, and a real file
 browser over the remote hierarchy.
+
+> **Not affiliated with Nextcloud GmbH.** “Nextcloud” is a registered trademark
+> of Nextcloud GmbH. This project is an independent client that connects to
+> Nextcloud servers; it is not produced, endorsed, sponsored, or supported by
+> Nextcloud GmbH, and it is not the official Nextcloud desktop client. The name
+> and marks used inside the application are Nexia's own.
 
 ```sh
 cargo run              # GTK 4 application
@@ -57,9 +64,9 @@ crates are off limits).
 
 ```text
 crates/
-├── nextcloud-desktop-core/   # Accounts, config, encrypted storage, events, autostart
-├── nextcloud-desktop-sync/   # DesktopSyncCoordinator, file ops, folder sync, watcher, FUSE
-└── nextcloud-desktop-ui/     # GTK 4 views, navigation, controller, tray, Android bindings
+├── nexia-core/   # Accounts, config, encrypted storage, events, autostart
+├── nexia-sync/   # DesktopSyncCoordinator, file ops, folder sync, watcher, FUSE
+└── nexia-ui/     # GTK 4 views, navigation, controller, tray, Android bindings
 src/
 └── main.rs                   # CLI parsing, bootstrap, GTK / headless launch
 docs/

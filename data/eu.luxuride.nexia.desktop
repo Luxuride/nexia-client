@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Nexia Client
+GenericName=File Synchronization
+Comment=Independent desktop sync client for Nextcloud servers
+Exec=nexia-client
+Icon=eu.luxuride.nexia
+Terminal=false
+Categories=Network;FileTransfer;
+StartupNotify=true
+X-GNOME-Autostart-enabled=true

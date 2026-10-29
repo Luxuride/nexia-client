@@ -1,20 +1,23 @@
-//! Nextcloud Desktop GTK application with virtual file sync.
+//! Nexia Client — a GTK 4 desktop file-sync client for Nextcloud servers.
 
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use nextcloud_desktop_core::config::AppConfig;
-use nextcloud_desktop_core::events::EventBus;
-use nextcloud_desktop_sync::DesktopSyncCoordinator;
-use nextcloud_desktop_ui::controller::DesktopUiController;
-use nextcloud_desktop_ui::widget::FileExplorerBackend;
+use nexia_core::config::AppConfig;
+use nexia_core::events::EventBus;
+use nexia_sync::DesktopSyncCoordinator;
+use nexia_ui::controller::DesktopUiController;
+use nexia_ui::widget::FileExplorerBackend;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "nextcloud-desktop",
-    about = "Nextcloud Desktop GTK Application with Virtual File Sync",
+    name = "nexia-client",
+    about = "Nexia Client — GTK 4 file-sync client for Nextcloud servers",
+    long_about = "Nexia Client is an independent, unofficial desktop client for Nextcloud \
+                  servers. It is not affiliated with, endorsed by, or sponsored by \
+                  Nextcloud GmbH.",
     version
 )]
 struct CliArgs {
@@ -69,7 +72,7 @@ struct CliArgs {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "gtk")]
-    nextcloud_desktop_ui::suppress_gtk_logs();
+    nexia_ui::suppress_gtk_logs();
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -89,9 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     let _rt_guard = rt.enter();
 
-    let (storage, mut config) = match rt
-        .block_on(nextcloud_desktop_core::DesktopStorage::open_default())
-    {
+    let (storage, mut config) = match rt.block_on(nexia_core::DesktopStorage::open_default()) {
         Ok(s) => {
             let loaded = match s.load_app_config() {
                 Ok(Some(cfg)) => cfg,
@@ -110,8 +111,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if config.cache_dir.is_none() {
         config.cache_dir = dirs::cache_dir()
-            .map(|c| c.join("nextcloud-desktop"))
-            .or_else(|| Some(std::env::temp_dir().join("nc_cache")));
+            .map(|c| c.join("nexia"))
+            .or_else(|| Some(std::env::temp_dir().join("nexia_cache")));
     }
 
     let event_bus = EventBus::new(256);
@@ -126,7 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let controller = DesktopUiController::new(coordinator.clone());
 
     // Register autolaunch on boot
-    let _ = nextcloud_desktop_core::register_autostart();
+    let _ = nexia_core::register_autostart();
 
     rt.block_on(async {
         controller.ensure_discovered_accounts().await;
@@ -184,7 +185,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 remote = %desc.remote_path,
                                 local = %desc.local_target.display(),
                                 status = ?state.status,
-                                paused = (state.status == nextcloud_desktop_sync::MountStatus::Paused),
+                                paused = (state.status == nexia_sync::MountStatus::Paused),
                                 "Mount"
                             );
                         }
@@ -242,7 +243,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Some(p) => p.clone(),
                     None => controller.default_fuse_mountpoint().await,
                 };
-                tracing::info!(mountpoint = %mp.display(), "Mounting Nextcloud virtual filesystem with FUSE...");
+                tracing::info!(mountpoint = %mp.display(), "Mounting Nexia virtual filesystem with FUSE...");
                 match controller.mount_fuse_vfs(&mp).await {
                     Ok(()) => {
                         tracing::info!(mountpoint = %mp.display(), "Virtual drive mounted successfully! Press Ctrl+C to unmount.");
@@ -262,9 +263,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 && args.mount_vfs.is_none()
                 && args.set_mount_mode.is_none()
             {
-                tracing::info!("Running Nextcloud background daemon. Press Ctrl+C to terminate.");
+                tracing::info!("Running Nexia background daemon. Press Ctrl+C to terminate.");
                 tokio::signal::ctrl_c().await?;
-                tracing::info!("Shutting down Nextcloud background daemon.");
+                tracing::info!("Shutting down Nexia background daemon.");
             }
 
             Ok::<(), Box<dyn std::error::Error>>(())
@@ -275,14 +276,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(feature = "gtk")]
     {
-        nextcloud_desktop_ui::launch_gtk_application(controller, args.background)
+        nexia_ui::launch_gtk_application(controller, args.background)
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
     }
 
     #[cfg(not(feature = "gtk"))]
     {
         tracing::warn!("Compiled without GTK feature; falling back to headless execution.");
-        nextcloud_desktop_ui::run_headless(controller)
+        nexia_ui::run_headless(controller)
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
     }
 

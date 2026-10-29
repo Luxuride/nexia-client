@@ -1,6 +1,6 @@
 # Configuration Reference
 
-Configuration in `nextcloud-desktop-rs` has two layers:
+Configuration in `nexia-client` has two layers:
 
 1. **The encrypted settings database** — the authoritative store. It holds the
    whole `AppConfig` plus per-account and global preferences, encrypted with a
@@ -19,7 +19,7 @@ If the database cannot be opened at all, the app runs on JSON alone and logs
 `Failed to open encrypted desktop storage, falling back to JSON`.
 
 > **The JSON fallback is not encrypted.** `Account.credentials` serialises
-> `password: String` verbatim, so `~/.config/nextcloud-desktop-rs/config.json`
+> `password: String` verbatim, so `~/.config/nexia-client/config.json`
 > contains the app password in cleartext — `AppConfig` persistence uses
 > `fs::write`, so the file gets the process umask (typically `0644`). Only
 > `desktop_config.db` is SQLCipher-encrypted. Treat the JSON file as secret
@@ -31,11 +31,11 @@ If the database cannot be opened at all, the app runs on JSON alone and logs
 
 | What | Path |
 | --- | --- |
-| Settings database | `~/.local/share/nextcloud-desktop/desktop_config.db` |
-| Keychain-backed key, local fallback key | `<data dir>/nextcloud-desktop/.storage_key` |
-| JSON config fallback | `~/.config/nextcloud-desktop-rs/config.json` |
-| Per-account preferences dump | `~/.config/nextcloud-desktop-rs/accounts/<account_id>.json` |
-| Cache root (`cache_dir`) | `~/.cache/nextcloud-desktop` |
+| Settings database | `~/.local/share/nexia/desktop_config.db` |
+| Keychain-backed key, local fallback key | `<data dir>/nexia/.storage_key` |
+| JSON config fallback | `~/.config/nexia-client/config.json` |
+| Per-account preferences dump | `~/.config/nexia-client/accounts/<account_id>.json` |
+| Cache root (`cache_dir`) | `~/.cache/nexia` |
 
 The per-account dump is written by `AppConfig::save_user_config(id)` whenever the
 UI changes an account's display settings
@@ -45,7 +45,7 @@ nothing calls `AppConfig::load_user_config()`, so editing the file changes
 nothing. The live value is `account_preferences` in the database/JSON above.
 
 The database key is loaded from the keychain
-(`KeychainKeyStore::new("eu.luxuride.nextcloud-desktop", "desktop-storage-key")`).
+(`KeychainKeyStore::new("eu.luxuride.nexia", "desktop-storage-key")`).
 If the keychain is unavailable, `DesktopStorage::resolve_key` reads or creates
 `.storage_key` next to the database. The database therefore survives a missing
 keyring, but a key file is not a substitute for one — if neither is readable the
@@ -81,7 +81,7 @@ The JSON fallback is the complete `AppConfig`:
       "enabled": true
     }
   ],
-  "cache_dir": "/home/alice/.cache/nextcloud-desktop",
+  "cache_dir": "/home/alice/.cache/nexia",
   "sync_interval_secs": 0,
   "global": {
     "start_minimized": false,
@@ -165,13 +165,13 @@ Which account the UI opens on. When `None`, the first configured account wins.
 
 Root for hydrated payloads, thumbnails, the persisted VFS tree and per-mount
 sync journals, laid out as `accounts/<account_id>/…`. Defaults via
-`AppConfig::default_cache_dir()` to `<XDG cache>/nextcloud-desktop`, then
-`$TMPDIR/nextcloud-desktop`. `resolved_cache_dir()` is what the rest of the app
+`AppConfig::default_cache_dir()` to `<XDG cache>/nexia`, then
+`$TMPDIR/nexia`. `resolved_cache_dir()` is what the rest of the app
 calls — do not read `cache_dir` directly.
 
 The launcher additionally fills `cache_dir` in at startup when it is unset, using
-`<XDG cache>/nextcloud-desktop` and falling back to `$TMPDIR/nc_cache`. The two
-fallbacks differ (`nextcloud-desktop` vs `nc_cache` under the temp dir), so an
+`<XDG cache>/nexia` and falling back to `$TMPDIR/nexia_cache`. The two
+fallbacks differ (`nexia` vs `nexia_cache` under the temp dir), so an
 environment with no resolvable cache dir can land on either path depending on
 whether the boot path ran.
 
@@ -205,12 +205,12 @@ documenting them as functional.
 ### Autostart mechanics
 
 `register_autostart()` writes, under `AUTOSTART_APP_NAME =
-"eu.luxuride.nextcloud-desktop"`:
+"eu.luxuride.nexia"`:
 
 | OS | File |
 | --- | --- |
-| Linux | `$XDG_CONFIG_HOME/autostart/eu.luxuride.nextcloud-desktop.desktop` (XDG autostart, `X-GNOME-Autostart-enabled=true`) |
-| macOS | `~/Library/LaunchAgents/eu.luxuride.nextcloud-desktop.plist` (`RunAtLoad`) |
+| Linux | `$XDG_CONFIG_HOME/autostart/eu.luxuride.nexia.desktop` (XDG autostart, `X-GNOME-Autostart-enabled=true`) |
+| macOS | `~/Library/LaunchAgents/eu.luxuride.nexia.plist` (`RunAtLoad`) |
 | Windows | No-op — returns `Ok(())` |
 
 `unregister_autostart()` and `is_autostart_enabled()` read back the same paths.

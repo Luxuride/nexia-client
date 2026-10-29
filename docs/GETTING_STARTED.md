@@ -1,6 +1,6 @@
 # Getting Started
 
-How to get `nextcloud-desktop-rs` building, running and passing its gates.
+How to get `nexia-client` building, running and passing its gates.
 
 The short version of the architecture you are about to build: this application is
 a **thin GTK 4 shell over [`nextcloud-rust-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk)**.
@@ -57,11 +57,11 @@ not found` from `graphene-sys`/`gdk-pixbuf-sys` build scripts — install the
 
 ```sh
 # Compile everything — this DOES pull in gtk4/libadwaita, because the default
-# features of `nextcloud-desktop-ui` enable them.
+# features of `nexia-ui` enable them.
 cargo check --workspace
 
 # Type-check without GTK headers at all: skip the default features.
-cargo check -p nextcloud-desktop-core -p nextcloud-desktop-sync
+cargo check -p nexia-core -p nexia-sync
 
 # Full GTK application
 cargo run
@@ -83,12 +83,12 @@ cargo run --no-default-features -- --list-mounts
 | --- | --- | --- |
 | `default = ["desktop"]` | GTK + tray | The shipping application. |
 | `desktop = ["gtk", "tray"]` | — | Convenience umbrella. |
-| `gtk` | `gtk4`, `libadwaita`, `glib`, `gdk-pixbuf` | The GTK 4 UI (`nextcloud-desktop-ui/gtk`). |
+| `gtk` | `gtk4`, `libadwaita`, `glib`, `gdk-pixbuf` | The GTK 4 UI (`nexia-ui/gtk`). |
 | `tray` | `ksni` (Linux) | App bar StatusNotifierItem. |
 | `android` | `uniffi` | Android bindings. |
 
 Without `gtk`, the binary still builds and falls back to
-`nextcloud_desktop_ui::run_headless(...)` instead of failing to launch.
+`nexia_ui::run_headless(...)` instead of failing to launch.
 
 ---
 
@@ -99,8 +99,8 @@ On start the binary:
 1. Parses `clap` arguments.
 2. Initialises `tracing-subscriber` (`RUST_LOG`, default `info`).
 3. Opens the encrypted settings database; on failure logs a warning and uses the
-   JSON config at `~/.config/nextcloud-desktop-rs/config.json`.
-4. Resolves `cache_dir` (`~/.cache/nextcloud-desktop`, falling back to
+   JSON config at `~/.config/nexia-client/config.json`.
+4. Resolves `cache_dir` (`~/.cache/nexia`, falling back to
    `$TMPDIR/nc_cache` when no cache dir can be determined).
 5. Builds the `DesktopSyncCoordinator` over an `EventBus` (capacity 256),
    attaches storage, sets the config path and persists config once.
@@ -159,7 +159,7 @@ before your code is even compiled.
 
 ### Flatpak bundle
 
-`flatpak/eu.luxuride.nextcloud-desktop.yml` builds the release bundle on
+`flatpak/eu.luxuride.nexia.yml` builds the release bundle on
 `org.gnome.Platform//49`. Two things about that manifest are load-bearing:
 
 - **`flatpak/cargo-sources.json` is generated, never committed.** It vendors
@@ -190,14 +190,14 @@ podman run --rm --privileged \
   flatpak-builder --repo=repo --disable-rofiles-fuse \
     --install-deps-from=flathub --force-clean --default-branch=master \
     --arch=x86_64 --state-dir=.flatpak-builder flatpak_app \
-    /src/flatpak/eu.luxuride.nextcloud-desktop.yml
+    /src/flatpak/eu.luxuride.nexia.yml
 ```
 
 Both `/build` and `/var/lib/flatpak` must be named podman volumes: flatpak
 hardlinks objects across them and dies with `Invalid cross-device link` on a bind
-mount. Then `flatpak build-bundle repo nextcloud-desktop.flatpak \
+mount. Then `flatpak build-bundle repo nexia-client.flatpak \
 --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo --arch=x86_64 \
-eu.luxuride.nextcloud-desktop master`.
+eu.luxuride.nexia master`.
 
 ### Where to look when something breaks
 

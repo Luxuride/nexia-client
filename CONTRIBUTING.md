@@ -1,6 +1,7 @@
-# Contributing to nextcloud-desktop-rs
+# Contributing to nexia-client
 
-Thank you for your interest in contributing to Nextcloud Desktop in Rust!
+Thank you for your interest in contributing to Nexia Client, an independent
+desktop client for Nextcloud servers!
 
 This codebase is structured as a high-integrity Cargo workspace of small, focused crates where every crate's public interface is treated as a strict API contract.
 
@@ -40,9 +41,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 4. **Credential confidentiality**: Passwords, app tokens, and basic-auth headers must never be logged, formatted via `Debug` or `Display`, or embedded in error messages. Redact credentials (e.g. `[REDACTED]`) and wipe secret buffers where possible.
 5. **Typed, causal errors**: Errors must name the operation that failed and preserve the source error via `#[source]` / `Error::source`. Never stringify away causes.
 6. **Workspace crate boundaries**: Separate concerns do not share a crate:
-   - `crates/nextcloud-desktop-core`: Models, configuration, accounts, encrypted storage, event bus, autostart.
-   - `crates/nextcloud-desktop-sync`: `DesktopSyncCoordinator` over SDK handles, file operations, folder sync, watcher, FUSE hydration.
-   - `crates/nextcloud-desktop-ui`: GTK 4 views, widgets, dialogs, controller, app bar.
+   - `crates/nexia-core`: Models, configuration, accounts, encrypted storage, event bus, autostart.
+   - `crates/nexia-sync`: `DesktopSyncCoordinator` over SDK handles, file operations, folder sync, watcher, FUSE hydration.
+   - `crates/nexia-ui`: GTK 4 views, widgets, dialogs, controller, app bar.
 7. **SDK facade only**: Import `nextcloud_rust_sdk`, never its internal crates
    (`nextcloud-sdk-core`, `nextcloud-sdk-vfs`, `nextcloud-dav`, `nextcloud-auth`,
    `nextcloud-transport`, …). If the facade is missing something, that is an SDK

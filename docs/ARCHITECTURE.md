@@ -1,7 +1,7 @@
 # Architecture Overview
 
-`nextcloud-desktop-rs` is a Nextcloud desktop application built in Rust (Edition
-2024) and GTK 4 on top of the Nextcloud Rust SDK
+`nexia-client` is an independent, unofficial desktop client for Nextcloud
+servers, built in Rust (Edition 2024) and GTK 4 on top of the Nextcloud Rust SDK
 ([`nextcloud-rust-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk)).
 
 The relationship is one-directional and the SDK does not know this application
@@ -47,20 +47,20 @@ What it must never own:
         |                                         |
         v                                         v
 +---------------------------------------+  +---------------------------------------+
-| nextcloud-desktop-ui  (GTK 4)         |  | nextcloud-desktop-sync                |
+| nexia-ui  (GTK 4)         |  | nexia-sync                |
 |   gtk_app / pages / files / tray      |  |   coordinator, file_ops, folder_sync, |
 |   controller (async bridge)           |  |   mounts, account, watcher, fuse_mount|
 +---------------------------------------+  +---------------------------------------+
         |                                         |
         v                                         v
 +---------------------------------------+  +---------------------------------------+
-| nextcloud-desktop-core                |  | nextcloud-rust-sdk (upstream crate)   |
+| nexia-core                |  | nextcloud-rust-sdk (upstream crate)   |
 |   account, config, events, storage    |  |   Client, OrchestratorHandle,         |
 |   autostart                           |  |   MountsHandle, VfsHandle, sync engine|
 +---------------------------------------+  +---------------------------------------+
 ```
 
-### `crates/nextcloud-desktop-core`
+### `crates/nexia-core`
 
 Application domain and persistence. No GTK, no networking.
 
@@ -70,10 +70,10 @@ Application domain and persistence. No GTK, no networking.
 | `config.rs` | `AppConfig` (accounts, `active_account_id`, `sync_folders`, `cache_dir`, `sync_interval_secs`, `global`, `account_preferences`), `SyncFolderConfig`, `SyncMode`, `AdditionalItemsDisplayConfig`, `AccountPreferences`, `GlobalPreferences`. |
 | `events.rs` | `EventBus` over `tokio::sync::broadcast` plus the `DesktopEvent` enum. |
 | `storage.rs` | `DesktopStorage` — encrypted settings database (`ConfigStore` + `KeychainKeyStore`), with JSON fallback. |
-| `autostart.rs` | `register_autostart` / `unregister_autostart` / `is_autostart_enabled` under the app id `eu.luxuride.nextcloud-desktop`. |
+| `autostart.rs` | `register_autostart` / `unregister_autostart` / `is_autostart_enabled` under the app id `eu.luxuride.nexia`. |
 | `error.rs` | `CoreError` with `#[source]` preservation. |
 
-### `crates/nextcloud-desktop-sync`
+### `crates/nexia-sync`
 
 The composition root over the SDK, plus the app-specific layers the SDK
 deliberately does not have (thumbnail prioritisation, FreeDesktop preview
@@ -98,14 +98,14 @@ workspace is allowed to touch (`Client`, `MountsHandle`, `VfsHandle`,
 `reconcile`, …), which is how the "never import internal SDK crates" rule is
 enforced in practice.
 
-### `crates/nextcloud-desktop-ui`
+### `crates/nexia-ui`
 
 GTK 4 presentation, feature-gated so the binary builds without a toolkit.
 
 | Module | Contents |
 | --- | --- |
 | `controller.rs` | `DesktopUiController` — the async bridge. Every user action is a method here; it calls the coordinator and returns view models or errors. |
-| `desktop/gtk_app.rs` | Application window, sidebar navigation stack, window lifecycle (`APPLICATION_ID = "eu.luxuride.nextcloud-desktop"`). |
+| `desktop/gtk_app.rs` | Application window, sidebar navigation stack, window lifecycle (`APPLICATION_ID = "eu.luxuride.nexia"`). |
 | `desktop/files/` | File explorer: list view, grid view, path bar, toolbar, status bar, selection, drag-and-drop, context/canvas menus, dialogs (rename, delete, new folder, new item, properties, settings, thumbnails). |
 | `desktop/pages/` | Sidebar, activity page, sync folders, settings, add-account/sync dialogs, mount activity and remote-browser dialogs. |
 | `desktop/account/` | Account switcher, add-account dialog, sign-out dialog. |
@@ -290,18 +290,38 @@ internal VFS mounts and are skipped by the sync loop.
 
 | Path | Contents |
 | --- | --- |
-| `~/.config/nextcloud-desktop-rs/config.json` | `AppConfig` fallback when the encrypted database is unavailable. |
-| `~/.local/share/nextcloud-desktop/desktop_config.db` | Encrypted settings database (SDK `ConfigStore`; key from the platform keychain, `.storage_key` fallback). |
-| `~/.local/share/nextcloud-desktop/.storage_key` | Hex `StoreKey` written only when the keychain is unavailable (`DesktopStorage::resolve_key`). |
-| `~/.config/nextcloud-desktop-rs/accounts/<account_id>.json` | Write-only per-account `AccountPreferences` dump — never read back. |
+| `~/.config/nexia-client/config.json` | `AppConfig` fallback when the encrypted database is unavailable. |
+| `~/.local/share/nexia/desktop_config.db` | Encrypted settings database (SDK `ConfigStore`; key from the platform keychain, `.storage_key` fallback). |
+| `~/.local/share/nexia/.storage_key` | Hex `StoreKey` written only when the keychain is unavailable (`DesktopStorage::resolve_key`). |
+| `~/.config/nexia-client/accounts/<account_id>.json` | Write-only per-account `AccountPreferences` dump — never read back. |
 | `<cache_dir>/accounts/<account_id>/` | SDK `StoragePaths` (per-account auth/cache/config databases). |
 | `<cache_dir>/accounts/<account_id>/vfs/tree.json` | Persisted virtual tree snapshot. |
 | `<cache_dir>/accounts/<account_id>/mounts/<mount_id>/journal.json` | Per-mount sync journal. |
 | `<cache_dir>/accounts/<account_id>/thumbnails/` | Cached thumbnails. |
 | `<cache_dir>/theming/` | Cached server logo assets. |
 
-`<cache_dir>` defaults to `~/.cache/nextcloud-desktop` and is per-account
+`<cache_dir>` defaults to `~/.cache/nexia` and is per-account
 subdivided so switching accounts never mixes caches.
+
+### Migration from the pre-rename layout
+
+The application was previously published under a Nextcloud-derived name, and
+every path above changed with the rename. Nothing migrates automatically: the
+old directories are not read, so an existing install starts empty and re-adds
+its accounts. The superseded paths were:
+
+| Superseded path | Current path |
+| --- | --- |
+| `~/.config/nextcloud-desktop-rs/` | `~/.config/nexia-client/` (JSON config, account dumps) |
+| `~/.local/share/nextcloud-desktop/` | `~/.local/share/nexia/` (settings database, `.storage_key`) |
+| `~/.cache/nextcloud-desktop/` | `~/.cache/nexia/` (per-account caches, journals, thumbnails) |
+
+Moving `~/.local/share/nextcloud-desktop` to `~/.local/share/nexia` and
+`~/.config/nextcloud-desktop-rs` to `~/.config/nexia-client` keeps the encrypted
+settings database and its key together, which is enough to retain configured
+accounts. Sync caches are safe to drop; they are rebuilt from the server. The
+keychain entry is re-created under the new service name `eu.luxuride.nexia`, so
+the first launch after migrating prompts for the keychain again.
 
 ---
 
@@ -322,6 +342,6 @@ output, crash reports or `Debug` output.
 
 The invariant is about **rendering**, not about at-rest encoding. Note the
 asymmetry: `Account.credentials` derives `Serialize`/`Deserialize` with a plain
-`password: String`, so the JSON fallback (`~/.config/nextcloud-desktop-rs/config.json`)
+`password: String`, so the JSON fallback (`~/.config/nexia-client/config.json`)
 contains the app password in cleartext, while the encrypted `desktop_config.db`
 holds it inside SQLCipher. Treat that JSON file as secret material.

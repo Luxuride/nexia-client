@@ -47,7 +47,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: |
-          cargo build --release --bin nextcloud-desktop-rs \
+          cargo build --release --bin nexia-client \
             --no-default-features
 
   test:
@@ -75,7 +75,7 @@ jobs:
         run: cargo test --workspace
       - name: Run Windows tests
         if: runner.os == 'Windows'
-        run: cargo test --package nextcloud-desktop-core --package nextcloud-desktop-sync
+        run: cargo test --package nexia-core --package nexia-sync
 
   docs:
     name: docs

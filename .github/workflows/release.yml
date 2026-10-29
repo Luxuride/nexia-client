@@ -23,18 +23,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build Release Binary
-        run: cargo build --release --bin nextcloud-desktop-rs --no-default-features
+        run: cargo build --release --bin nexia-client --no-default-features
       - name: Package Windows Zip
         shell: bash
         run: |
           mkdir -p release-pkg
-          cp target/release/nextcloud-desktop-rs.exe release-pkg/
+          cp target/release/nexia-client.exe release-pkg/
           cp README.md release-pkg/ || true
-          cd release-pkg && 7z a ../nextcloud-desktop-windows-x86_64.zip *
+          cd release-pkg && 7z a ../nexia-client-windows-x86_64.zip *
       - uses: actions/upload-artifact@v4
         with:
           name: windows-x86_64
-          path: nextcloud-desktop-windows-x86_64.zip
+          path: nexia-client-windows-x86_64.zip
 
   build-macos:
     name: Build macOS (Universal)
@@ -47,17 +47,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build Release Binary
-        run: cargo build --release --bin nextcloud-desktop-rs
+        run: cargo build --release --bin nexia-client
       - name: Package macOS Tarball
         run: |
           mkdir -p release-pkg
-          cp target/release/nextcloud-desktop-rs release-pkg/
+          cp target/release/nexia-client release-pkg/
           cp README.md release-pkg/ || true
-          tar -czvf nextcloud-desktop-macos.tar.gz -C release-pkg .
+          tar -czvf nexia-client-macos.tar.gz -C release-pkg .
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: nextcloud-desktop-macos.tar.gz
+          path: nexia-client-macos.tar.gz
 
   build-flatpak:
     name: Build Flatpak Bundle (Linux x86_64)
@@ -74,14 +74,14 @@ jobs:
           flatpak-cargo-generator Cargo.lock -o flatpak/cargo-sources.json
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
-          bundle: nextcloud-desktop.flatpak
-          manifest-path: flatpak/eu.luxuride.nextcloud-desktop.yml
+          bundle: nexia-client.flatpak
+          manifest-path: flatpak/eu.luxuride.nexia.yml
           run-tests: false
           upload-artifact: false
       - uses: actions/upload-artifact@v4
         with:
           name: flatpak-bundle
-          path: nextcloud-desktop.flatpak
+          path: nexia-client.flatpak
 
   publish-release:
     name: Publish GitHub Release
@@ -99,8 +99,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            artifacts/windows-x86_64/nextcloud-desktop-windows-x86_64.zip
-            artifacts/macos/nextcloud-desktop-macos.tar.gz
-            artifacts/flatpak-bundle/nextcloud-desktop.flatpak
+            artifacts/windows-x86_64/nexia-client-windows-x86_64.zip
+            artifacts/macos/nexia-client-macos.tar.gz
+            artifacts/flatpak-bundle/nexia-client.flatpak
           draft: false
           prerelease: false

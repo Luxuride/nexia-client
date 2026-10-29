@@ -1,0 +1,31 @@
+[package]
+name = "nexia-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "GTK 4 desktop user interface views and controllers for Nexia Client"
+
+[features]
+default = ["desktop"]
+desktop = ["gtk", "tray"]
+gtk = ["dep:gtk4", "dep:libadwaita", "dep:glib", "dep:gdk-pixbuf"]
+tray = ["dep:ksni"]
+android = ["dep:uniffi"]
+
+[dependencies]
+nexia-core.workspace = true
+nexia-sync.workspace = true
+nextcloud-rust-sdk.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+gtk4 = { workspace = true, optional = true }
+libadwaita = { workspace = true, optional = true }
+glib = { workspace = true, optional = true }
+uniffi = { workspace = true, optional = true }
+gdk-pixbuf = { version = "0.22", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { workspace = true, optional = true }

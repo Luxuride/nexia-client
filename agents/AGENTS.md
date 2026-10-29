@@ -1,4 +1,4 @@
-# nextcloud-desktop-rs — repo rules
+# nexia-client — repo rules
 
 Rules for agents working in this repository. This file is canonical; the
 root-level `AGENTS.md`, `CLAUDE.md` and `GEMINI.md` are symlinks to it.

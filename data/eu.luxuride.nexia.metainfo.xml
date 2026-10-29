@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>eu.luxuride.nexia</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Nexia Client</name>
+  <summary>Independent desktop sync client for Nextcloud servers</summary>
+  <description>
+    <p>
+      Nexia Client is an unofficial, independent desktop application for servers
+      running Nextcloud. It provides virtual file sync with on-demand hydration,
+      two-way folder synchronization, event-driven server theming, and native
+      desktop performance.
+    </p>
+    <p>
+      This project is not affiliated with, endorsed by, or sponsored by
+      Nextcloud GmbH. “Nextcloud” is a registered trademark of Nextcloud GmbH,
+      used here only to describe the servers this client connects to.
+    </p>
+  </description>
+  <launchable type="desktop-id">eu.luxuride.nexia.desktop</launchable>
+  <url type="bugtracker">https://github.com/Luxuride/nexia-client/issues</url>
+  <url type="vcs-browser">https://github.com/Luxuride/nexia-client</url>
+  <provides>
+    <binary>nexia-client</binary>
+  </provides>
+</component>
