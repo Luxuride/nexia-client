@@ -31,14 +31,21 @@ impl MainHeaderBar {
         let account_switcher = AccountSwitcher::new(backend, toast_overlay, on_refresh);
         header_bar.pack_start(account_switcher.widget());
 
-        // Asynchronously populate server title from server theming if available
+        // Populate the server title from server theming, and refresh it whenever the active
+        // account changes so the bar never shows the previous account's server.
         let b = backend.clone();
         let wt = window_title.clone();
+        let mut event_rx = backend.subscribe_events();
         glib::MainContext::default().spawn_local(async move {
-            if let Some(theme) = b.server_theming().await
-                && let Some(name) = theme.name()
-            {
-                wt.set_title(name);
+            refresh_server_title(&b, &wt).await;
+            while let Ok(event) = event_rx.recv().await {
+                if matches!(
+                    event,
+                    nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. }
+                        | nextcloud_desktop_core::events::DesktopEvent::AccountSignedOut { .. }
+                ) {
+                    refresh_server_title(&b, &wt).await;
+                }
             }
         });
 
@@ -57,6 +64,18 @@ impl MainHeaderBar {
     pub fn set_page_subtitle(&self, subtitle: &str) {
         self.window_title.set_subtitle(subtitle);
     }
+}
+
+async fn refresh_server_title<B: FileExplorerBackend>(
+    backend: &B,
+    window_title: &adw::WindowTitle,
+) {
+    let name = backend
+        .server_theming()
+        .await
+        .and_then(|t| t.name)
+        .unwrap_or_else(|| "Nextcloud".to_string());
+    window_title.set_title(&name);
 }
 
 impl ViewComponent for MainHeaderBar {

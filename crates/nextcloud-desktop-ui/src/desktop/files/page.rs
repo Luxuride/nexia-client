@@ -130,16 +130,31 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
         // 3. Bottom status bar
         page_box.append(status_bar.root_widget());
 
-        // Listen for display presentation setting updates to refresh view immediately
+        // Refresh on presentation changes, and drop the previous account's search so a switch
+        // never re-runs one account's query against another account's files.
         let on_refresh_disp = on_refresh_request.clone();
+        let search_query_ev = search_query.clone();
+        let search_gen_ev = search_generation.clone();
+        let search_toggle_ev = toolbar.search_toggle().clone();
+        let search_entry_ev = toolbar.search_entry().clone();
         let mut disp_rx = backend.subscribe_events();
         glib::MainContext::default().spawn_local(async move {
             while let Ok(event) = disp_rx.recv().await {
-                if matches!(
-                    event,
-                    nextcloud_desktop_core::events::DesktopEvent::DisplaySettingsChanged
-                ) {
-                    on_refresh_disp();
+                match event {
+                    nextcloud_desktop_core::events::DesktopEvent::DisplaySettingsChanged => {
+                        on_refresh_disp();
+                    }
+                    nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. }
+                    | nextcloud_desktop_core::events::DesktopEvent::AccountSignedOut { .. } => {
+                        *search_query_ev.borrow_mut() = None;
+                        search_gen_ev.set(search_gen_ev.get() + 1);
+                        if search_toggle_ev.is_active() {
+                            search_entry_ev.set_text("");
+                            search_toggle_ev.set_active(false);
+                        }
+                        on_refresh_disp();
+                    }
+                    _ => {}
                 }
             }
         });

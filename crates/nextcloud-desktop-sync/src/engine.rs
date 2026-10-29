@@ -54,6 +54,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn switching_accounts_drops_cached_branding_and_logo() {
+        let temp_dir = std::env::temp_dir().join(format!("nc_test_theme_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let theming_dir = temp_dir.join("theming");
+        std::fs::create_dir_all(&theming_dir).expect("create theming dir");
+        std::fs::write(theming_dir.join("cloud.alice.org_logo.svg"), b"<svg/>")
+            .expect("write alice logo");
+
+        let config = AppConfig {
+            cache_dir: Some(temp_dir.clone()),
+            ..Default::default()
+        };
+        let config_lock = Arc::new(tokio::sync::RwLock::new(config));
+        let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
+
+        coordinator
+            .add_account(Account::new(
+                "Alice Nextcloud",
+                ServerConfig::new("https://cloud.alice.org"),
+                AccountCredentials::new("alice", "token123"),
+            ))
+            .await
+            .expect("add alice succeeds");
+        let bob = Account::new(
+            "Bob Nextcloud",
+            ServerConfig::new("https://cloud.bob.org"),
+            AccountCredentials::new("bob", "token456"),
+        );
+        let bob_id = bob.id.clone();
+        coordinator
+            .add_account(bob)
+            .await
+            .expect("add bob succeeds");
+
+        assert!(
+            coordinator.cached_theme_logo().is_none(),
+            "bob has no logo, so alice's logo must not be picked up"
+        );
+
+        *coordinator.cached_theme_data.write().expect("theme lock") =
+            Some(nextcloud_rust_sdk::ThemeInfo {
+                name: Some("Alice".to_string()),
+                ..Default::default()
+            });
+        assert_eq!(
+            coordinator.cached_theme().and_then(|t| t.name),
+            Some("Alice".to_string())
+        );
+
+        coordinator
+            .switch_account(&bob_id)
+            .await
+            .expect("switch to bob succeeds");
+        assert!(
+            coordinator.cached_theme().is_none(),
+            "branding must be repopulated for the newly active account"
+        );
+
+        let _ = std::fs::remove_dir_all(temp_dir);
+    }
+
+    #[tokio::test]
     async fn orchestrator_mounts_pause_resume_and_file_status() {
         let temp_dir = std::env::temp_dir().join(format!("nc_test_orch_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);

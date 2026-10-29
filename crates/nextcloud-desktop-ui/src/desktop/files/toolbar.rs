@@ -28,6 +28,8 @@ pub struct PathToolbar {
     zoom_out_btn: Button,
     zoom_state_btn: Button,
     zoom_in_btn: Button,
+    grid_toggle: ToggleButton,
+    sort_popover: SortPopover,
 }
 
 impl PathToolbar {
@@ -300,6 +302,8 @@ impl PathToolbar {
             zoom_out_btn,
             zoom_state_btn,
             zoom_in_btn,
+            grid_toggle,
+            sort_popover,
         }
     }
 
@@ -315,6 +319,13 @@ impl PathToolbar {
         self.zoom_state_btn.set_label(&zoom.display_label());
         self.zoom_out_btn.set_sensitive(zoom > ZoomLevel::Small);
         self.zoom_in_btn.set_sensitive(zoom < ZoomLevel::ExtraLarge);
+
+        let is_grid = backend.view_mode().await == FileViewMode::Grid;
+        if self.grid_toggle.is_active() != is_grid {
+            self.grid_toggle.set_active(is_grid);
+        }
+
+        self.sort_popover.sync_state(backend);
     }
 
     /// Access the embedded search entry.
