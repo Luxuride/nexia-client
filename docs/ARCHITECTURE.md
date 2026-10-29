@@ -88,7 +88,7 @@ installation, FUSE descriptor wiring).
 | `mounts.rs` | Thin wrappers that forward to `MountsHandle` (add/remove/list/pause/resume/sync/status). |
 | `watcher.rs` | `FileSystemWatcher` wrapping the SDK watcher; routes local changes to sync and 0-byte reads to hydration. |
 | `fuse_mount.rs` | `DesktopHydrator` implementing `AsyncHydrator` over `VfsHandle`, so FUSE reads pull bytes on demand. |
-| `freedesktop_thumbs.rs` | Re-exports the SDK's FreeDesktop thumbnail helpers. |
+| `freedesktop_thumbs.rs` | Re-exports the SDK's FreeDesktop thumbnail helpers, and owns the app-specific `is_app_thumbnail` predicate used for scoped accounting/cleanup of the shared system thumbnail cache. |
 | `engine.rs` | Compatibility re-export of `DesktopSyncCoordinator`, plus the coordinator's integration tests. |
 | `error.rs` | `SyncError` with `#[source]` preservation, including the SDK error variants the coordinator surfaces to the UI. |
 
@@ -298,6 +298,7 @@ internal VFS mounts and are skipped by the sync loop.
 | `<cache_dir>/accounts/<account_id>/vfs/tree.json` | Persisted virtual tree snapshot. |
 | `<cache_dir>/accounts/<account_id>/mounts/<mount_id>/journal.json` | Per-mount sync journal. |
 | `<cache_dir>/accounts/<account_id>/thumbnails/` | Cached thumbnails. |
+| `$XDG_CACHE_HOME/thumbnails/{normal,large,x-large,xx-large}/` | Shared system thumbnail cache. Entries this app installed are identified by the `THUMBNAIL_SOFTWARE` program name in their PNG `Software` chunk. |
 | `<cache_dir>/theming/` | Cached server logo assets. |
 
 `<cache_dir>` defaults to `~/.cache/nexia` and is per-account

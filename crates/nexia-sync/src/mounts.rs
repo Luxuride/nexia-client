@@ -197,7 +197,7 @@ impl DesktopSyncCoordinator {
                             use std::io::Read;
                             let mut buf = [0u8; 2048];
                             if let Ok(n) = f.read(&mut buf)
-                                && buf[..n].windows(9).any(|w| w == b"Nextcloud")
+                                && crate::freedesktop_thumbs::is_app_thumbnail(&buf[..n])
                                 && let Ok(meta) = entry.metadata()
                             {
                                 shared_thumbnail_bytes += meta.len();

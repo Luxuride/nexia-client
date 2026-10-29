@@ -778,7 +778,7 @@ impl DesktopSyncCoordinator {
                             use std::io::Read;
                             let mut buf = [0u8; 2048];
                             if let Ok(n) = file.read(&mut buf)
-                                && buf[..n].windows(9).any(|w| w == b"Nextcloud")
+                                && crate::freedesktop_thumbs::is_app_thumbnail(&buf[..n])
                             {
                                 if let Ok(meta) = entry.metadata() {
                                     freed += meta.len();
@@ -805,7 +805,7 @@ impl DesktopSyncCoordinator {
                             use std::io::Read;
                             let mut buf = [0u8; 2048];
                             if let Ok(n) = file.read(&mut buf)
-                                && buf[..n].windows(9).any(|w| w == b"Nextcloud")
+                                && crate::freedesktop_thumbs::is_app_thumbnail(&buf[..n])
                             {
                                 let _ = std::fs::remove_file(&path);
                             }
@@ -1236,6 +1236,7 @@ impl DesktopSyncCoordinator {
                 &target,
                 &png,
                 target_mtime,
+                crate::THUMBNAIL_SOFTWARE,
             );
         }
 
@@ -1254,6 +1255,7 @@ impl DesktopSyncCoordinator {
                     &vfs_target,
                     &png,
                     vfs_mtime,
+                    crate::THUMBNAIL_SOFTWARE,
                 );
             }
         }
@@ -1284,6 +1286,7 @@ impl DesktopSyncCoordinator {
                         &local_target,
                         &png,
                         local_mtime,
+                        crate::THUMBNAIL_SOFTWARE,
                     );
                 }
             }

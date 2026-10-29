@@ -22,6 +22,15 @@ pub use folder_sync::FolderSyncEngine;
 pub use fuse_mount::DesktopHydrator;
 pub use watcher::FileSystemWatcher;
 
+/// Program name written to the FreeDesktop PNG `Software` chunk of every
+/// thumbnail this application installs.
+///
+/// The Thumbnail Managing Standard defines that chunk as the name of the
+/// generating program, so it doubles as the marker identifying cache entries
+/// this application owns. Scoped accounting and cleanup of the shared system
+/// thumbnail cache match on it.
+pub const THUMBNAIL_SOFTWARE: &str = "Nexia Client";
+
 pub use nextcloud_rust_sdk::{
     Client, DiscoveredLocalFile, DiscoveredRemoteFile, FolderSyncRunner, JournalEntry,
     MountDescriptor, MountId, MountMode, MountState, MountStatus, MountsHandle,
