@@ -6,7 +6,7 @@ use gtk4::prelude::*;
 use gtk4::{Align, Button, Image};
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use nextcloud_rust_sdk::{StoredSyncMount, format_bytes};
+use nexia_nextcloud_sdk::{StoredSyncMount, format_bytes};
 
 use crate::widget::FileExplorerBackend;
 

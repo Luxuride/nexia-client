@@ -8,7 +8,7 @@ use crate::coordinator::DesktopSyncCoordinator;
 use crate::error::SyncError;
 pub use crate::freedesktop_thumbs::path_to_file_uri;
 use nexia_core::events::DesktopEvent;
-use nextcloud_rust_sdk::{
+use nexia_nextcloud_sdk::{
     AuthProvider, DavClient, DiscoveredRemoteFile, FolderSyncOutcome, FolderSyncRunner, MountId,
     MountProgressSnapshot, MountStatus, Transport,
 };

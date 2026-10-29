@@ -1,11 +1,11 @@
-//! Cross-platform filesystem watcher delegating to `nextcloud_rust_sdk::FileSystemWatcher`.
+//! Cross-platform filesystem watcher delegating to `nexia_nextcloud_sdk::FileSystemWatcher`.
 
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::coordinator::DesktopSyncCoordinator;
 use crate::error::SyncError;
-use nextcloud_rust_sdk::FileSystemWatcher as SdkWatcher;
+use nexia_nextcloud_sdk::FileSystemWatcher as SdkWatcher;
 
 /// Cross-platform watcher monitoring local mount folders and dispatching sync cycles on file alterations.
 pub struct FileSystemWatcher {

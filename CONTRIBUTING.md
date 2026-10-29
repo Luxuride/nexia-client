@@ -8,7 +8,7 @@ This codebase is structured as a high-integrity Cargo workspace of small, focuse
 Both **human** and **LLM / AI-assisted contributions** are welcome!
 
 **Know where the code belongs before you write it.** This repository is a
-consumer of [`nextcloud-rust-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk)
+consumer of [`nexia-nextcloud-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk)
 and the SDK does not depend on it in any way. Protocol handling, VFS state,
 hydration bookkeeping, journals, reconciliation and retries are SDK concerns; a
 PR that re-implements any of them here will be asked to move. Widgets, view
@@ -44,8 +44,8 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
    - `crates/nexia-core`: Models, configuration, accounts, encrypted storage, event bus, autostart.
    - `crates/nexia-sync`: `DesktopSyncCoordinator` over SDK handles, file operations, folder sync, watcher, FUSE hydration.
    - `crates/nexia-ui`: GTK 4 views, widgets, dialogs, controller, app bar.
-7. **SDK facade only**: Import `nextcloud_rust_sdk`, never its internal crates
-   (`nextcloud-sdk-core`, `nextcloud-sdk-vfs`, `nextcloud-dav`, `nextcloud-auth`,
+7. **SDK facade only**: Import `nexia_nextcloud_sdk`, never its internal crates
+   (`nexia-nextcloud-core`, `nextcloud-sdk-vfs`, `nextcloud-dav`, `nextcloud-auth`,
    `nextcloud-transport`, …). If the facade is missing something, that is an SDK
    issue, not a reason to reach around it.
 8. **No single-file monoliths**: Split files by type or concern. `lib.rs` / `mod.rs` only handles re-exports and wiring.

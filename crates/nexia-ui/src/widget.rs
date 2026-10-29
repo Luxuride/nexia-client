@@ -36,19 +36,19 @@ pub trait FileExplorerBackend: Clone + 'static {
     fn set_zoom_level(&self, zoom: ZoomLevel) -> impl Future<Output = ()>;
 
     /// Returns the current file sorting criteria.
-    fn sort_criteria(&self) -> impl Future<Output = nextcloud_rust_sdk::FileSortCriteria>;
+    fn sort_criteria(&self) -> impl Future<Output = nexia_nextcloud_sdk::FileSortCriteria>;
 
     /// Updates the current file sorting criteria.
     fn set_sort_criteria(
         &self,
-        criteria: nextcloud_rust_sdk::FileSortCriteria,
+        criteria: nexia_nextcloud_sdk::FileSortCriteria,
     ) -> impl Future<Output = ()>;
 
     /// Fetches server visual theming metadata.
-    fn server_theming(&self) -> impl Future<Output = Option<nextcloud_rust_sdk::ThemeInfo>>;
+    fn server_theming(&self) -> impl Future<Output = Option<nexia_nextcloud_sdk::ThemeInfo>>;
 
     /// Returns fast in-memory cached visual theming metadata if available.
-    fn cached_theming(&self) -> Option<nextcloud_rust_sdk::ThemeInfo>;
+    fn cached_theming(&self) -> Option<nexia_nextcloud_sdk::ThemeInfo>;
 
     /// Fast synchronous check returning a cached server logo path if already on disk.
     fn cached_theme_logo(&self) -> Option<PathBuf>;
@@ -215,12 +215,12 @@ pub trait FileExplorerBackend: Clone + 'static {
     fn start_oauth_login(
         &self,
         server_url: &str,
-    ) -> impl Future<Output = Result<(String, nextcloud_rust_sdk::Client), UiError>>;
+    ) -> impl Future<Output = Result<(String, nexia_nextcloud_sdk::Client), UiError>>;
 
     /// Polls a pending OAuth login flow.
     fn poll_oauth_login(
         &self,
-        client: &nextcloud_rust_sdk::Client,
+        client: &nexia_nextcloud_sdk::Client,
     ) -> impl Future<Output = Result<Option<Account>, UiError>>;
 
     /// Creates or retrieves a public share link for the given remote path.
@@ -249,7 +249,7 @@ pub trait FileExplorerBackend: Clone + 'static {
     fn store_directory_sort(
         &self,
         _dir_path: &str,
-        _criteria: nextcloud_rust_sdk::FileSortCriteria,
+        _criteria: nexia_nextcloud_sdk::FileSortCriteria,
     ) -> impl Future<Output = ()> {
         async {}
     }
@@ -258,7 +258,7 @@ pub trait FileExplorerBackend: Clone + 'static {
     fn load_directory_sort(
         &self,
         _dir_path: &str,
-    ) -> impl Future<Output = Option<nextcloud_rust_sdk::FileSortCriteria>> {
+    ) -> impl Future<Output = Option<nexia_nextcloud_sdk::FileSortCriteria>> {
         async { None }
     }
 
@@ -293,7 +293,7 @@ pub trait FileExplorerBackend: Clone + 'static {
     }
 
     /// Lists all configured sync mounts stored in the SDK database.
-    fn sync_mounts(&self) -> impl Future<Output = Vec<nextcloud_rust_sdk::StoredSyncMount>> {
+    fn sync_mounts(&self) -> impl Future<Output = Vec<nexia_nextcloud_sdk::StoredSyncMount>> {
         async { Vec::new() }
     }
 
@@ -376,10 +376,10 @@ pub trait FileExplorerBackend: Clone + 'static {
     fn mount_storage_usage(
         &self,
         _mount_id: &str,
-    ) -> impl Future<Output = Result<nextcloud_rust_sdk::MountStorageUsage, UiError>> {
+    ) -> impl Future<Output = Result<nexia_nextcloud_sdk::MountStorageUsage, UiError>> {
         async {
-            Ok(nextcloud_rust_sdk::MountStorageUsage::new(
-                nextcloud_rust_sdk::MountId::new(),
+            Ok(nexia_nextcloud_sdk::MountStorageUsage::new(
+                nexia_nextcloud_sdk::MountId::new(),
                 0,
                 0,
                 0,
@@ -405,11 +405,11 @@ pub trait FileExplorerBackend: Clone + 'static {
     fn mount_progress(
         &self,
         _mount_id: &str,
-    ) -> impl Future<Output = Result<nextcloud_rust_sdk::MountProgressSnapshot, UiError>> {
+    ) -> impl Future<Output = Result<nexia_nextcloud_sdk::MountProgressSnapshot, UiError>> {
         async {
-            Ok(nextcloud_rust_sdk::MountProgressSnapshot::new(
-                nextcloud_rust_sdk::MountId::new(),
-                nextcloud_rust_sdk::MountStatus::Idle,
+            Ok(nexia_nextcloud_sdk::MountProgressSnapshot::new(
+                nexia_nextcloud_sdk::MountId::new(),
+                nexia_nextcloud_sdk::MountStatus::Idle,
             ))
         }
     }

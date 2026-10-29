@@ -118,7 +118,7 @@ impl CanvasContextMenu {
                     status: FileSyncStatus::CloudPlaceholder,
                     mime_type: Some("httpd/unix-directory".to_string()),
                     file_id: None,
-                    icon_category: nextcloud_rust_sdk::ResourceIconCategory::Folder,
+                    icon_category: nexia_nextcloud_sdk::ResourceIconCategory::Folder,
                     modified_at: None,
                     permissions: Some("RDNVWC".to_string()),
                     directory_summary: None,

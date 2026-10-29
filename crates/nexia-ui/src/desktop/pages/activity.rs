@@ -8,7 +8,7 @@ use gtk4::{Align, Button, Image, ProgressBar};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use nexia_core::events::DesktopEvent;
-use nextcloud_rust_sdk::{MountStatus, format_bytes};
+use nexia_nextcloud_sdk::{MountStatus, format_bytes};
 
 use super::MountActivityDialog;
 use crate::widget::{FileExplorerBackend, ViewComponent};

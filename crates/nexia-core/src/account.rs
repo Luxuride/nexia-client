@@ -1,6 +1,6 @@
 //! Account model and connection profile representations.
 
-use nextcloud_rust_sdk::{SecretString, ServerUrl};
+use nexia_nextcloud_sdk::{SecretString, ServerUrl};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::PathBuf;

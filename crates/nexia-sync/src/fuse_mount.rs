@@ -6,7 +6,7 @@ use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
 use nexia_core::events::DesktopEvent;
-use nextcloud_rust_sdk::{AsyncHydrator, FuseDriver, VfsError, VirtualTree, mount_virtual_fs};
+use nexia_nextcloud_sdk::{AsyncHydrator, FuseDriver, VfsError, VirtualTree, mount_virtual_fs};
 use tracing::{debug, error, info};
 
 use crate::coordinator::DesktopSyncCoordinator;

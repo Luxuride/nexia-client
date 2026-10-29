@@ -1,6 +1,6 @@
 //! High-level virtual file mutations and two-way folder synchronization.
 
-use nextcloud_rust_sdk::{DavPath, DavProperty, Depth, FolderSyncRunner, PropfindBody};
+use nexia_nextcloud_sdk::{DavPath, DavProperty, Depth, FolderSyncRunner, PropfindBody};
 use std::path::PathBuf;
 
 use crate::coordinator::DesktopSyncCoordinator;
@@ -10,7 +10,7 @@ use nexia_core::events::DesktopEvent;
 
 /// Constructs a normalized [`DavPath`] from user name and relative path.
 pub fn make_dav_path(user: &str, relative: &str) -> Result<DavPath, SyncError> {
-    nextcloud_rust_sdk::make_dav_path(user, relative).map_err(SyncError::Orchestrator)
+    nexia_nextcloud_sdk::make_dav_path(user, relative).map_err(SyncError::Orchestrator)
 }
 
 impl DesktopSyncCoordinator {
@@ -42,11 +42,11 @@ impl DesktopSyncCoordinator {
         };
 
         let dav_prefix = format!("/remote.php/dav/files/{user}");
-        let summaries: Vec<nextcloud_rust_sdk::DavResourceSummary> = resources
+        let summaries: Vec<nexia_nextcloud_sdk::DavResourceSummary> = resources
             .iter()
             .map(|res| {
                 let mut sum =
-                    nextcloud_rust_sdk::DavResourceSummary::new(&res.href, res.is_collection);
+                    nexia_nextcloud_sdk::DavResourceSummary::new(&res.href, res.is_collection);
                 if let Some(len) = res.content_length {
                     sum = sum.with_content_length(len);
                 }
@@ -156,11 +156,11 @@ impl DesktopSyncCoordinator {
         };
 
         let dav_prefix = format!("/remote.php/dav/files/{user}");
-        let summaries: Vec<nextcloud_rust_sdk::DavResourceSummary> = resources
+        let summaries: Vec<nexia_nextcloud_sdk::DavResourceSummary> = resources
             .iter()
             .map(|res| {
                 let mut sum =
-                    nextcloud_rust_sdk::DavResourceSummary::new(&res.href, res.is_collection);
+                    nexia_nextcloud_sdk::DavResourceSummary::new(&res.href, res.is_collection);
                 if let Some(len) = res.content_length {
                     sum = sum.with_content_length(len);
                 }
@@ -330,20 +330,20 @@ impl DesktopSyncCoordinator {
                 if mount.mode != "Fuse" && std::fs::write(&target_file, &bytes).is_ok() {
                     let journal_path = self.mount_journal_path(&mount.account_id, &mount.id);
                     let mut journal =
-                        nextcloud_rust_sdk::SyncJournal::load_from_file(&journal_path)
-                            .unwrap_or_else(|_| nextcloud_rust_sdk::SyncJournal::new());
+                        nexia_nextcloud_sdk::SyncJournal::load_from_file(&journal_path)
+                            .unwrap_or_else(|_| nexia_nextcloud_sdk::SyncJournal::new());
                     let mtime = std::fs::metadata(&target_file)
                         .and_then(|m| m.modified())
                         .unwrap_or_else(|_| std::time::SystemTime::now());
                     let canonical_rel = format!("/{}", rel_clean.trim_matches('/'));
-                    journal.record(nextcloud_rust_sdk::JournalEntry::new(
+                    journal.record(nexia_nextcloud_sdk::JournalEntry::new(
                         &canonical_rel,
                         byte_len,
                         mtime,
                         false,
                     ));
                     let _ = journal.save_to_file(&journal_path);
-                    nextcloud_rust_sdk::remove_freedesktop_fail_marker(&target_file);
+                    nexia_nextcloud_sdk::remove_freedesktop_fail_marker(&target_file);
                     let _ = self.fetch_thumbnail(&clean, 256).await;
                     self.event_bus.emit(DesktopEvent::FileTransferCompleted {
                         relative_path: canonical_rel,
@@ -412,20 +412,20 @@ impl DesktopSyncCoordinator {
 
                     let journal_path = self.mount_journal_path(&mount.account_id, &mount.id);
                     let mut journal =
-                        nextcloud_rust_sdk::SyncJournal::load_from_file(&journal_path)
-                            .unwrap_or_else(|_| nextcloud_rust_sdk::SyncJournal::new());
+                        nexia_nextcloud_sdk::SyncJournal::load_from_file(&journal_path)
+                            .unwrap_or_else(|_| nexia_nextcloud_sdk::SyncJournal::new());
                     let mtime = std::fs::metadata(&canonical)
                         .and_then(|m| m.modified())
                         .unwrap_or_else(|_| std::time::SystemTime::now());
                     let canonical_rel = format!("/{}", rel_str.trim_matches('/'));
-                    journal.record(nextcloud_rust_sdk::JournalEntry::new(
+                    journal.record(nexia_nextcloud_sdk::JournalEntry::new(
                         &canonical_rel,
                         byte_len,
                         mtime,
                         false,
                     ));
                     let _ = journal.save_to_file(&journal_path);
-                    nextcloud_rust_sdk::remove_freedesktop_fail_marker(&canonical);
+                    nexia_nextcloud_sdk::remove_freedesktop_fail_marker(&canonical);
                     let _ = self.fetch_thumbnail(&full_remote, 256).await;
 
                     self.event_bus.emit(DesktopEvent::FileTransferCompleted {
@@ -539,7 +539,8 @@ impl DesktopSyncCoordinator {
         new_name: &str,
     ) -> Result<String, SyncError> {
         let clean_old = format!("/{}", old_remote_path.trim_matches('/'));
-        let parent = nextcloud_rust_sdk::parent_path(&clean_old).unwrap_or_else(|| "/".to_string());
+        let parent =
+            nexia_nextcloud_sdk::parent_path(&clean_old).unwrap_or_else(|| "/".to_string());
         let trimmed_name = new_name.trim().trim_matches('/');
         let clean_new = if parent == "/" {
             format!("/{trimmed_name}")
@@ -620,7 +621,7 @@ impl DesktopSyncCoordinator {
 
         if let Some((_, client, auth)) = self.active_dav_context().await {
             let share_client = client.shares(&auth);
-            let share_creation = nextcloud_rust_sdk::CreateShare::public_link(&clean_path);
+            let share_creation = nexia_nextcloud_sdk::CreateShare::public_link(&clean_path);
 
             if let Ok(share) = share_client.create(&share_creation).await
                 && let Some(url) = share.url()
@@ -897,7 +898,7 @@ impl DesktopSyncCoordinator {
     pub async fn search(
         &self,
         term: &str,
-    ) -> Result<Vec<nextcloud_rust_sdk::VirtualEntrySummary>, SyncError> {
+    ) -> Result<Vec<nexia_nextcloud_sdk::VirtualEntrySummary>, SyncError> {
         let trimmed = term.trim().to_string();
         if trimmed.is_empty() {
             return Ok(Vec::new());
@@ -957,7 +958,7 @@ impl DesktopSyncCoordinator {
                                 .icon
                                 .as_deref()
                                 .is_some_and(|ic| ic.contains("folder"));
-                            let summary = nextcloud_rust_sdk::VirtualEntrySummary {
+                            let summary = nexia_nextcloud_sdk::VirtualEntrySummary {
                                 path: candidate_path,
                                 name: entry.title,
                                 is_directory: is_dir,
@@ -972,9 +973,9 @@ impl DesktopSyncCoordinator {
                                 mime_type: None,
                                 file_id: entry.attributes.get("fileid").and_then(|v| v.as_u64()),
                                 icon_category: if is_dir {
-                                    nextcloud_rust_sdk::ResourceIconCategory::Folder
+                                    nexia_nextcloud_sdk::ResourceIconCategory::Folder
                                 } else {
-                                    nextcloud_rust_sdk::ResourceIconCategory::Document
+                                    nexia_nextcloud_sdk::ResourceIconCategory::Document
                                 },
                                 is_hydrated: false,
                                 cached_path: None,
@@ -1013,7 +1014,7 @@ impl DesktopSyncCoordinator {
         let thumbs_dir = self.active_thumbnails_dir_sync();
         let fallback_thumbs_dir = self.cache_dir().join("thumbnails");
         let clean_path = remote_path.trim_matches('/');
-        let hash = nextcloud_rust_sdk::md5_hex(clean_path.as_bytes());
+        let hash = nexia_nextcloud_sdk::md5_hex(clean_path.as_bytes());
 
         if let Some(s) = preferred_size {
             let p = thumbs_dir.join(format!("{hash}_{s}.png"));
@@ -1124,11 +1125,11 @@ impl DesktopSyncCoordinator {
         };
 
         let dav_prefix = format!("/remote.php/dav/files/{user}");
-        let summaries: Vec<nextcloud_rust_sdk::DavResourceSummary> = resources
+        let summaries: Vec<nexia_nextcloud_sdk::DavResourceSummary> = resources
             .iter()
             .map(|res| {
                 let mut sum =
-                    nextcloud_rust_sdk::DavResourceSummary::new(&res.href, res.is_collection);
+                    nexia_nextcloud_sdk::DavResourceSummary::new(&res.href, res.is_collection);
                 if let Some(len) = res.content_length {
                     sum = sum.with_content_length(len);
                 }
@@ -1160,9 +1161,9 @@ impl DesktopSyncCoordinator {
             std::fs::read_to_string(&tree_file)
                 .ok()
                 .and_then(|data| serde_json::from_str(&data).ok())
-                .unwrap_or_else(|| nextcloud_rust_sdk::VirtualTree::new("Nextcloud"))
+                .unwrap_or_else(|| nexia_nextcloud_sdk::VirtualTree::new("Nextcloud"))
         } else {
-            nextcloud_rust_sdk::VirtualTree::new("Nextcloud")
+            nexia_nextcloud_sdk::VirtualTree::new("Nextcloud")
         };
 
         let count = tree.populate_from_resources(&dav_prefix, &summaries);
@@ -1214,7 +1215,7 @@ impl DesktopSyncCoordinator {
             .ok()
             .flatten()
             .and_then(|e| e.modified_at)
-            .and_then(|s| nextcloud_rust_sdk::parse_date_to_unix_secs(&s))
+            .and_then(|s| nexia_nextcloud_sdk::parse_date_to_unix_secs(&s))
             .unwrap_or_else(|| {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -1324,7 +1325,7 @@ impl DesktopSyncCoordinator {
         let _ = tokio::fs::create_dir_all(&thumbs_dir).await;
 
         let clean_path = remote_path.trim_matches('/');
-        let hash = nextcloud_rust_sdk::md5_hex(clean_path.as_bytes());
+        let hash = nexia_nextcloud_sdk::md5_hex(clean_path.as_bytes());
         let thumb_filename = format!("{hash}_{effective_size}.png");
         let thumb_path = thumbs_dir.join(thumb_filename);
 
@@ -1395,9 +1396,9 @@ impl DesktopSyncCoordinator {
             let dav = client.dav(&auth);
             let clean_no_slash = clean_path.trim_start_matches('/');
 
-            let opts = nextcloud_rust_sdk::PreviewOptions::new()
+            let opts = nexia_nextcloud_sdk::PreviewOptions::new()
                 .dimensions(effective_size, effective_size)
-                .mode(nextcloud_rust_sdk::PreviewMode::Cover);
+                .mode(nexia_nextcloud_sdk::PreviewMode::Cover);
 
             if let Some(bytes) =
                 fetch_preview_bytes(&preview, &dav, &user, file_id, clean_no_slash, &opts).await
@@ -1580,15 +1581,15 @@ impl DesktopSyncCoordinator {
 }
 
 async fn fetch_preview_bytes<
-    T: nextcloud_rust_sdk::Transport,
-    A: nextcloud_rust_sdk::AuthProvider,
+    T: nexia_nextcloud_sdk::Transport,
+    A: nexia_nextcloud_sdk::AuthProvider,
 >(
-    preview: &nextcloud_rust_sdk::PreviewClient<'_, T, A>,
-    dav: &nextcloud_rust_sdk::DavClient<'_, T, A>,
+    preview: &nexia_nextcloud_sdk::PreviewClient<'_, T, A>,
+    dav: &nexia_nextcloud_sdk::DavClient<'_, T, A>,
     user: &str,
     file_id: Option<u64>,
     clean_no_slash: &str,
-    opts: &nextcloud_rust_sdk::PreviewOptions,
+    opts: &nexia_nextcloud_sdk::PreviewOptions,
 ) -> Option<Vec<u8>> {
     // 1. Primary: fetch by numeric file ID if known (fastest and most reliable in Nextcloud)
     if let Some(fid) = file_id
@@ -1601,7 +1602,7 @@ async fn fetch_preview_bytes<
         return Some(bytes);
     }
     // 3. Fallback without mode (Nextcloud rejects mode=cover for HEIC, video, and PDF formats)
-    let simple_opts = nextcloud_rust_sdk::PreviewOptions::new().dimensions(
+    let simple_opts = nexia_nextcloud_sdk::PreviewOptions::new().dimensions(
         opts.width_px().unwrap_or(64),
         opts.height_px().unwrap_or(64),
     );
@@ -1619,7 +1620,7 @@ async fn fetch_preview_bytes<
     if (lower.ends_with(".jpg") || lower.ends_with(".jpeg"))
         && let Ok(dav_path) = make_dav_path(user, clean_no_slash)
         && let Ok(header) = dav.get_range(&dav_path, 0, 131071).await
-        && let Some(thumb) = nextcloud_rust_sdk::extract_embedded_jpeg_thumbnail(&header)
+        && let Some(thumb) = nexia_nextcloud_sdk::extract_embedded_jpeg_thumbnail(&header)
     {
         return Some(thumb.to_vec());
     }

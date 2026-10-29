@@ -5,7 +5,7 @@ use gtk4::{Align, Image, Label, Orientation, ProgressBar, ScrolledWindow, Spinne
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use nexia_core::events::DesktopEvent;
-use nextcloud_rust_sdk::{MountStatus, StoredSyncMount, format_bytes};
+use nexia_nextcloud_sdk::{MountStatus, StoredSyncMount, format_bytes};
 
 use crate::widget::FileExplorerBackend;
 
@@ -133,7 +133,7 @@ impl MountActivityDialog {
             let em_row = empty_row.clone();
             let empty_removed = std::rc::Rc::new(std::cell::Cell::new(false));
 
-            std::rc::Rc::new(move |snap: nextcloud_rust_sdk::MountProgressSnapshot| {
+            std::rc::Rc::new(move |snap: nexia_nextcloud_sdk::MountProgressSnapshot| {
                 let status_text = match snap.status {
                     MountStatus::Paused => "Paused",
                     MountStatus::Syncing => "Syncing",

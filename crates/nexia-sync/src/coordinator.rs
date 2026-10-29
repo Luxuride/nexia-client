@@ -1,6 +1,6 @@
 //! Master desktop coordinator wrapping the SDK background orchestrator and client list.
 
-use nextcloud_rust_sdk::{
+use nexia_nextcloud_sdk::{
     Client, MountDescriptor, MountId, MountMode, MountsHandle, NextcloudOrchestrator,
     OrchestratorConfig, OrchestratorEvent, OrchestratorHandle, ServerUrl, SessionState, VfsHandle,
     VirtualTree,
@@ -42,23 +42,23 @@ pub struct DesktopSyncCoordinator {
     pub(crate) default_mount_id: Arc<RwLock<Option<MountId>>>,
     pub(crate) preview_semaphore: Arc<tokio::sync::Semaphore>,
     pub(crate) download_semaphore: Arc<tokio::sync::Semaphore>,
-    pub(crate) cached_theme_data: Arc<std::sync::RwLock<Option<nextcloud_rust_sdk::ThemeInfo>>>,
+    pub(crate) cached_theme_data: Arc<std::sync::RwLock<Option<nexia_nextcloud_sdk::ThemeInfo>>>,
     pub(crate) thumbnail_stats: Arc<std::sync::RwLock<ThumbnailQueueSnapshot>>,
     pub(crate) is_preloading_tree: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) storage: Option<Arc<nexia_core::DesktopStorage>>,
     pub(crate) watcher: Arc<tokio::sync::Mutex<Option<crate::watcher::FileSystemWatcher>>>,
     pub(crate) mount_progress_cache: Arc<
         std::sync::RwLock<
-            std::collections::HashMap<String, nextcloud_rust_sdk::MountProgressSnapshot>,
+            std::collections::HashMap<String, nexia_nextcloud_sdk::MountProgressSnapshot>,
         >,
     >,
     pub(crate) fuse_sessions: Arc<
         tokio::sync::Mutex<
-            std::collections::HashMap<String, nextcloud_rust_sdk::BackgroundSession>,
+            std::collections::HashMap<String, nexia_nextcloud_sdk::BackgroundSession>,
         >,
     >,
     pub(crate) fuse_tree:
-        Arc<tokio::sync::RwLock<Option<Arc<std::sync::RwLock<nextcloud_rust_sdk::VirtualTree>>>>>,
+        Arc<tokio::sync::RwLock<Option<Arc<std::sync::RwLock<nexia_nextcloud_sdk::VirtualTree>>>>>,
     pub(crate) fuse_mountpoint: Arc<tokio::sync::RwLock<Option<PathBuf>>>,
     pub(crate) last_root_etags: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
     pub(crate) priority_ops_counter: Arc<std::sync::atomic::AtomicUsize>,
@@ -428,7 +428,7 @@ impl DesktopSyncCoordinator {
     }
 
     /// Caches the current mount progress snapshot in memory.
-    pub fn set_mount_progress(&self, snapshot: nextcloud_rust_sdk::MountProgressSnapshot) {
+    pub fn set_mount_progress(&self, snapshot: nexia_nextcloud_sdk::MountProgressSnapshot) {
         if let Ok(mut map) = self.mount_progress_cache.write() {
             map.insert(snapshot.mount_id.as_str().to_string(), snapshot);
         }
@@ -457,7 +457,7 @@ impl DesktopSyncCoordinator {
     pub async fn active_client(&self) -> Option<Client> {
         if let Some(active_acc) = self.active_account().await {
             let target_authority =
-                nextcloud_rust_sdk::ServerUrl::parse(&active_acc.server.server_url)
+                nexia_nextcloud_sdk::ServerUrl::parse(&active_acc.server.server_url)
                     .map(|u| u.authority().to_string())
                     .unwrap_or_default();
             {
@@ -476,9 +476,10 @@ impl DesktopSyncCoordinator {
 
             // Client not yet initialized for active account: instantiate and cache
             if let Ok(server_url) =
-                nextcloud_rust_sdk::ServerUrl::parse(&active_acc.server.server_url)
+                nexia_nextcloud_sdk::ServerUrl::parse(&active_acc.server.server_url)
             {
-                let secret = nextcloud_rust_sdk::SecretString::new(active_acc.credentials.secret());
+                let secret =
+                    nexia_nextcloud_sdk::SecretString::new(active_acc.credentials.secret());
                 if let Ok(client) = self
                     .build_account_client(
                         server_url,
@@ -610,10 +611,10 @@ impl DesktopSyncCoordinator {
             } else {
                 if let Some(ref h) = orch_handle {
                     let m_mode = match mount.mode.as_str() {
-                        "BidirectionalSync" => nextcloud_rust_sdk::MountMode::BidirectionalSync,
-                        _ => nextcloud_rust_sdk::MountMode::VirtualVfs,
+                        "BidirectionalSync" => nexia_nextcloud_sdk::MountMode::BidirectionalSync,
+                        _ => nexia_nextcloud_sdk::MountMode::VirtualVfs,
                     };
-                    let mut desc = nextcloud_rust_sdk::MountDescriptor::new(
+                    let mut desc = nexia_nextcloud_sdk::MountDescriptor::new(
                         &mount.account_id,
                         &mount.remote_path,
                         PathBuf::from(&mount.local_target),

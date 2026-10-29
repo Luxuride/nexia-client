@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use nexia_core::account::{Account, AccountId, ServerConfig};
 use nexia_core::events::DesktopEvent;
-use nextcloud_rust_sdk::{
+use nexia_nextcloud_sdk::{
     BasicAuth, CachedTheme, Client, MountDescriptor, MountId, MountMode, SecretString, ServerUrl,
     StoragePaths, StoreKey, StoredSyncMount, ThemeInfo,
 };
@@ -48,13 +48,13 @@ impl DesktopSyncCoordinator {
         tokio::spawn(async move {
             while let Ok(evt) = client_events.recv().await {
                 match evt {
-                    nextcloud_rust_sdk::ClientEvent::SyncMountAdded(m) => {
+                    nexia_nextcloud_sdk::ClientEvent::SyncMountAdded(m) => {
                         bus.emit(DesktopEvent::SyncMountAdded { mount_id: m.id });
                     }
-                    nextcloud_rust_sdk::ClientEvent::SyncMountRemoved(id) => {
+                    nexia_nextcloud_sdk::ClientEvent::SyncMountRemoved(id) => {
                         bus.emit(DesktopEvent::SyncMountRemoved { mount_id: id });
                     }
-                    nextcloud_rust_sdk::ClientEvent::SyncMountUpdated(m) => {
+                    nexia_nextcloud_sdk::ClientEvent::SyncMountUpdated(m) => {
                         bus.emit(DesktopEvent::SyncMountUpdated { mount_id: m.id });
                     }
                     _ => {}
@@ -126,7 +126,7 @@ impl DesktopSyncCoordinator {
         Ok(self.active_client().await)
     }
 
-    /// Returns the active `nextcloud-rust-sdk` [`Client`] handle if configured.
+    /// Returns the active `nexia-nextcloud-sdk` [`Client`] handle if configured.
     pub async fn client(&self) -> Result<Option<Client>, SyncError> {
         Ok(self.active_client().await)
     }
@@ -670,8 +670,8 @@ impl DesktopSyncCoordinator {
 
     /// Discovers external desktop system accounts (SSO), resolves credentials, and instantiates [`Client`]s.
     pub async fn sync_discovered_accounts(&self) {
-        let sso = nextcloud_rust_sdk::DesktopSso::new();
-        let keyring = nextcloud_rust_sdk::PlatformKeyring::new();
+        let sso = nexia_nextcloud_sdk::DesktopSso::new();
+        let keyring = nexia_nextcloud_sdk::PlatformKeyring::new();
         let discovered = sso.discover_accounts().await;
 
         let mut discovered_accounts = Vec::new();

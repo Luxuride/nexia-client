@@ -1,6 +1,6 @@
-//! Presentation models and UI state representations backed by `nextcloud-rust-sdk`.
+//! Presentation models and UI state representations backed by `nexia-nextcloud-sdk`.
 
-pub use nextcloud_rust_sdk::{
+pub use nexia_nextcloud_sdk::{
     BreadcrumbSegment as PathSegment, DirectorySizeSummary, FileSortCriteria, FileSortField,
     FileSortOrder, ResourceIconCategory, ThemeInfo, breadcrumb_segments, format_bytes,
 };
@@ -249,7 +249,7 @@ pub struct FileViewItem {
     pub mime_type: Option<String>,
     /// Nextcloud internal numeric file ID (`oc:fileid`) if available.
     pub file_id: Option<u64>,
-    /// Semantic icon category computed by `nextcloud-rust-sdk`.
+    /// Semantic icon category computed by `nexia-nextcloud-sdk`.
     pub icon_category: ResourceIconCategory,
     /// Last modification timestamp if available.
     pub modified_at: Option<String>,
@@ -260,7 +260,7 @@ pub struct FileViewItem {
 }
 
 impl FileViewItem {
-    /// Formats a raw byte count into human-readable units via `nextcloud-rust-sdk`.
+    /// Formats a raw byte count into human-readable units via `nexia-nextcloud-sdk`.
     pub fn format_bytes(bytes: u64) -> String {
         format_bytes(bytes)
     }
@@ -346,7 +346,7 @@ impl FileViewItem {
         }
     }
 
-    /// Splits a canonical virtual path into clickable Nautilus-style breadcrumb segments via `nextcloud-rust-sdk`.
+    /// Splits a canonical virtual path into clickable Nautilus-style breadcrumb segments via `nexia-nextcloud-sdk`.
     pub fn breadcrumb_segments(current_path: &str) -> Vec<PathSegment> {
         breadcrumb_segments(current_path, "Nexia")
     }

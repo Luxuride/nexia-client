@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use nextcloud_rust_sdk::{ConfigStore, KeyStore, KeychainKeyStore, StoreKey};
+use nexia_nextcloud_sdk::{ConfigStore, KeyStore, KeychainKeyStore, StoreKey};
 
 use crate::account::AccountId;
 use crate::config::{AccountPreferences, AppConfig, GlobalPreferences};

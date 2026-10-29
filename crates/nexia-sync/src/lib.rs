@@ -1,5 +1,5 @@
 //! Thin desktop synchronization adapter for Nexia Client, delegating entirely to
-//! `nextcloud-rust-sdk`.
+//! `nexia-nextcloud-sdk`.
 
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
@@ -31,7 +31,7 @@ pub use watcher::FileSystemWatcher;
 /// thumbnail cache match on it.
 pub const THUMBNAIL_SOFTWARE: &str = "Nexia Client";
 
-pub use nextcloud_rust_sdk::{
+pub use nexia_nextcloud_sdk::{
     Client, DiscoveredLocalFile, DiscoveredRemoteFile, FolderSyncRunner, JournalEntry,
     MountDescriptor, MountId, MountMode, MountState, MountStatus, MountsHandle,
     NextcloudOrchestrator, OrchestratorConfig, OrchestratorError, OrchestratorEvent,

@@ -7,7 +7,7 @@ Edit here only.
 ## What this repo is
 
 A Nextcloud desktop application built with GTK 4 on top of the Nextcloud Rust SDK
-(`nextcloud-rust-sdk`). The repository is a workspace of small, focused crates:
+(`nexia-nextcloud-sdk`). The repository is a workspace of small, focused crates:
 core models, the coordinator that composes SDK handles, and GTK 4 user interface
 components.
 
@@ -26,7 +26,7 @@ for work here:
 - Never describe this app as the SDK's reason to exist, and never add SDK-side
   knowledge of it (feature flags, config fields, branches on "is this client").
   Anything of that shape is a review rejection.
-- The one-way rule is mechanically enforced: only the `nextcloud_rust_sdk`
+- The one-way rule is mechanically enforced: only the `nexia_nextcloud_sdk`
   facade crate may be imported. Internal SDK crates are off limits (see
   Dependencies).
 
@@ -114,7 +114,7 @@ crate/module table row whose left column is the row label.
 
 - Prefer the standard library and already-present dependencies over adding
   new crates.
-- Utilize the Nextcloud Rust SDK (`nextcloud-rust-sdk`) directly, never depending on its lower-level internal crates (`nextcloud-sdk-core`, `nextcloud-sdk-vfs`, `nextcloud-dav`, `nextcloud-auth`, `nextcloud-transport`, etc.).
+- Utilize the Nextcloud Rust SDK (`nexia-nextcloud-sdk`) directly, never depending on its lower-level internal crates (`nexia-nextcloud-core`, `nextcloud-sdk-vfs`, `nextcloud-dav`, `nextcloud-auth`, `nextcloud-transport`, etc.).
 - Keep wire types and data models distinct from UI presentation state.
 - No `*` or floating version requirements; use caret versions.
 

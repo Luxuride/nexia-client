@@ -2,7 +2,7 @@
 
 An independent, unofficial desktop client for Nextcloud servers, written in Rust
 and GTK 4 on top of
-[`nextcloud-rust-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk): virtual
+[`nexia-nextcloud-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk): virtual
 synchronisation with on-demand hydration, two-way folder sync, and a real file
 browser over the remote hierarchy.
 
@@ -24,7 +24,7 @@ cargo run -- --headless     # daemon, no display server
 
 **The SDK is the engine; this is the app.** Every protocol-level operation —
 WebDAV requests, PROPFIND parsing, VFS state, hydration bookkeeping, journals,
-reconciliation, retries, rate limiting — is implemented in `nextcloud-rust-sdk`.
+reconciliation, retries, rate limiting — is implemented in `nexia-nextcloud-sdk`.
 This repository supplies what a desktop application must add on top:
 
 - the GTK 4 / Libadwaita UI,
@@ -36,7 +36,7 @@ This repository supplies what a desktop application must add on top:
 The dependency runs one way. The SDK does not know this application exists, and
 nothing in this repository may re-implement something the SDK already owns — see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the rule and how the workspace
-enforces it (only the `nextcloud_rust_sdk` facade is importable; internal SDK
+enforces it (only the `nexia_nextcloud_sdk` facade is importable; internal SDK
 crates are off limits).
 
 ---

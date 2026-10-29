@@ -8,23 +8,23 @@ use thiserror::Error;
 pub enum SyncError {
     /// Error originating from WebDAV transport or SDK core.
     #[error("WebDAV operation error: {0}")]
-    WebDav(#[from] nextcloud_rust_sdk::Error),
+    WebDav(#[from] nexia_nextcloud_sdk::Error),
 
     /// Error originating from high-level client operations.
     #[error("SDK client error: {0}")]
-    Client(#[from] nextcloud_rust_sdk::ClientError),
+    Client(#[from] nexia_nextcloud_sdk::ClientError),
 
     /// Error building HTTP transport.
     #[error("transport build error: {0}")]
-    TransportBuild(#[from] nextcloud_rust_sdk::TransportBuildError),
+    TransportBuild(#[from] nexia_nextcloud_sdk::TransportBuildError),
 
     /// Error within the virtual file system tree or hydration tracking.
     #[error("VFS error: {0}")]
-    Vfs(#[from] nextcloud_rust_sdk::VfsError),
+    Vfs(#[from] nexia_nextcloud_sdk::VfsError),
 
-    /// Error originating from nextcloud-rust-sdk sync engine.
+    /// Error originating from nexia-nextcloud-sdk sync engine.
     #[error("SDK sync error: {0}")]
-    SdkSync(#[from] nextcloud_rust_sdk::SyncError),
+    SdkSync(#[from] nexia_nextcloud_sdk::SyncError),
 
     /// Local filesystem I/O failure.
     #[error("local I/O failure at {path} while {context}: {source}")]
@@ -56,7 +56,7 @@ pub enum SyncError {
 
     /// Error originating from background orchestrator actor.
     #[error("orchestrator error: {0}")]
-    Orchestrator(#[from] nextcloud_rust_sdk::OrchestratorError),
+    Orchestrator(#[from] nexia_nextcloud_sdk::OrchestratorError),
 
     /// Synchronization is paused or operation is disabled.
     #[error("operation disabled: {0}")]

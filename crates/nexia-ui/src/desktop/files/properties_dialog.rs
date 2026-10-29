@@ -5,7 +5,7 @@ use gtk4::gdk;
 use gtk4::prelude::*;
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use nextcloud_rust_sdk::NextcloudPermissions;
+use nexia_nextcloud_sdk::NextcloudPermissions;
 
 use crate::model::FileViewItem;
 use crate::widget::FileExplorerBackend;
@@ -88,7 +88,7 @@ impl PropertiesDialog {
 
                 let direct_size_str = format!(
                     "{} ({} bytes)",
-                    nextcloud_rust_sdk::format_bytes(sum.direct_size),
+                    nexia_nextcloud_sdk::format_bytes(sum.direct_size),
                     sum.direct_size
                 );
                 let row_direct_size = adw::ActionRow::builder()
@@ -99,7 +99,7 @@ impl PropertiesDialog {
 
                 let total_size_str = format!(
                     "{} ({} bytes)",
-                    nextcloud_rust_sdk::format_bytes(sum.total_size),
+                    nexia_nextcloud_sdk::format_bytes(sum.total_size),
                     sum.total_size
                 );
                 let row_total_size = adw::ActionRow::builder()
@@ -117,7 +117,7 @@ impl PropertiesDialog {
         } else {
             let size_desc = format!(
                 "{} ({} bytes)",
-                nextcloud_rust_sdk::format_bytes(item.size_bytes),
+                nexia_nextcloud_sdk::format_bytes(item.size_bytes),
                 item.size_bytes
             );
             let row_size = adw::ActionRow::builder()
@@ -129,12 +129,12 @@ impl PropertiesDialog {
             let disk_desc = match item.status {
                 crate::model::FileSyncStatus::HydratedOffline => format!(
                     "{} (hydrated offline in cache)",
-                    nextcloud_rust_sdk::format_bytes(item.size_bytes)
+                    nexia_nextcloud_sdk::format_bytes(item.size_bytes)
                 ),
                 crate::model::FileSyncStatus::Syncing => "Downloading content…".to_string(),
                 crate::model::FileSyncStatus::LocalOnly => format!(
                     "{} (local storage)",
-                    nextcloud_rust_sdk::format_bytes(item.size_bytes)
+                    nexia_nextcloud_sdk::format_bytes(item.size_bytes)
                 ),
                 crate::model::FileSyncStatus::CloudPlaceholder
                 | crate::model::FileSyncStatus::UnhydratedAndUnsynced => {

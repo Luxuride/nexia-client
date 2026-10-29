@@ -5,7 +5,7 @@ hierarchy without downloading file bodies up front.
 
 **Ownership note, first.** The virtual filesystem itself is not implemented here.
 `VirtualTree`, hydration state transitions and `VfsHandle` live in
-[`nextcloud-rust-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk); this
+[`nexia-nextcloud-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk); this
 repository owns the *policy* around them — when to hydrate, which mount to write
 back into, what to emit to the UI, and how the user reaches it. Every operation
 below is a method on the coordinator's file-operations layer, which delegates to

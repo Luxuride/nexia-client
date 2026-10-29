@@ -16,7 +16,7 @@ authors = ["Luxuride"]
 
 [workspace.dependencies]
 # Nextcloud SDK (git-based)
-nextcloud-rust-sdk = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
+nexia-nextcloud-sdk = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
 
 # Workspace crates
 nexia-core = { path = "crates/nexia-core", version = "0.0.2" }

@@ -8,7 +8,7 @@ mod tests {
     use nexia_core::account::{Account, AccountCredentials, AccountId, ServerConfig};
     use nexia_core::config::AppConfig;
     use nexia_core::events::EventBus;
-    use nextcloud_rust_sdk::{MountDescriptor, MountMode};
+    use nexia_nextcloud_sdk::{MountDescriptor, MountMode};
     use std::sync::Arc;
 
     #[tokio::test]
@@ -233,7 +233,7 @@ mod tests {
         );
 
         *coordinator.cached_theme_data.write().expect("theme lock") =
-            Some(nextcloud_rust_sdk::ThemeInfo {
+            Some(nexia_nextcloud_sdk::ThemeInfo {
                 name: Some("Alice".to_string()),
                 ..Default::default()
             });

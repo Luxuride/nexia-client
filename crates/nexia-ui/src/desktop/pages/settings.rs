@@ -3,7 +3,7 @@
 use gtk4::{Button, Image};
 use libadwaita as adw;
 use libadwaita::prelude::*;
-use nextcloud_rust_sdk::format_bytes;
+use nexia_nextcloud_sdk::format_bytes;
 use std::cell::RefCell;
 use std::rc::Rc;
 

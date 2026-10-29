@@ -2,7 +2,7 @@
 
 `nexia-client` is an independent, unofficial desktop client for Nextcloud
 servers, built in Rust (Edition 2024) and GTK 4 on top of the Nextcloud Rust SDK
-([`nextcloud-rust-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk)).
+([`nexia-nextcloud-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk)).
 
 The relationship is one-directional and the SDK does not know this application
 exists. **This repository is downstream.** It contributes no protocol code: it
@@ -16,7 +16,7 @@ per-account cache layout and the app bar daemon.
 
 The previous generation of this application carried its own WebDAV client, VFS
 engine, reconciler and sync journal. All of that now lives in the SDK. A change
-to how Nextcloud is spoken to belongs upstream in `nextcloud-rust-sdk`; a change
+to how Nextcloud is spoken to belongs upstream in `nexia-nextcloud-sdk`; a change
 to how the result is presented belongs here.
 
 What this repository owns:
@@ -30,11 +30,11 @@ What this repository owns:
 What it must never own:
 
 - A hand-written HTTP client, PROPFIND parser, or retry loop.
-- A second reconciler or journal beside `nextcloud_rust_sdk::SyncJournal`.
+- A second reconciler or journal beside `nexia_nextcloud_sdk::SyncJournal`.
 - A mount registry beside the SDK's `MountsHandle`.
 - Dependencies on the SDK's internal crates (`nextcloud-dav`,
-  `nextcloud-sdk-core`, `nextcloud-sdk-vfs`, …) — the facade
-  `nextcloud_rust_sdk` re-exports everything needed.
+  `nexia-nextcloud-core`, `nextcloud-sdk-vfs`, …) — the facade
+  `nexia_nextcloud_sdk` re-exports everything needed.
 
 ---
 
@@ -54,7 +54,7 @@ What it must never own:
         |                                         |
         v                                         v
 +---------------------------------------+  +---------------------------------------+
-| nexia-core                |  | nextcloud-rust-sdk (upstream crate)   |
+| nexia-core                |  | nexia-nextcloud-sdk (upstream crate)   |
 |   account, config, events, storage    |  |   Client, OrchestratorHandle,         |
 |   autostart                           |  |   MountsHandle, VfsHandle, sync engine|
 +---------------------------------------+  +---------------------------------------+
@@ -198,7 +198,7 @@ variant, but it is only a label — the orchestrator never branches on it — so
 app does **not** register a `MountDescriptor` for a Fuse mount at all. Instead
 `mount_fuse_folder` creates the mountpoint, unmounts any stale session
 (`unmount_fuse_folder`, then `fusermount3 -u -z`), and calls
-`nextcloud_rust_sdk::mount_virtual_fs` itself with a
+`nexia_nextcloud_sdk::mount_virtual_fs` itself with a
 `FuseDriver::with_hydrator_and_root(shared_tree, DesktopHydrator, remote_path)`,
 handing the driver the current Tokio runtime when one is available. The returned
 `BackgroundSession` is kept in `fuse_sessions: HashMap<String, _>` keyed by mount
@@ -332,7 +332,7 @@ Passwords, app tokens and basic-auth headers never appear in logs, terminal
 output, crash reports or `Debug` output.
 
 - `AccountCredentials` hand-writes `Debug` to wrap the password in
-  `nextcloud_rust_sdk::SecretString` — its `Debug` renders
+  `nexia_nextcloud_sdk::SecretString` — its `Debug` renders
   `SecretString("<redacted>")`. Its `Display` prints the username only.
   The struct derives `Clone`, `PartialEq`, `Eq`, `Serialize` and `Deserialize` but
   **not** `Debug`/`Display`, which is what forces the hand-written impls.

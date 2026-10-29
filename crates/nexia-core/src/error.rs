@@ -44,7 +44,7 @@ pub enum CoreError {
 
     /// Encrypted database storage error.
     #[error("encrypted database storage error: {0}")]
-    Storage(#[from] nextcloud_rust_sdk::StorageError),
+    Storage(#[from] nexia_nextcloud_sdk::StorageError),
 
     /// Lock poisoned while accessing internal storage.
     #[error("internal storage lock was poisoned")]

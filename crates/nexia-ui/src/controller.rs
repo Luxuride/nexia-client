@@ -11,8 +11,8 @@ use crate::model::{
     FileSortCriteria, FileSyncStatus, FileViewItem, FileViewMode, ThemeInfo, ZoomLevel,
 };
 use crate::widget::FileExplorerBackend;
+use nexia_nextcloud_sdk::NavigationHistory;
 use nexia_sync::{DesktopSyncCoordinator, MountDescriptor, MountId, MountState, SyncFileStatus};
-use nextcloud_rust_sdk::NavigationHistory;
 
 /// UI Controller bridging user actions to backend sync and VFS operations.
 #[derive(Clone)]
@@ -42,7 +42,7 @@ fn parse_view_mode(value: Option<&str>) -> FileViewMode {
 }
 
 fn format_folder_presentation(
-    sum: &nextcloud_rust_sdk::DirectorySizeSummary,
+    sum: &nexia_nextcloud_sdk::DirectorySizeSummary,
     mod_at: Option<&str>,
     cfg: &nexia_core::AdditionalItemsDisplayConfig,
 ) -> String {
@@ -70,13 +70,13 @@ fn format_folder_presentation(
     }
 
     if cfg.show_direct_folder_size {
-        parts.push(nextcloud_rust_sdk::format_bytes(sum.direct_size));
+        parts.push(nexia_nextcloud_sdk::format_bytes(sum.direct_size));
     }
 
     if cfg.show_total_folder_size {
         parts.push(format!(
             "{} total",
-            nextcloud_rust_sdk::format_bytes(sum.total_size)
+            nexia_nextcloud_sdk::format_bytes(sum.total_size)
         ));
     }
 
@@ -100,7 +100,7 @@ fn format_file_presentation(
 ) -> String {
     let mut parts = Vec::new();
     if cfg.show_file_size {
-        parts.push(nextcloud_rust_sdk::format_bytes(size_bytes));
+        parts.push(nexia_nextcloud_sdk::format_bytes(size_bytes));
     }
     if cfg.show_last_modified
         && let Some(m) = mod_at
@@ -258,14 +258,14 @@ impl DesktopUiController {
     /// Persists directory sorting preferences for `dir_path` in the SDK config store.
     pub async fn store_directory_sort(&self, dir_path: &str, criteria: FileSortCriteria) {
         let field_str = match criteria.field {
-            nextcloud_rust_sdk::FileSortField::Name => "name",
-            nextcloud_rust_sdk::FileSortField::Size => "size",
-            nextcloud_rust_sdk::FileSortField::Modified => "modified",
-            nextcloud_rust_sdk::FileSortField::Type => "type",
+            nexia_nextcloud_sdk::FileSortField::Name => "name",
+            nexia_nextcloud_sdk::FileSortField::Size => "size",
+            nexia_nextcloud_sdk::FileSortField::Modified => "modified",
+            nexia_nextcloud_sdk::FileSortField::Type => "type",
         };
         let order_str = match criteria.order {
-            nextcloud_rust_sdk::FileSortOrder::Ascending => "asc",
-            nextcloud_rust_sdk::FileSortOrder::Descending => "desc",
+            nexia_nextcloud_sdk::FileSortOrder::Ascending => "asc",
+            nexia_nextcloud_sdk::FileSortOrder::Descending => "desc",
         };
         let _ = self
             .coordinator
@@ -277,14 +277,14 @@ impl DesktopUiController {
     pub async fn load_directory_sort(&self, dir_path: &str) -> Option<FileSortCriteria> {
         if let Some((field_str, order_str)) = self.coordinator.load_directory_sort(dir_path).await {
             let field = match field_str.as_str() {
-                "size" => nextcloud_rust_sdk::FileSortField::Size,
-                "modified" => nextcloud_rust_sdk::FileSortField::Modified,
-                "type" => nextcloud_rust_sdk::FileSortField::Type,
-                _ => nextcloud_rust_sdk::FileSortField::Name,
+                "size" => nexia_nextcloud_sdk::FileSortField::Size,
+                "modified" => nexia_nextcloud_sdk::FileSortField::Modified,
+                "type" => nexia_nextcloud_sdk::FileSortField::Type,
+                _ => nexia_nextcloud_sdk::FileSortField::Name,
             };
             let order = match order_str.as_str() {
-                "desc" => nextcloud_rust_sdk::FileSortOrder::Descending,
-                _ => nextcloud_rust_sdk::FileSortOrder::Ascending,
+                "desc" => nexia_nextcloud_sdk::FileSortOrder::Descending,
+                _ => nexia_nextcloud_sdk::FileSortOrder::Ascending,
             };
             Some(FileSortCriteria::new(field, order, true))
         } else {
@@ -735,7 +735,7 @@ impl DesktopUiController {
     pub async fn start_oauth_login(
         &self,
         server_url: &str,
-    ) -> Result<(String, nextcloud_rust_sdk::Client), UiError> {
+    ) -> Result<(String, nexia_nextcloud_sdk::Client), UiError> {
         self.coordinator
             .start_oauth_login(server_url)
             .await
@@ -745,7 +745,7 @@ impl DesktopUiController {
     /// Polls a pending OAuth login flow.
     pub async fn poll_oauth_login(
         &self,
-        client: &nextcloud_rust_sdk::Client,
+        client: &nexia_nextcloud_sdk::Client,
     ) -> Result<Option<Account>, UiError> {
         self.coordinator
             .poll_oauth_login(client)
@@ -1170,13 +1170,13 @@ impl FileExplorerBackend for DesktopUiController {
     async fn start_oauth_login(
         &self,
         server_url: &str,
-    ) -> Result<(String, nextcloud_rust_sdk::Client), UiError> {
+    ) -> Result<(String, nexia_nextcloud_sdk::Client), UiError> {
         self.start_oauth_login(server_url).await
     }
 
     async fn poll_oauth_login(
         &self,
-        client: &nextcloud_rust_sdk::Client,
+        client: &nexia_nextcloud_sdk::Client,
     ) -> Result<Option<Account>, UiError> {
         self.poll_oauth_login(client).await
     }
@@ -1227,7 +1227,7 @@ impl FileExplorerBackend for DesktopUiController {
     async fn store_directory_sort(
         &self,
         dir_path: &str,
-        criteria: nextcloud_rust_sdk::FileSortCriteria,
+        criteria: nexia_nextcloud_sdk::FileSortCriteria,
     ) {
         self.store_directory_sort(dir_path, criteria).await;
     }
@@ -1235,7 +1235,7 @@ impl FileExplorerBackend for DesktopUiController {
     async fn load_directory_sort(
         &self,
         dir_path: &str,
-    ) -> Option<nextcloud_rust_sdk::FileSortCriteria> {
+    ) -> Option<nexia_nextcloud_sdk::FileSortCriteria> {
         self.load_directory_sort(dir_path).await
     }
 
@@ -1258,7 +1258,7 @@ impl FileExplorerBackend for DesktopUiController {
         self.set_global_display_config(display).await
     }
 
-    async fn sync_mounts(&self) -> Vec<nextcloud_rust_sdk::StoredSyncMount> {
+    async fn sync_mounts(&self) -> Vec<nexia_nextcloud_sdk::StoredSyncMount> {
         self.coordinator.sync_mounts().await
     }
 
@@ -1334,9 +1334,9 @@ impl FileExplorerBackend for DesktopUiController {
     async fn mount_storage_usage(
         &self,
         mount_id: &str,
-    ) -> Result<nextcloud_rust_sdk::MountStorageUsage, UiError> {
+    ) -> Result<nexia_nextcloud_sdk::MountStorageUsage, UiError> {
         self.coordinator
-            .mount_storage_usage(nextcloud_rust_sdk::MountId::from(mount_id.to_string()))
+            .mount_storage_usage(nexia_nextcloud_sdk::MountId::from(mount_id.to_string()))
             .await
             .map_err(|e| UiError::Controller(e.to_string()))
     }
@@ -1348,7 +1348,7 @@ impl FileExplorerBackend for DesktopUiController {
     ) -> Result<u64, UiError> {
         self.coordinator
             .clear_mount_cache(
-                nextcloud_rust_sdk::MountId::from(mount_id.to_string()),
+                nexia_nextcloud_sdk::MountId::from(mount_id.to_string()),
                 clear_hydrated,
             )
             .await
@@ -1365,9 +1365,9 @@ impl FileExplorerBackend for DesktopUiController {
     async fn mount_progress(
         &self,
         mount_id: &str,
-    ) -> Result<nextcloud_rust_sdk::MountProgressSnapshot, UiError> {
+    ) -> Result<nexia_nextcloud_sdk::MountProgressSnapshot, UiError> {
         self.coordinator
-            .mount_progress(nextcloud_rust_sdk::MountId::from(mount_id.to_string()))
+            .mount_progress(nexia_nextcloud_sdk::MountId::from(mount_id.to_string()))
             .await
             .map_err(|e| UiError::Controller(e.to_string()))
     }
@@ -1401,7 +1401,7 @@ mod tests {
     #[test]
     fn format_folder_presentation_respects_direct_and_total_modes() {
         let sum =
-            nextcloud_rust_sdk::DirectorySizeSummary::new(1048576, 50, 5).with_direct(4096, 3, 2);
+            nexia_nextcloud_sdk::DirectorySizeSummary::new(1048576, 50, 5).with_direct(4096, 3, 2);
 
         let mut cfg = nexia_core::AdditionalItemsDisplayConfig {
             show_direct_item_count: true,

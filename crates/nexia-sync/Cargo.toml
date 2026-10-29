@@ -9,7 +9,7 @@ description = "Virtual synchronization engine, full two-way local folder sync, a
 
 [dependencies]
 nexia-core.workspace = true
-nextcloud-rust-sdk.workspace = true
+nexia-nextcloud-sdk.workspace = true
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true

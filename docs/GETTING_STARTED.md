@@ -3,7 +3,7 @@
 How to get `nexia-client` building, running and passing its gates.
 
 The short version of the architecture you are about to build: this application is
-a **thin GTK 4 shell over [`nextcloud-rust-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk)**.
+a **thin GTK 4 shell over [`nexia-nextcloud-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk)**.
 SYNC, VFS, hydration, retries and WebDAV all live upstream. If you find yourself
 writing an HTTP call, a PROPFIND parser or a reconciler in this repository, stop
 and check whether the SDK already has it — see [`ARCHITECTURE.md`](ARCHITECTURE.md).
@@ -163,7 +163,7 @@ before your code is even compiled.
 `org.gnome.Platform//49`. Two things about that manifest are load-bearing:
 
 - **`flatpak/cargo-sources.json` is generated, never committed.** It vendors
-every crate in `Cargo.lock`, including the `nextcloud-rust-sdk` git dependency,
+every crate in `Cargo.lock`, including the `nexia-nextcloud-sdk` git dependency,
 because the build runs with `CARGO_NET_OFFLINE=true`. The file is listed in
 `.gitignore` and the release job regenerates it from `Cargo.lock` right before
 `flatpak-builder` runs, so it can never go stale against a lockfile change. Do
@@ -204,7 +204,7 @@ eu.luxuride.nexia master`.
 | Symptom | Likely cause |
 | --- | --- |
 | `graphene-sys` / `gdk-pixbuf-sys` build script failure | Missing GTK development packages, or running outside the devcontainer. |
-| `failed to get nextcloud-rust-sdk ... you are in the offline mode` | `--offline` was passed while the git dependency is not yet in `~/.cargo/git`: let one online build fetch it first. |
+| `failed to get nexia-nextcloud-sdk ... you are in the offline mode` | `--offline` was passed while the git dependency is not yet in `~/.cargo/git`: let one online build fetch it first. |
 | UI event lag after long uptime | `EventBus` reported `RecvError::Lagged` — expected; the UI re-reads state instead of replaying. |
 | A file never hydrates | Check `--list-mounts` for a paused mount, and the `DesktopEvent::NodeHydrationStarted` log line. |
 | `--mount-vfs` fails with `Unsupported` or an `ENODEV`/`ENOENT` on `/dev/fuse` | No `/dev/fuse` in this namespace (typical inside the devcontainer), or no `fusermount3` on `PATH`. FUSE mounting is Linux-only: other targets return `io::ErrorKind::Unsupported` from `mount_virtual_fs`. |

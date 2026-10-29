@@ -118,7 +118,7 @@ pub enum DesktopEvent {
         conflicts: usize,
     },
     /// Live synchronization progress update for a mount point.
-    MountProgress(nextcloud_rust_sdk::MountProgressSnapshot),
+    MountProgress(nexia_nextcloud_sdk::MountProgressSnapshot),
     /// Active account was switched to another configured profile.
     AccountSwitched {
         /// Identifier of the newly activated account.

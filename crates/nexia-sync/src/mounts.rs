@@ -1,6 +1,6 @@
 //! Mount points and synchronization pause/resume coordination.
 
-use nextcloud_rust_sdk::{
+use nexia_nextcloud_sdk::{
     MountDescriptor, MountId, MountState, MountStatus, MountStorageUsage, OrchestratorError,
     SyncFileStatus,
 };
@@ -163,7 +163,7 @@ impl DesktopSyncCoordinator {
     pub async fn mount_storage_usage(
         &self,
         id: MountId,
-    ) -> Result<nextcloud_rust_sdk::MountStorageUsage, SyncError> {
+    ) -> Result<nexia_nextcloud_sdk::MountStorageUsage, SyncError> {
         let handle = self.orchestrator_handle.read().await;
         if let Some(ref h) = *handle
             && let Ok(usage) = h.mounts().storage_usage(id.clone()).await
@@ -315,7 +315,7 @@ impl DesktopSyncCoordinator {
     pub async fn mount_progress(
         &self,
         id: MountId,
-    ) -> Result<nextcloud_rust_sdk::MountProgressSnapshot, SyncError> {
+    ) -> Result<nexia_nextcloud_sdk::MountProgressSnapshot, SyncError> {
         if let Ok(map) = self.mount_progress_cache.read()
             && let Some(snap) = map.get(id.as_str())
         {
@@ -335,7 +335,7 @@ impl DesktopSyncCoordinator {
         } else {
             MountStatus::Idle
         };
-        Ok(nextcloud_rust_sdk::MountProgressSnapshot::new(id, status))
+        Ok(nexia_nextcloud_sdk::MountProgressSnapshot::new(id, status))
     }
 
     /// Returns `true` if a folder synchronization cycle is actively in progress for `id`.
