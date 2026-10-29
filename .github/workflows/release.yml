@@ -67,12 +67,11 @@ jobs:
       options: --privileged
     steps:
       - uses: actions/checkout@v4
-      - name: Verify vendored cargo sources are current
+      - name: Vendor cargo sources for the offline build
         run: |
           pip install --quiet --root-user-action=ignore \
             flatpak-cargo-generator==0.1.5
-          flatpak-cargo-generator Cargo.lock -o /tmp/cargo-sources.json
-          diff -u flatpak/cargo-sources.json /tmp/cargo-sources.json
+          flatpak-cargo-generator Cargo.lock -o flatpak/cargo-sources.json
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: nextcloud-desktop.flatpak

@@ -162,10 +162,12 @@ before your code is even compiled.
 `flatpak/eu.luxuride.nextcloud-desktop.yml` builds the release bundle on
 `org.gnome.Platform//49`. Two things about that manifest are load-bearing:
 
-- **`flatpak/cargo-sources.json` is generated, never hand-edited.** It vendors
+- **`flatpak/cargo-sources.json` is generated, never committed.** It vendors
 every crate in `Cargo.lock`, including the `nextcloud-rust-sdk` git dependency,
-because the build runs with `CARGO_NET_OFFLINE=true`. A `Cargo.lock` change that
-is not accompanied by a regenerated `cargo-sources.json` fails the build:
+because the build runs with `CARGO_NET_OFFLINE=true`. The file is listed in
+`.gitignore` and the release job regenerates it from `Cargo.lock` right before
+`flatpak-builder` runs, so it can never go stale against a lockfile change. Do
+the same before any local bundle build:
 
     ```sh
     pip install flatpak-cargo-generator==0.1.5
@@ -207,7 +209,7 @@ eu.luxuride.nextcloud-desktop master`.
 | A file never hydrates | Check `--list-mounts` for a paused mount, and the `DesktopEvent::NodeHydrationStarted` log line. |
 | `--mount-vfs` fails with `Unsupported` or an `ENODEV`/`ENOENT` on `/dev/fuse` | No `/dev/fuse` in this namespace (typical inside the devcontainer), or no `fusermount3` on `PATH`. FUSE mounting is Linux-only: other targets return `io::ErrorKind::Unsupported` from `mount_virtual_fs`. |
 | `flatpak-builder: not found` in CI | The job lost its `container:` block — the action does not install `flatpak-builder` on the runner, and `xvfb-run` reports the binary as missing. |
-| Flatpak build fails with `can't checkout from 'https://github.com/Luxuride/nextcloud-rust-sdk': you are in the offline mode` | `flatpak/cargo-sources.json` is stale or not listed in the manifest's `sources`; regenerate it from `Cargo.lock`. |
+| Flatpak build fails with `can't checkout from 'https://github.com/Luxuride/nextcloud-rust-sdk': you are in the offline mode` | `flatpak/cargo-sources.json` is missing, stale, or not listed in the manifest's `sources`; regenerate it from `Cargo.lock`. |
 | Flatpak build dies with `Invalid cross-device link` | `--repo`/`--state-dir` and `/var/lib/flatpak` are on different filesystems; use one podman volume for both. |
 | `flatpak-builder` reports the manifest's runtime as end-of-life | Move `runtime-version` and the builder image tag together; flathub drops EOL GNOME branches. |
 | Config edits appear to do nothing | `sync_folders`, `sync_interval_secs`, `global.autostart` and `global.start_minimized` are persisted but not read — see [`CONFIGURATION.md`](CONFIGURATION.md) §3. |
