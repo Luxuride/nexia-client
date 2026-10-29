@@ -11,8 +11,8 @@ Configuration in `nextcloud-desktop-rs` has two layers:
    and only falls back.
 
 Both sides are written by `DesktopSyncCoordinator::persist_config()`, which saves
-to the database *and* to the JSON path. The read order at startup (`src/main.rs:92-108`)
-is: open the database, and use `load_app_config()` **only if it returns `Some`**;
+to the database *and* to the JSON path. The read order at startup is: open the
+database, and use `load_app_config()` **only if it returns `Some`**;
 on an empty database the JSON is loaded instead and then immediately persisted
 into the database, so a pre-existing `config.json` is imported once on first run.
 If the database cannot be opened at all, the app runs on JSON alone and logs
@@ -20,9 +20,8 @@ If the database cannot be opened at all, the app runs on JSON alone and logs
 
 > **The JSON fallback is not encrypted.** `Account.credentials` serialises
 > `password: String` verbatim, so `~/.config/nextcloud-desktop-rs/config.json`
-> contains the app password in cleartext — `AppConfig::save_to_path`
-> (`config.rs:239-253`) uses `fs::write`, so the file gets the process umask
-> (typically `0644`). Only
+> contains the app password in cleartext — `AppConfig` persistence uses
+> `fs::write`, so the file gets the process umask (typically `0644`). Only
 > `desktop_config.db` is SQLCipher-encrypted. Treat the JSON file as secret
 > material, and prefer ensuring the keychain works on a real desktop.
 
@@ -40,7 +39,7 @@ If the database cannot be opened at all, the app runs on JSON alone and logs
 
 The per-account dump is written by `AppConfig::save_user_config(id)` whenever the
 UI changes an account's display settings
-(`DesktopUiController::set_account_display_config`, `controller.rs:158`). It holds
+(`DesktopUiController::set_account_display_config`). It holds
 only that account's `AccountPreferences` and is **a dump, not a load source** —
 nothing calls `AppConfig::load_user_config()`, so editing the file changes
 nothing. The live value is `account_preferences` in the database/JSON above.
@@ -170,7 +169,7 @@ sync journals, laid out as `accounts/<account_id>/…`. Defaults via
 `$TMPDIR/nextcloud-desktop`. `resolved_cache_dir()` is what the rest of the app
 calls — do not read `cache_dir` directly.
 
-`src/main.rs` additionally fills `cache_dir` in at startup when it is unset, using
+The launcher additionally fills `cache_dir` in at startup when it is unset, using
 `<XDG cache>/nextcloud-desktop` and falling back to `$TMPDIR/nc_cache`. The two
 fallbacks differ (`nextcloud-desktop` vs `nc_cache` under the temp dir), so an
 environment with no resolvable cache dir can land on either path depending on
@@ -180,14 +179,14 @@ whether the boot path ran.
 
 Intended period between automatic background cycles. **Persisted but never
 read**: `AppConfig` derives `Default`, so the value is `0` unless a JSON file or
-the settings database supplies one, and no code in `src/main.rs`, the coordinator
-or the UI consults it — `--headless` just blocks on `tokio::signal::ctrl_c()`
-(`src/main.rs:257-267`). Treat it as reserved. Do not describe it as functional
-until a timer actually consumes it.
+the settings database supplies one, and no code in the launcher, the coordinator
+or the UI consults it — `--headless` just blocks on `tokio::signal::ctrl_c()`.
+Treat it as reserved. Do not describe it as functional until a timer actually
+consumes it.
 
 Note the trap: there **is** a periodic loop in the app, but it does not use this
-field. `DesktopSyncCoordinator::new` spawns a hardcoded **5 s** remote-etag poller
-(`coordinator.rs:250-262`), and the SDK has its own equally-unread
+field. `DesktopSyncCoordinator::new` spawns a hardcoded **5 s** remote-etag
+poller, and the SDK has its own equally-unread
 `OrchestratorConfig.sync_interval_seconds`. Editing `sync_interval_secs` changes
 nothing at all; the poll cadence is a literal in the constructor.
 
@@ -196,11 +195,11 @@ nothing at all; the poll cadence is a literal in the constructor.
 | Field | Meaning |
 | --- | --- |
 | `start_minimized` | Persisted "launch hidden" intent. **Not yet read by the launcher** — hiding comes from the `--background` / `-b` flag passed to `launch_gtk_application`. |
-| `autostart` | Persisted autostart intent. **Not yet read by the launcher** — `src/main.rs` calls `register_autostart()` unconditionally on every start. |
+| `autostart` | Persisted autostart intent. **Not yet read by the launcher** — the launcher calls `register_autostart()` unconditionally on every start. |
 | `default_display` | Display defaults used when an account has no override. |
 
 Because both booleans are persisted but unused, treat them as reserved fields: do
-not assume editing them changes behaviour, and wire them in `src/main.rs` before
+not assume editing them changes behaviour, and wire them in the launcher before
 documenting them as functional.
 
 ### Autostart mechanics
@@ -226,8 +225,8 @@ Keyed by the account id string. Per-account override of display settings, plus
 
 Controls what the file view shows. Only six of the thirteen fields carry
 `#[serde(default)]` — see the note in §2 — so the defaults below are what
-`AdditionalItemsDisplayConfig::default()` (`config.rs:112-129`) produces, not what
-a partial JSON block is guaranteed to produce:
+`AdditionalItemsDisplayConfig::default()` produces, not what a partial JSON block
+is guaranteed to produce:
 
 | Field | Default | Effect |
 | --- | --- | --- |

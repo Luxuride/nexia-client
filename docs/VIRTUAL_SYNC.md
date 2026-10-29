@@ -8,8 +8,8 @@ hierarchy without downloading file bodies up front.
 [`nextcloud-rust-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk); this
 repository owns the *policy* around them — when to hydrate, which mount to write
 back into, what to emit to the UI, and how the user reaches it. Every operation
-below is a coordinator method in `crates/nextcloud-desktop-sync/src/file_ops.rs`
-that delegates to `VfsHandle`.
+below is a method on the coordinator's file-operations layer, which delegates to
+`VfsHandle`.
 
 ---
 
@@ -71,11 +71,10 @@ dead network — check the `WebDAV PROPFIND` log line, not the exit status.
 
 ## 2. Hydration states
 
-The SDK owns the state machine — `HydrationState` in the sibling SDK repo at
-`nextcloud-rust-sdk/crates/core/nextcloud-sdk-vfs/src/hydration.rs:48`, which is
-exactly
-`Placeholder | Hydrated(HydratedContent)` with `is_placeholder()` / `is_hydrated()`
-helpers. This app never invents a third state; it only renders the two:
+The SDK owns the state machine — `HydrationState` in the SDK hydration module,
+which is exactly `Placeholder | Hydrated(HydratedContent)` with
+`is_placeholder()` / `is_hydrated()` helpers. This app never invents a third
+state; it only renders the two:
 
 | State | Badge | Disk footprint | Backing storage |
 | --- | --- | --- | --- |
@@ -133,9 +132,9 @@ local file. It canonicalises the incoming path and `strip_prefix`es each mount's
 canonical local target to recover the remote path, which is why a mount whose
 local target is a symlink still resolves.
 
-`FileSystemWatcher` (`watcher.rs`) is what routes those 0-byte opens here; local
-writes elsewhere go to the folder sync engine instead. If no mount contains the
-path it returns
+The filesystem watcher (`FileSystemWatcher`) is what routes those 0-byte opens
+here; local writes elsewhere go to the folder sync engine instead. If no mount
+contains the path it returns
 `SyncError::NotFound("No active sync mount found for <path>")`.
 
 `hydrate_directory(remote_dir)` is a breadth-first sweep over the VFS tree: it
@@ -152,31 +151,30 @@ sweep returns `Ok(0)` rather than an error.
 coordinator.dehydrate_file("/Documents/Report.pdf").await
 ```
 
-1. `vfs.dehydrate_local(remote_path)` drops the payload. Inside the SDK
-   (`nextcloud-rust-sdk/crates/core/nextcloud-sdk-orchestrator/src/vfs/manager.rs:146-164`)
-   that is: `fs::remove_file` on the cache copy if it exists (the result is
-   ignored), `tree.dehydrate(path)`, then `persist_tree()`. It is **not** a delete
-   of the remote file, and it cannot fail on a missing local file.
+1. `vfs.dehydrate_local(remote_path)` drops the payload. Inside the SDK the VFS
+   mount manager does: `fs::remove_file` on the cache copy if it exists (the
+   result is ignored), `tree.dehydrate(path)`, then `persist_tree()`. It is **not**
+   a delete of the remote file, and it cannot fail on a missing local file.
 2. `DesktopEvent::NodeDehydrated` is emitted regardless of the result, so the UI
    re-reads state rather than assuming success, and reflects the `Err` separately.
 3. Metadata (size, MIME type, mtime, ETag) is untouched — the entry stays visible
    at 0 bytes on disk.
 
 Dehydration is not gated by the global paused flag. The pause gate is narrower
-than "all mutations": only `create_directory` (`file_ops.rs:488-495`),
-`create_file` (`:509-517`) and the background directory preload loop (`:1573`)
-consult `is_sync_paused()`. `rename_resource`, `move_resource`, `delete_resource`,
-sharing and hydration all proceed while paused — so a paused app still accepts a
-rename or a delete whose upload then goes out on the next unpaused cycle.
+than "all mutations": only `create_directory`, `create_file` and the background
+directory preload loop consult `is_sync_paused()`. `rename_resource`,
+`move_resource`, `delete_resource`, sharing and hydration all proceed while
+paused — so a paused app still accepts a rename or a delete whose upload then
+goes out on the next unpaused cycle.
 
 ---
 
 ## 5. Mount modes as they appear here
 
 Mount mode is stored as a `String` on `StoredSyncMount` — `ConfigStore` lives in
-the facade crate at `nextcloud-rust-sdk/src/storage/config_store.rs:60`, with
-`store_sync_mount`/`list_sync_mounts`/`remove_sync_mount` at `:215`/`:265`/`:252` —
-and is written through `Client::store_sync_mount`, **not** through
+the SDK config store facade, with
+`store_sync_mount`/`list_sync_mounts`/`remove_sync_mount` — and is written through
+`Client::store_sync_mount`, **not** through
 `AppConfig.sync_folders` — see [`CONFIGURATION.md`](CONFIGURATION.md) §3 for that
 trap.
 
@@ -186,13 +184,12 @@ trap.
 | `"BidirectionalSync"` | Real files on disk, changes pushed | `MountMode::BidirectionalSync` with a journal |
 | `"Fuse"` | Placeholders, hydrate on read | No `MountDescriptor` at all; `mount_fuse_folder(mount_id, remote_path, local_target)` creates the mountpoint, unmounts any stale session (`fusermount3 -u -z`), builds `FuseDriver::with_hydrator_and_root(shared_tree, DesktopHydrator, remote_path)` and calls the SDK's `mount_virtual_fs` |
 
-Any unrecognised string falls back to `VirtualVfs`. The sync loop skips `"Fuse"`
-mounts and any mount whose id starts with `app-` or that is `!enabled`
-(`folder_sync.rs:208`), because those are handled elsewhere. `sync_all_mounts()`
-(`folder_sync.rs:204-219`) applies the same filter plus an `is_mount_paused`
-check (`:210-215`), and ignores each `sync_mount` error with `let _ =`, so one
-broken or paused mount never stops the sweep — and a sweep over only paused
-mounts completes silently.
+Any unrecognised string falls back to `VirtualVfs`. The folder-sync engine's sync
+loop skips `"Fuse"` mounts and any mount whose id starts with `app-` or that is
+`!enabled`, because those are handled elsewhere. `sync_all_mounts()` in the
+folder-sync engine applies the same filter plus an `is_mount_paused` check, and
+ignores each `sync_mount` error with `let _ =`, so one broken or paused mount
+never stops the sweep — and a sweep over only paused mounts completes silently.
 
 Hydration across the non-FUSE modes is the code path described in §3, which is why
 a virtual mount and a sync folder respond to the same "open" gesture but end up
@@ -202,10 +199,9 @@ with the file in different places.
 
 ## 6. FUSE exposure
 
-`--mount-vfs [MOUNTPOINT]` (or `controller.mount_fuse_vfs(&path)`, which forwards
-to the coordinator at `crates/nextcloud-desktop-ui/src/controller.rs:839-847`)
-exposes the virtual tree as a real filesystem; the mountpoint defaults to
-`controller.default_fuse_mountpoint()` (`controller.rs:860-862`). Reads go through
+`--mount-vfs [MOUNTPOINT]` (or `DesktopUiController::mount_fuse_vfs(&path)`, which
+forwards to the coordinator) exposes the virtual tree as a real filesystem; the
+mountpoint defaults to `controller.default_fuse_mountpoint()`. Reads go through
 `DesktopHydrator`, which implements the SDK's `AsyncHydrator` over `VfsHandle`, so
 a `read()` triggers the same on-demand fetch. The command blocks until `Ctrl+C`,
 then `controller.unmount_fuse_vfs()` → `coordinator.unmount_all_fuse()` runs.

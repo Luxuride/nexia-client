@@ -86,6 +86,13 @@ doc in the same change. Docs describe what the code does today: no aspirational
 sections, no documenting a field the code never reads. If a flag or field is
 persisted but unimplemented, say so explicitly in the doc.
 
+Docs name symbols, never source locations. Do not write `file.rs:120-140` or a
+full source path as a pointer into the code — line numbers rot on the next edit
+and the reader cannot tell stale from current. Refer to the type, function or
+module by name instead. Paths stay only where the path itself is the
+instruction: a file the reader edits, a generated artefact, a command, or a
+crate/module table row whose left column is the row label.
+
 ## Code rules
 
 - No `unsafe` without an explicit request and a safety comment explaining

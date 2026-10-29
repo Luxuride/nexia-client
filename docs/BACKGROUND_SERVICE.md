@@ -41,16 +41,15 @@ flowchart LR
     DesktopApp -->|"Close Window (X): set_visible(false)"| DesktopApp
 ```
 
-`spawn_app_bar_tray(tx_tray)` is called once, inside `build_ui`
-(`crates/nextcloud-desktop-ui/src/desktop/gtk_app.rs:253-254`), before any page is
-constructed.
+`spawn_app_bar_tray(tx_tray)` is called once, inside `build_ui`, before any page
+is constructed. It returns a `TrayAvailability` handle that the window consults
+before it hides itself (see §2).
 
 The tray item owns a status string (initialised to `"In Sync"`) and forwards
 user intent as `TrayAction::{ShowWindow, HideWindow, TriggerSync, RefreshVfs,
-Quit}` (`crates/nextcloud-desktop-ui/src/desktop/tray.rs:11-22`) over an
-`UnboundedSender`; a `glib::MainContext::default().spawn_local` loop
-(`gtk_app.rs:383-408`) owns them and drives the controller. The tray never talks
-to the SDK directly.
+Quit}` over an `UnboundedSender`; a `glib::MainContext::default().spawn_local`
+loop owns them and drives the controller. The tray never talks to the SDK
+directly.
 
 Two details worth knowing when extending the menu: `ShowWindow` calls
 `set_visible(true)` **and** `present()` (the latter is what raises and focuses an
@@ -59,12 +58,50 @@ rebuild callback — after `refresh_virtual_tree()`, so a tray refresh repaints 
 file view immediately instead of waiting for the debounced `DesktopEvent` path.
 
 The status text is **static in practice**. `DesktopTrayItem::set_syncing(syncing,
-status_text)` exists (`tray.rs:43-47`) and `icon_name()` switches between
-`view-refresh-symbolic` and `folder-remote-symbolic` on `self.syncing`, but
-`set_syncing` has **no callers** — so the icon stays `folder-remote-symbolic` and
-the tooltip description stays `"In Sync"` even mid-transfer. Wiring it up means
-calling `set_syncing` from the `DesktopEvent` subscriber and requesting a D-Bus
-property update.
+status_text)` exists and `icon_name()` switches between `view-refresh-symbolic`
+and `folder-remote-symbolic` on `self.syncing`, but `set_syncing` has **no
+callers** — so the icon stays `folder-remote-symbolic` and the tooltip
+description stays `"In Sync"` even mid-transfer. Wiring it up means calling
+`set_syncing` from the `DesktopEvent` subscriber and requesting a D-Bus property
+update.
+
+### Sandboxed (Flatpak) operation
+
+The item is spawned through a `TrayServiceBuilder`:
+
+```rust
+let builder = tray
+    .assume_sni_available(true)
+    .disable_dbus_name(sandboxed);
+```
+
+Both options exist for sandboxes:
+
+- `disable_dbus_name(true)` under `nextcloud_desktop_core::is_flatpak()` skips the
+  `RequestName` call for `org.kde.StatusNotifierItem-<pid>-<n>`. A Flatpak
+  sandbox rejects that name with `org.freedesktop.DBus.Error.ServiceUnknown`
+  unless the exact instance name is in `--own-name`, which cannot be known ahead
+  of time. The item is then registered under its connection's unique name
+  (`:1.x`), which needs no policy. GNOME's AppIndicator extension accepts that
+  form through `BUS_ADDRESS_REGEX`; KDE Plasma accepts it too.
+- `assume_sni_available(true)` turns a missing `org.kde.StatusNotifierWatcher`
+  into a soft error routed to `Tray::watcher_offline`, so a tray-less session
+  does not kill the service. `DesktopTrayItem` flips `TrayAvailability` to
+  offline there and back to online from `watcher_online`.
+
+`TrayAvailability` is a `watch` channel behind an `AtomicBool`, not a bare flag:
+`set()` publishes every transition, so consumers can either read the current
+state (`is_registered()`), wait for the first answer
+(`wait_until_settled()`), or follow the stream (`subscribe()`). `unavailable()`
+gives the non-Linux and no-`tray` builds a permanently offline value so the
+window guard degrades to "always show" instead of "never settle".
+
+Even with the unique name, `org.kde.StatusNotifierWatcher` must be reachable, so
+the Flatpak manifest grants `--talk-name=org.kde.StatusNotifierWatcher`
+(`flatpak/eu.luxuride.nextcloud-desktop.yml`). Every other Flathub app with a tray
+icon grants the same permission; without it the whole registration is refused by
+the sandbox before the watcher is ever contacted, which is exactly the
+`D-Bus connection error: … ServiceUnknown` seen in the journal.
 
 ---
 
@@ -73,8 +110,18 @@ property update.
 Closing the GTK 4 window (the `X` button) does **not** terminate the process:
 
 - The window intercepts `close-request`, sets visibility to `false` and returns
-  `glib::Propagation::Stop` (`gtk_app.rs:373-377`), so GTK's default
-  "destroy the window" handler never runs and the process keeps its runtime.
+  `glib::Propagation::Stop`, so GTK's default "destroy the window" handler never
+  runs and the process keeps its runtime.
+- The hide only happens while `TrayAvailability::is_registered()` is `true`. With
+  no reachable indicator the handler returns `glib::Propagation::Proceed`, letting
+  GTK destroy the window so the process exits instead of lingering invisibly.
+- When the process was started with `--background` and no indicator is
+  registered, `build_ui` presents the window after evaluating the guard — an
+  invisible, unreachable process is never the result.
+- The guard is reactive as well: `TrayAvailability::subscribe()` streams every
+  state change, and a `spawn_local` watcher restores a hidden window when an
+  indicator that had been working goes away. Losing the app bar mid-session
+  therefore cannot strand the process either.
 - The Tokio runtime, the SDK orchestrator thread, hydration and app bar indicator
   stay fully active.
 - **Open Nextcloud** on the tray restores and raises the window.
@@ -95,31 +142,62 @@ cargo run -- -b
 ```
 
 `--background` becomes the `start_minimized` argument of
-`launch_gtk_application(controller, start_minimized)`
-(`crates/nextcloud-desktop-ui/src/desktop/gtk_app.rs:42-45`), which is threaded
-down to `build_ui` and used exactly once, at the end:
+`launch_gtk_application(controller, start_minimized)`, which is threaded down to
+`build_ui` and used once, at the end:
 
 ```rust
-if !start_minimized {
+if start_minimized {
+    // The tray service settles on a runtime task, so without waiting the
+    // window could hide before its indicator is known to exist.
+    glib::MainContext::default().spawn_local(async move {
+        tray_availability.wait_until_settled().await;
+        if tray_availability.is_registered() {
+            tracing::info!("Starting in the background behind the app bar indicator");
+        } else {
+            tracing::warn!(
+                "Starting in the background without an app bar indicator; showing the window"
+            );
+            window_for_settle.present();
+        }
+    });
+} else {
     window.present();
 }
 ```
 
+The wait is not decoration: `spawn_app_bar_tray` registers on a Tokio task, so
+reading `is_registered()` synchronously at this point would race the spawn and
+could hide the window just before the registration failure arrives.
+`wait_until_settled` resolves on the first settled state, and the fallback runs
+only after the answer is known.
+
 So `--background` means "build everything, register the tray, render the first
-frame, but never call `present()`". Nothing else differs: the `present()` guard is
-`gtk_app.rs:465-467`, and the initial `refresh_virtual_tree()` +
-`sync_all_mounts()` kick-off (`gtk_app.rs:469-476`) is spawned either way.
+frame, but never call `present()`". Nothing else differs: the `present()` guard
+behaves the same way, and the initial `refresh_virtual_tree()` +
+`sync_all_mounts()` kick-off is spawned either way.
 
 `--background` is *not* read from `AppConfig.global.start_minimized` — the CLI
-flag is the only input, and the config field is persisted but unread. Autostart
-registration writes `Exec=<current exe>` with no `--background` argument
-(`crates/nextcloud-desktop-core/src/autostart.rs:64-79`, the `Exec={exe_str}` line of
-the `[Desktop Entry]` template, `X-GNOME-Autostart-enabled=true`), so a login
-session actually starts **with** the window presented. There is no flag plumbing
-to change that from the app: append `--background` to the `Exec=` line of the
-generated `.desktop` file by hand, and it survives until the next
-`register_autostart()` call overwrites the file — which happens on **every**
-start, so the edit is lost each launch.
+flag is the only input, and the config field is persisted but unread.
+
+Autostart registration always passes `--background` through `autostart_exec_line`
+in the autostart module, so a login session starts with the window hidden behind
+the app bar indicator:
+
+| Environment | Generated `Exec=` | File written |
+| --- | --- | --- |
+| Native | `/abs/path/to/nextcloud-desktop-rs --background` | `$XDG_CONFIG_HOME/autostart/eu.luxuride.nextcloud-desktop.desktop` |
+| Flatpak | `flatpak run eu.luxuride.nextcloud-desktop --background` | `$HOME/.config/autostart/eu.luxuride.nextcloud-desktop.desktop` |
+
+Two details make the Flatpak row work. The sandbox sets `XDG_CONFIG_HOME` to
+`~/.var/app/eu.luxuride.nextcloud-desktop/config`, which the **host** session
+never reads, so `autostart_config_dir()` writes to `$HOME/.config` instead — the
+manifest's `--filesystem=xdg-config/autostart:create` makes that path writable.
+And `flatpak run …` is used rather than `/app/bin/nextcloud-desktop-rs`, which
+does not exist outside the sandbox. The entry carries `X-Flatpak=<app id>` so
+portals and desktop shells recognise it as a Flatpak app.
+
+`register_autostart()` runs on every start, so the file is rewritten each launch
+and manual edits to it do not survive.
 
 ---
 
@@ -131,13 +209,13 @@ start, so the edit is lost each launch.
 | **Hide to Background** | Hides the window without stopping any work. |
 | **Sync All Folders Now** | Triggers an immediate two-way cycle on every enabled pair via `controller.trigger_sync()`. |
 | **Refresh Virtual Drive** | Re-crawls a virtual mount's metadata tree via `controller.refresh_virtual_tree()`. |
-| **Quit Nextcloud** | Unmounts any FUSE session (`controller.unmount_fuse_vfs()`), calls `app.quit()`, then `std::process::exit(0)` (`gtk_app.rs:400-405`) — the hard exit is what guarantees the D-Bus tray service and the orchestrator thread do not outlive the UI, since `app.quit()` alone only ends the GLib main loop. |
+| **Quit Nextcloud** | Unmounts any FUSE session (`controller.unmount_fuse_vfs()`), calls `app.quit()`, then `std::process::exit(0)` — the hard exit is what guarantees the D-Bus tray service and the orchestrator thread do not outlive the UI, since `app.quit()` alone only ends the GLib main loop. |
 
 ---
 
 ## 5. Headless and one-shot CLI modes
 
-The root binary (`src/main.rs`) parses `clap` flags and, when any of the
+The launcher parses `clap` flags and, when any of the
 following is present, runs the requested operations and exits **without starting
 GTK**:
 
@@ -154,9 +232,9 @@ GTK**:
 | `--config <PATH>` | Uses an alternative config path instead of the default. |
 
 Clap derives kebab-case long names from the Rust field names (`--pause-sync`
-from `pause_sync`). All flags live in `CliArgs` in `src/main.rs`; adding one means
-adding a branch to the same `if` chain that decides between the CLI path and the
-GTK path.
+from `pause_sync`). All flags live in `CliArgs` in the CLI argument parser;
+adding one means adding a branch to the same `if` chain that decides between the
+CLI path and the GTK path.
 
 Two behaviours of that chain are easy to be surprised by:
 

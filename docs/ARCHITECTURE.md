@@ -42,7 +42,7 @@ What it must never own:
 
 ```text
 +----------------------------------------------------------------------------------+
-| src/main.rs — CLI parsing, tracing, storage bootstrap, GTK or headless launch     |
+| root binary — CLI parsing, tracing, storage bootstrap, GTK or headless launch    |
 +----------------------------------------------------------------------------------+
         |                                         |
         v                                         v
@@ -92,10 +92,11 @@ installation, FUSE descriptor wiring).
 | `engine.rs` | Compatibility re-export of `DesktopSyncCoordinator`, plus the coordinator's integration tests. |
 | `error.rs` | `SyncError` with `#[source]` preservation, including the SDK error variants the coordinator surfaces to the UI. |
 
-`lib.rs` re-exports the SDK surface the rest of the workspace is allowed to
-touch (`Client`, `MountsHandle`, `VfsHandle`, `OrchestratorHandle`,
-`MountDescriptor`, `MountMode`, `SyncJournal`, `reconcile`, …), which is how the
-"never import internal SDK crates" rule is enforced in practice.
+The sync crate's root module re-exports the SDK surface the rest of the
+workspace is allowed to touch (`Client`, `MountsHandle`, `VfsHandle`,
+`OrchestratorHandle`, `MountDescriptor`, `MountMode`, `SyncJournal`,
+`reconcile`, …), which is how the "never import internal SDK crates" rule is
+enforced in practice.
 
 ### `crates/nextcloud-desktop-ui`
 
@@ -116,7 +117,7 @@ Features: `default = ["desktop"]`, `desktop = ["gtk", "tray"]`,
 `gtk` (gtk4 + libadwaita + glib + gdk-pixbuf), `tray` (`ksni`, Linux only),
 `android` (`uniffi`).
 
-### Root binary (`src/main.rs`)
+### Root binary
 
 `clap` CLI → tracing init → encrypted storage bootstrap (falling back to JSON
 when the keyring/database is unavailable) → `DesktopSyncCoordinator` →
@@ -147,29 +148,29 @@ the headless daemon, or `launch_gtk_application(controller, background)`.
 
 ### Account switching repopulates UI state
 
-Account-scoped state is never cached across a switch. `switch_account`
-(`account.rs`) drops the cached theming snapshot (`clear_cached_theme`) before it
-emits `AccountSwitched`, and `cached_theme_logo` (`account.rs:83`) only matches
-logo files prefixed with the *active* server's authority, so branding cannot
-leak from one account to another. In the UI, every account-sensitive surface
-subscribes to `AccountSwitched`/`AccountSignedOut` and re-reads its own state:
+Account-scoped state is never cached across a switch. `switch_account` drops the
+cached theming snapshot (`clear_cached_theme`) before it emits
+`AccountSwitched`, and `cached_theme_logo` only matches logo files prefixed with
+the *active* server's authority, so branding cannot leak from one account to
+another. In the UI, every account-sensitive surface subscribes to
+`AccountSwitched`/`AccountSignedOut` and re-reads its own state:
 
 | Surface | Re-reads on switch |
 | --- | --- |
-| `desktop/pages/sidebar.rs` | Banner title, slogan, colour, logo, status dot. |
-| `desktop/header.rs` | Window title. |
-| `desktop/account/switcher.rs` | Active account name and avatar. |
-| `desktop/pages/settings.rs` | Active-account row and sign-out target. |
-| `desktop/pages/sync_folders.rs` | Mount list and global pause state. |
-| `desktop/pages/activity.rs` | Mount rows, activity rows, thumbnail counters. |
-| `desktop/files/page.rs` | Search query cleared, view refreshed. |
-| `desktop/gtk_app.rs` | `reload_account_view_state()` — navigation root, persisted view mode, zoom, and the root directory's sort criteria. |
+| Sidebar banner | Banner title, slogan, colour, logo, status dot. |
+| Window header | Window title. |
+| Account switcher | Active account name and avatar. |
+| Settings page | Active-account row and sign-out target. |
+| Sync folders page | Mount list and global pause state. |
+| Activity page | Mount rows, activity rows, thumbnail counters. |
+| Files page | Search query cleared, view refreshed. |
+| Window shell | `reload_account_view_state()` — navigation root, persisted view mode, zoom, and the root directory's sort criteria. |
 
 The themed CSS lives in exactly one `CssProvider` registered at
 `STYLE_PROVIDER_PRIORITY_USER`; `apply_server_theme_color` reloads its rules and
 `clear_server_theme_color` empties them, so the static `APPLICATION`-priority
-defaults from `gtk_app.rs` take over again instead of competing with stale
-providers.
+defaults from the window module take over again instead of competing with
+stale providers.
 
 ### `DesktopEvent` variants
 
@@ -195,35 +196,35 @@ an SDK `MountMode` whose transfer semantics the SDK implements:
 The third persisted string is `"Fuse"`. The SDK does have a `MountMode::Fuse`
 variant, but it is only a label — the orchestrator never branches on it — so this
 app does **not** register a `MountDescriptor` for a Fuse mount at all. Instead
-`mount_fuse_folder` (`crates/nextcloud-desktop-sync/src/fuse_mount.rs:169-210`)
-creates the mountpoint, unmounts any stale session (`unmount_fuse_folder`, then
-`fusermount3 -u -z`), and calls `nextcloud_rust_sdk::mount_virtual_fs` itself with
-a `FuseDriver::with_hydrator_and_root(shared_tree, DesktopHydrator, remote_path)`,
+`mount_fuse_folder` creates the mountpoint, unmounts any stale session
+(`unmount_fuse_folder`, then `fusermount3 -u -z`), and calls
+`nextcloud_rust_sdk::mount_virtual_fs` itself with a
+`FuseDriver::with_hydrator_and_root(shared_tree, DesktopHydrator, remote_path)`,
 handing the driver the current Tokio runtime when one is available. The returned
 `BackgroundSession` is kept in `fuse_sessions: HashMap<String, _>` keyed by mount
-id, and a background pass preloads any already-cached FreeDesktop thumbnails
-(`fuse_mount.rs:196-211`). Dropping that map entry — or `unmount_all_fuse()` — is
-what unmounts. When a future `add_mount`/`update_sync_mount_mode` does build a
-descriptor, `"BidirectionalSync"` maps to `MountMode::BidirectionalSync` and
-everything else — `"VirtualVfs"`, `"Fuse"`, a typo — maps to
-`MountMode::VirtualVfs` (`account.rs:508-511`). The persisted string, not the
-`MountMode` enum, is what this app actually dispatches on.
+id, and a background pass preloads any already-cached FreeDesktop thumbnails.
+Dropping that map entry — or `unmount_all_fuse()` — is what unmounts. When a
+future `add_mount`/`update_sync_mount_mode` does build a descriptor,
+`"BidirectionalSync"` maps to `MountMode::BidirectionalSync` and everything
+else — `"VirtualVfs"`, `"Fuse"`, a typo — maps to `MountMode::VirtualVfs`.
+The persisted string, not the `MountMode` enum, is what this app actually
+dispatches on.
 
 **Who drives a cycle.** The SDK ships no timer — `OrchestratorConfig`
 `sync_interval_seconds` is stored but unread, and `MountsHandle::sync_mount()`
 only reconciles the local directory against the journal. The real two-way cycle
-is therefore this app's job: `FolderSyncEngine::sync_mount(mount_id)`
-(`crates/nextcloud-desktop-sync/src/folder_sync.rs:47`) takes a priority permit,
-resolves the active DAV context, creates the local target if missing, then awaits
-`FolderSyncRunner::execute_sync_cycle(&dav_client, &user, is_vfs, is_cancelled,
-on_progress)`. It brackets the cycle with `DesktopEvent::SyncStarted` /
-`SyncCompleted` and `MountProgress`. Its skip rules are worth knowing exactly:
+is therefore this app's job: `FolderSyncEngine::sync_mount(mount_id)` takes a
+priority permit, resolves the active DAV context, creates the local target if
+missing, then awaits `FolderSyncRunner::execute_sync_cycle(&dav_client, &user,
+is_vfs, is_cancelled, on_progress)`. It brackets the cycle with
+`DesktopEvent::SyncStarted` / `SyncCompleted` and `MountProgress`. Its skip
+rules are worth knowing exactly:
 
 | Condition | Result |
 | --- | --- |
-| id starts with `app-` (`folder_sync.rs:49-51`) | `Ok(0)` — internal VFS mount |
-| mount paused, or global `is_sync_paused()` (`:56-67`) | `Err(SyncError::OperationDisabled("Synchronization is currently paused"))` |
-| mount missing, `!enabled`, or `mode == "Fuse"` (`:70-73`) | `Ok(0)` |
+| id starts with `app-` | `Ok(0)` — internal VFS mount |
+| mount paused, or global `is_sync_paused()` | `Err(SyncError::OperationDisabled("Synchronization is currently paused"))` |
+| mount missing, `!enabled`, or `mode == "Fuse"` | `Ok(0)` |
 
 So a paused mount is the one case that surfaces an error; every other skip is a
 silent zero.
@@ -238,43 +239,42 @@ reached from
 
 | Trigger | Call path |
 | --- | --- |
-| User action (`--sync`, the app bar's *Sync All Folders Now*, a settings button) | `DesktopUiController::trigger_sync()` → `coordinator.sync_all_mounts()` → `FolderSyncEngine::sync_all_mounts()` (`folder_sync.rs:204`) |
-| A mount is added | `nextcloud-desktop-sync/src/account.rs:404-409` → `sync_mount_folder(id)` (`tokio::spawn`, fire-and-forget) |
-| A mount is resumed | `nextcloud-desktop-sync/src/mounts.rs:114` (inside `resume_mount`) → `sync_mount_folder(id)` (`tokio::spawn`, fire-and-forget) |
-| The filesystem watcher sees a local edit | `crates/nextcloud-desktop-sync/src/watcher.rs:28-35` → guarded by `!is_mount_syncing(&mount_id)` → `sync_mount_folder(id)` |
+| User action (`--sync`, the app bar's *Sync All Folders Now*, a settings button) | `DesktopUiController::trigger_sync()` → `coordinator.sync_all_mounts()` → `FolderSyncEngine::sync_all_mounts()` |
+| A mount is added | `sync_mount_folder(id)` (`tokio::spawn`, fire-and-forget) |
+| A mount is resumed | `resume_mount` → `sync_mount_folder(id)` (`tokio::spawn`, fire-and-forget) |
+| The filesystem watcher sees a local edit | guarded by `!is_mount_syncing(&mount_id)` → `sync_mount_folder(id)` |
 
 Those four are not the only source of activity. The coordinator also starts a
-**remote-change poller** (`coordinator.rs:250-262`): a `tokio` task that sleeps
-2 s, runs one check, then loops every **5 s hardcoded** calling
-`check_remote_changes_all_accounts()` (`file_ops.rs:1044-1101`). That function,
-per account, does a **Depth: 0 PROPFIND asking only for `d:getetag`** on the DAV
-root, compares the etag against `last_root_etags`, and only when it changed calls
-`refresh_account_virtual_tree(account)` (Depth: 1 `PropfindBody::all()`) followed
-by `sync_account_mounts(account_id)`. So an idle session does poll the server
-every 5 s per account; the *expensive* work only happens on an etag change, and
-the first check after startup always counts as a change (the map is empty).
+**remote-change poller**: a `tokio` task that sleeps 2 s, runs one check, then
+loops every **5 s hardcoded** calling `check_remote_changes_all_accounts()`.
+That function, per account, does a **Depth: 0 PROPFIND asking only for
+`d:getetag`** on the DAV root, compares the etag against `last_root_etags`, and
+only when it changed calls `refresh_account_virtual_tree(account)` (Depth: 1
+`PropfindBody::all()`) followed by `sync_account_mounts(account_id)`. So an idle
+session does poll the server every 5 s per account; the *expensive* work only
+happens on an etag change, and the first check after startup always counts as a
+change (the map is empty).
 
 That loop is the only periodic timer in the app, it is not configurable, and it
 is **not** driven by `AppConfig.sync_interval_secs` or the SDK's
 `sync_interval_seconds` — both are stored and unread.
 
-The watcher itself is installed by `DesktopSyncCoordinator::init_watcher()`
-(`coordinator.rs:584-633`), which the constructor schedules 500 ms after startup
-(`coordinator.rs:183-189`) and which account switching calls again
-(`account.rs:700`). It is idempotent (`if watcher_guard.is_none()`) and per mount
+The watcher itself is installed by `DesktopSyncCoordinator::init_watcher()`,
+which the constructor schedules 500 ms after startup and which account switching
+calls again. It is idempotent (`if watcher_guard.is_none()`) and per mount
 either registers a FUSE session (`mode == "Fuse"`) or adds a `MountDescriptor` to
 the orchestrator *and* calls `watch_folder(local_path, mount_id)`. It also removes
 the internal `app-default-vfs` mount on every call.
 
 **The per-account virtual drive is a real mount record.** `sync_mounts()`
-(`account.rs:263-335`) is not a plain list: it purges any internal mount that is
-not the active account's `app-vfs-<account_id>`, deletes the legacy
-`mounts/app-default-vfs` cache directory, keeps only records whose `account_id`
-is empty or matches the active account, then inserts a `VirtualVfs` record with
+is not a plain list: it purges any internal mount that is not the active
+account's `app-vfs-<account_id>`, deletes the legacy `mounts/app-default-vfs`
+cache directory, keeps only records whose `account_id` is empty or matches the
+active account, then inserts a `VirtualVfs` record with
 `display_name: "Application Virtual Drive"` if the account has none, and finally
-deduplicates by id. `is_internal_vfs(id)` is `id.starts_with("app-") || id ==
-"app-default-vfs"` (`account.rs:258-261`), which is what keeps these out of the
-sync loop and out of the removable list in the UI.
+deduplicates by id. `is_internal_vfs(id)` is
+`id.starts_with("app-") || id == "app-default-vfs"`, which is what keeps these
+out of the sync loop and out of the removable list in the UI.
 
 **Mount records.** The authoritative per-mount record is `StoredSyncMount` in the
 SDK's encrypted config store (`id`, `account_id`, `remote_path`, `local_target`,
@@ -310,10 +310,9 @@ subdivided so switching accounts never mixes caches.
 Passwords, app tokens and basic-auth headers never appear in logs, terminal
 output, crash reports or `Debug` output.
 
-- `AccountCredentials` hand-writes `Debug`
-  (`crates/nextcloud-desktop-core/src/account.rs:57-65`) to wrap the password in
+- `AccountCredentials` hand-writes `Debug` to wrap the password in
   `nextcloud_rust_sdk::SecretString` — its `Debug` renders
-  `SecretString("<redacted>")`. Its `Display` (`:67-71`) prints the username only.
+  `SecretString("<redacted>")`. Its `Display` prints the username only.
   The struct derives `Clone`, `PartialEq`, `Eq`, `Serialize` and `Deserialize` but
   **not** `Debug`/`Display`, which is what forces the hand-written impls.
 - `ServerConfig` holds no secret (it derives `Debug`; the field is just
