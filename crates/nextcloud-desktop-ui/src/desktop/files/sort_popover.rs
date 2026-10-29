@@ -2,14 +2,23 @@
 
 use gtk4::{Align, Box as GtkBox, CheckButton, Label, MenuButton, Orientation, Popover, Separator};
 use libadwaita::prelude::*;
+use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::model::{FileSortCriteria, FileSortField, FileSortOrder};
 use crate::widget::FileExplorerBackend;
 
 /// Popover button providing options to sort items by Name, Size, Date, or Type.
+#[derive(Clone)]
 pub struct SortPopover {
     menu_button: MenuButton,
+    name_btn: CheckButton,
+    size_btn: CheckButton,
+    date_btn: CheckButton,
+    type_btn: CheckButton,
+    asc_btn: CheckButton,
+    folders_first_btn: CheckButton,
+    syncing: Rc<Cell<bool>>,
 }
 
 impl SortPopover {
@@ -81,7 +90,13 @@ impl SortPopover {
         let asc_c = asc_btn.clone();
         let folders_c = folders_first_btn.clone();
 
+        let syncing: Rc<Cell<bool>> = Rc::new(Cell::new(false));
+        let syncing_apply = syncing.clone();
+
         let apply_sort = Rc::new(move || {
+            if syncing_apply.get() {
+                return;
+            }
             let field = if size_c.is_active() {
                 FileSortField::Size
             } else if date_c.is_active() {
@@ -160,7 +175,46 @@ impl SortPopover {
         popover.set_child(Some(&content_box));
         menu_button.set_popover(Some(&popover));
 
-        Self { menu_button }
+        Self {
+            menu_button,
+            name_btn,
+            size_btn,
+            date_btn,
+            type_btn,
+            asc_btn,
+            folders_first_btn,
+            syncing,
+        }
+    }
+
+    /// Reflects the backend's active sort criteria without persisting it back.
+    pub fn sync_state<B: FileExplorerBackend>(&self, backend: &B) {
+        let b = backend.clone();
+        let name_btn = self.name_btn.clone();
+        let size_btn = self.size_btn.clone();
+        let date_btn = self.date_btn.clone();
+        let type_btn = self.type_btn.clone();
+        let asc_btn = self.asc_btn.clone();
+        let folders_first_btn = self.folders_first_btn.clone();
+        let syncing = self.syncing.clone();
+        let menu_btn_icon = self.menu_button.clone();
+        glib::MainContext::default().spawn_local(async move {
+            let criteria = b.sort_criteria().await;
+            syncing.set(true);
+            match criteria.field {
+                FileSortField::Size => size_btn.set_active(true),
+                FileSortField::Modified => date_btn.set_active(true),
+                FileSortField::Type => type_btn.set_active(true),
+                FileSortField::Name => name_btn.set_active(true),
+            }
+            asc_btn.set_active(criteria.order == FileSortOrder::Ascending);
+            folders_first_btn.set_active(criteria.folders_first);
+            menu_btn_icon.set_icon_name(match criteria.order {
+                FileSortOrder::Ascending => "view-sort-ascending-symbolic",
+                FileSortOrder::Descending => "view-sort-descending-symbolic",
+            });
+            syncing.set(false);
+        });
     }
 
     /// Access the underlying [`MenuButton`] widget.

@@ -3,7 +3,7 @@
 use gtk4::prelude::*;
 use gtk4::{Box as GtkBox, Button, Image, Label, Orientation, Popover, Separator};
 use libadwaita as adw;
-use nextcloud_desktop_core::Account;
+use nextcloud_desktop_core::events::DesktopEvent;
 use std::rc::Rc;
 
 use crate::account::add_dialog::AddAccountDialog;
@@ -28,6 +28,28 @@ fn make_avatar(name: &str, avatar_path: Option<&std::path::Path>, size: i32) -> 
 #[derive(Clone)]
 pub struct AccountSwitcher {
     button: Button,
+}
+
+/// Rebinds the switcher button to the currently active account's name and avatar.
+async fn refresh_active_account<B: FileExplorerBackend>(
+    backend: &B,
+    label: &Label,
+    avatar_bin: &GtkBox,
+) {
+    let accounts = backend.accounts().await;
+    let active_id = backend.active_account_id().await;
+    let active = accounts
+        .into_iter()
+        .find(|a| Some(&a.id) == active_id.as_ref());
+    let (name, avatar_path) = match active {
+        Some(acc) => (acc.name, acc.avatar_path),
+        None => ("System Account".to_string(), None),
+    };
+    label.set_label(&name);
+    while let Some(child) = avatar_bin.first_child() {
+        avatar_bin.remove(&child);
+    }
+    avatar_bin.append(&make_avatar(&name, avatar_path.as_deref(), 24));
 }
 
 impl AccountSwitcher {
@@ -70,21 +92,23 @@ impl AccountSwitcher {
         popover_content.set_margin_end(8);
         popover.set_child(Some(&popover_content));
 
-        // Initial setup
+        // Keep the button label and avatar in sync with the active account, including switches
+        // triggered outside the popover (sign-out, add-dialog, tray actions).
         {
             let b = backend.clone();
             let label_init = active_label.clone();
             let avatar_bin_init = avatar_bin.clone();
+            let mut event_rx = backend.subscribe_events();
             glib::MainContext::default().spawn_local(async move {
-                let accounts = b.accounts().await;
-                let active_id = b.active_account_id().await;
-                if let Some(active) = accounts.iter().find(|a| Some(&a.id) == active_id.as_ref()) {
-                    label_init.set_label(&active.name);
-                    while let Some(child) = avatar_bin_init.first_child() {
-                        avatar_bin_init.remove(&child);
+                refresh_active_account(&b, &label_init, &avatar_bin_init).await;
+                while let Ok(event) = event_rx.recv().await {
+                    if matches!(
+                        event,
+                        DesktopEvent::AccountSwitched { .. }
+                            | DesktopEvent::AccountSignedOut { .. }
+                    ) {
+                        refresh_active_account(&b, &label_init, &avatar_bin_init).await;
                     }
-                    let av = make_avatar(&active.name, active.avatar_path.as_deref(), 24);
-                    avatar_bin_init.append(&av);
                 }
             });
         }
@@ -201,19 +225,9 @@ impl AccountSwitcher {
                         let pop_click = pop_async.clone();
                         let b_click = b_async.clone();
                         let cb_click = cb_async.clone();
-                        let lbl_click = label_async.clone();
-                        let av_bin_click = avatar_bin_async.clone();
-                        let acc_clone: Account = acc.clone();
 
                         row_btn.connect_clicked(move |_| {
                             pop_click.popdown();
-                            lbl_click.set_label(&acc_clone.name);
-                            while let Some(child) = av_bin_click.first_child() {
-                                av_bin_click.remove(&child);
-                            }
-                            let av =
-                                make_avatar(&acc_clone.name, acc_clone.avatar_path.as_deref(), 24);
-                            av_bin_click.append(&av);
 
                             if !is_active {
                                 let b = b_click.clone();

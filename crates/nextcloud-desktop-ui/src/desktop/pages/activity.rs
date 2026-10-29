@@ -313,6 +313,8 @@ impl ActivityPage {
         let mut rx = backend.subscribe_events();
         let mount_rows_for_events = mount_rows.clone();
         let ref_mounts_for_events = refresh_mounts.clone();
+        let b_for_switch = backend.clone();
+        let activity_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
 
         glib::MainContext::default().spawn_local(async move {
             while let Ok(event) = rx.recv().await {
@@ -332,10 +334,26 @@ impl ActivityPage {
                         badge.add_css_class("success");
                         row.add_suffix(&badge);
                         act_grp_clone.add(&row);
+                        activity_rows.borrow_mut().push(row);
+                    }
+                    DesktopEvent::AccountSwitched { .. }
+                    | DesktopEvent::AccountSignedOut { .. } => {
+                        // Transfer/counter/row state is per-account: reset it and reseed the
+                        // thumbnail counters from the newly active account's queue.
+                        for row in activity_rows.borrow_mut().drain(..) {
+                            act_grp_clone.remove(&row);
+                        }
+                        act_grp_clone.add(&empty_row_clone);
+                        *empty_removed.borrow_mut() = false;
+                        let snap = b_for_switch.thumbnail_queue_snapshot();
+                        *cur_completed.borrow_mut() = snap.completed;
+                        *cur_total.borrow_mut() = snap.total;
+                        *cur_in_prog.borrow_mut() = snap.in_progress;
+                        update_summary();
+                        ref_mounts_for_events();
                     }
                     DesktopEvent::SyncMountUpdated { .. }
-                    | DesktopEvent::SyncMountRemoved { .. }
-                    | DesktopEvent::AccountSwitched { .. } => {
+                    | DesktopEvent::SyncMountRemoved { .. } => {
                         ref_mounts_for_events();
                     }
                     DesktopEvent::MountProgress(snap) => {
@@ -425,6 +443,7 @@ impl ActivityPage {
                         badge.add_css_class("success");
                         row.add_suffix(&badge);
                         act_grp_clone.add(&row);
+                        activity_rows.borrow_mut().push(row);
                     }
                     DesktopEvent::FileTransferCompleted {
                         relative_path,
@@ -452,6 +471,7 @@ impl ActivityPage {
                         badge.add_css_class("success");
                         row.add_suffix(&badge);
                         act_grp_clone.add(&row);
+                        activity_rows.borrow_mut().push(row);
                     }
                     DesktopEvent::SyncCompleted {
                         uploaded,
@@ -474,6 +494,7 @@ impl ActivityPage {
                         badge.add_css_class("success");
                         row.add_suffix(&badge);
                         act_grp_clone.add(&row);
+                        activity_rows.borrow_mut().push(row);
                     }
                     _ => {}
                 }

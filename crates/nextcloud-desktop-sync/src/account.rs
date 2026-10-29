@@ -65,25 +65,52 @@ impl DesktopSyncCoordinator {
         Ok(client)
     }
 
+    /// Returns the filesystem-safe identifier used for `server`'s shared theming assets.
+    fn theme_server_key(server: &str) -> String {
+        ServerUrl::parse(server)
+            .map(|url| url.authority().replace([':', '/'], "_"))
+            .unwrap_or_else(|_| server.replace([':', '/'], "_"))
+    }
+
     /// Returns synchronous in-memory cached visual theming metadata if available.
     pub fn cached_theme(&self) -> Option<ThemeInfo> {
         self.cached_theme_data.read().ok().and_then(|t| t.clone())
     }
 
     /// Returns the local cached server logo file path if it already exists on disk.
+    ///
+    /// Only the active server's logo is considered, so branding never leaks between accounts.
     pub fn cached_theme_logo(&self) -> Option<PathBuf> {
-        let cache_dir = self.cache_dir();
-        let theming_dir = cache_dir.join("theming");
-        if let Ok(entries) = std::fs::read_dir(theming_dir) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if (name.ends_with(".svg") || name.ends_with(".png")) && name.contains("logo") {
-                    return Some(p);
-                }
+        let server = self
+            .config
+            .try_read()
+            .ok()
+            .and_then(|conf| conf.active_account_id.clone())
+            .and_then(|id| {
+                self.config
+                    .try_read()
+                    .ok()
+                    .and_then(|conf| conf.get_account(&id).map(|a| a.server.server_url.clone()))
+            });
+        let server = server?;
+        let theming_dir = self.cache_dir().join("theming");
+        let prefix = format!("{}_logo.", Self::theme_server_key(&server));
+        let entries = std::fs::read_dir(theming_dir).ok()?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.starts_with(&prefix) && (name.ends_with(".svg") || name.ends_with(".png")) {
+                return Some(p);
             }
         }
         None
+    }
+
+    /// Drops cached branding metadata so the next theming read reflects a different server.
+    pub fn clear_cached_theme(&self) {
+        if let Ok(mut lock) = self.cached_theme_data.write() {
+            *lock = None;
+        }
     }
 
     /// Returns an SDK [`Client`] instance for the specified account.
@@ -763,6 +790,10 @@ impl DesktopSyncCoordinator {
 
         self.switch_client(idx).await?;
 
+        // Branding metadata belongs to the previous account; drop it before the switch
+        // event lets the UI repopulate from the new one.
+        self.clear_cached_theme();
+
         // Reset default mount id so a new mount is opened for the switched account
         *self.default_mount_id.write().await = None;
         let _ = self.refresh_virtual_tree().await;
@@ -798,6 +829,7 @@ impl DesktopSyncCoordinator {
         self.persist_config().await;
 
         *self.default_mount_id.write().await = None;
+        self.clear_cached_theme();
         let _ = self.refresh_virtual_tree().await;
         Ok(())
     }
@@ -879,5 +911,22 @@ impl DesktopSyncCoordinator {
         });
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_server_key_flattens_authority() {
+        assert_eq!(
+            DesktopSyncCoordinator::theme_server_key("https://cloud.example.com"),
+            "cloud.example.com"
+        );
+        assert_eq!(
+            DesktopSyncCoordinator::theme_server_key("https://cloud.example.com:8443/nextcloud"),
+            "cloud.example.com_8443"
+        );
     }
 }

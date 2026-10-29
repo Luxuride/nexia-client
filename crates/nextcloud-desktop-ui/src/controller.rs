@@ -27,6 +27,22 @@ pub struct DesktopUiController {
     active_hydrations: Arc<RwLock<HashSet<String>>>,
 }
 
+/// Encodes [`FileViewMode`] for persistence in the per-account config store.
+const fn view_mode_setting(mode: FileViewMode) -> &'static str {
+    match mode {
+        FileViewMode::Grid => "grid",
+        FileViewMode::List => "list",
+    }
+}
+
+/// Decodes a persisted view mode, defaulting to [`FileViewMode::Grid`] for unknown values.
+fn parse_view_mode(value: Option<&str>) -> FileViewMode {
+    match value {
+        Some("list") => FileViewMode::List,
+        _ => FileViewMode::Grid,
+    }
+}
+
 fn format_folder_presentation(
     sum: &nextcloud_rust_sdk::DirectorySizeSummary,
     mod_at: Option<&str>,
@@ -193,6 +209,11 @@ impl DesktopUiController {
     /// Sets the active Nautilus file view mode (Grid or List).
     pub async fn set_view_mode(&self, mode: FileViewMode) {
         *self.view_mode.write().await = mode;
+        if let Some(client) = self.coordinator.active_client().await {
+            let _ = client
+                .set_setting("view_mode", view_mode_setting(mode))
+                .await;
+        }
     }
 
     /// Returns the current view zoom level.
@@ -206,6 +227,15 @@ impl DesktopUiController {
         if let Some(client) = self.coordinator.active_client().await {
             let _ = client.set_setting("view_zoom_level", zoom.as_str()).await;
         }
+    }
+
+    /// Loads the persisted view mode of the active account, falling back to the grid default.
+    pub async fn load_persisted_view_mode(&self) {
+        let stored = match self.coordinator.active_client().await {
+            Some(client) => client.get_setting("view_mode").await.ok().flatten(),
+            None => None,
+        };
+        *self.view_mode.write().await = parse_view_mode(stored.as_deref());
     }
 
     /// Loads persisted view zoom level from the SDK config store.
@@ -660,14 +690,29 @@ impl DesktopUiController {
         self.coordinator.active_account().await.map(|a| a.id)
     }
 
-    /// Switches the active account profile to `account_id` and resets view navigation to root.
+    /// Switches the active account profile to `account_id` and repopulates every
+    /// account-scoped view state (path, history, layout mode, zoom, sort) from the new account.
     pub async fn switch_account(&self, account_id: &AccountId) -> Result<(), UiError> {
         self.coordinator
             .switch_account(account_id)
             .await
             .map_err(|err| UiError::Controller(err.to_string()))?;
-        self.set_current_path("/").await;
+        self.reload_account_view_state().await;
         Ok(())
+    }
+
+    /// Discards the previous account's browse state and reloads the active account's own.
+    pub async fn reload_account_view_state(&self) {
+        self.active_hydrations.write().await.clear();
+        *self.navigation.write().await = NavigationHistory::new();
+        self.load_persisted_view_mode().await;
+        self.load_persisted_zoom().await;
+        let path = self.current_path().await;
+        let mut criteria = FileSortCriteria::default();
+        if let Some(stored) = self.load_directory_sort(&path).await {
+            criteria = stored;
+        }
+        *self.sort_criteria.write().await = criteria;
     }
 
     /// Adds a new account profile to the application.

@@ -5,6 +5,9 @@ use gtk4::{
     ScrolledWindow, SelectionMode, Separator,
 };
 use libadwaita::prelude::*;
+use nextcloud_desktop_core::events::{DesktopEvent, NotificationLevel};
+use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
 
 use crate::model::NavigationPage;
@@ -46,34 +49,8 @@ impl NavigationSidebar {
         icon_box.set_halign(Align::Center);
 
         let initial_theme = backend.cached_theming();
-        let initial_logo = backend.cached_theme_logo();
 
-        // 1. Initial logo rendering: if cached on disk, render crisp high-res image immediately without placeholder!
-        if let Some(ref logo_path) = initial_logo {
-            let scale = 2;
-            let target_w = 56 * scale;
-            let target_h = 40 * scale;
-            let texture = if let Ok(pixbuf) =
-                gdk_pixbuf::Pixbuf::from_file_at_scale(logo_path, target_w, target_h, true)
-            {
-                Some(gtk4::gdk::Texture::for_pixbuf(&pixbuf))
-            } else {
-                let file = gtk4::gio::File::for_path(logo_path);
-                gtk4::gdk::Texture::from_file(&file).ok()
-            };
-
-            if let Some(texture) = texture {
-                let picture = gtk4::Picture::for_paintable(&texture);
-                picture.set_can_shrink(true);
-                picture.set_keep_aspect_ratio(true);
-                picture.set_size_request(56, 40);
-                icon_box.append(&picture);
-            }
-        } else {
-            let icon = Image::from_icon_name("folder-remote-symbolic");
-            icon.set_pixel_size(28);
-            icon_box.append(&icon);
-        }
+        set_brand_logo(&icon_box, backend.cached_theme_logo().as_deref(), 2);
 
         let initial_title = initial_theme
             .as_ref()
@@ -98,10 +75,12 @@ impl NavigationSidebar {
         slogan_label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
 
         // Apply theme color immediately if known
-        if let Some(ref theme) = initial_theme
-            && let Some(ref color) = theme.color
-        {
-            apply_server_theme_color(color, theme.color_text.as_deref());
+        match initial_theme {
+            Some(ref theme) => match theme.color.as_deref() {
+                Some(color) => apply_server_theme_color(color, theme.color_text.as_deref()),
+                None => clear_server_theme_color(),
+            },
+            None => clear_server_theme_color(),
         }
 
         let badge_row = GtkBox::new(Orientation::Horizontal, 6);
@@ -123,84 +102,37 @@ impl NavigationSidebar {
         container.append(&banner);
         container.append(&Separator::new(Orientation::Horizontal));
 
-        // Asynchronously populate server title, slogan, branding color, and logo from server theming
+        // Populate server title, slogan, branding color, and logo, and repopulate them on
+        // every account switch so the banner never keeps another account's identity.
         let b = backend.clone();
         let title_c = title_label.clone();
         let slogan_c = slogan_label.clone();
         let icon_box_c = icon_box.clone();
-        glib::MainContext::default().spawn_local(async move {
-            if let Some(theme) = b.server_theming().await {
-                if let Some(name) = theme.name() {
-                    title_c.set_text(name);
-                }
-                if let Some(slogan) = theme.slogan() {
-                    slogan_c.set_text(slogan);
-                }
-                if let Some(color_hex) = theme.color() {
-                    apply_server_theme_color(color_hex, theme.color_text());
-                }
-            }
-            if let Some(logo_path) = b.fetch_theme_logo().await {
-                let scale = icon_box_c.scale_factor().max(1);
-                // Render at high resolution (2x minimum) for sharp subpixel anti-aliasing
-                let target_w = 56 * scale.max(2);
-                let target_h = 40 * scale.max(2);
-
-                let texture = if let Ok(pixbuf) =
-                    gdk_pixbuf::Pixbuf::from_file_at_scale(&logo_path, target_w, target_h, true)
-                {
-                    Some(gtk4::gdk::Texture::for_pixbuf(&pixbuf))
-                } else {
-                    let file = gtk4::gio::File::for_path(&logo_path);
-                    gtk4::gdk::Texture::from_file(&file).ok()
-                };
-
-                if let Some(texture) = texture {
-                    let picture = gtk4::Picture::for_paintable(&texture);
-                    picture.set_can_shrink(true);
-                    picture.set_keep_aspect_ratio(true);
-                    picture.set_size_request(56, 40);
-                    while let Some(child) = icon_box_c.first_child() {
-                        icon_box_c.remove(&child);
-                    }
-                    icon_box_c.append(&picture);
-                }
-            }
-        });
-
-        // Event-driven online and sync status updates for the banner badge
-        let mut event_rx = backend.subscribe_events();
         let dot_rx = status_dot.clone();
         let lbl_rx = status_label.clone();
+        let mut event_rx = backend.subscribe_events();
         glib::MainContext::default().spawn_local(async move {
+            refresh_brand_banner(&b, &title_c, &slogan_c, &icon_box_c).await;
             while let Ok(event) = event_rx.recv().await {
                 match event {
-                    nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. } => {
-                        dot_rx.remove_css_class("status-dot-syncing");
-                        dot_rx.remove_css_class("status-dot-offline");
-                        dot_rx.add_css_class("status-dot-connected");
-                        lbl_rx.set_text("Online");
+                    DesktopEvent::AccountSwitched { .. } => {
+                        set_status(&dot_rx, &lbl_rx, StatusKind::Connected);
+                        refresh_brand_banner(&b, &title_c, &slogan_c, &icon_box_c).await;
                     }
-                    nextcloud_desktop_core::events::DesktopEvent::SyncStarted { .. } => {
-                        dot_rx.remove_css_class("status-dot-connected");
-                        dot_rx.remove_css_class("status-dot-offline");
-                        dot_rx.add_css_class("status-dot-syncing");
-                        lbl_rx.set_text("Syncing…");
+                    DesktopEvent::AccountSignedOut { .. } => {
+                        refresh_brand_banner(&b, &title_c, &slogan_c, &icon_box_c).await;
                     }
-                    nextcloud_desktop_core::events::DesktopEvent::SyncCompleted { .. } => {
-                        dot_rx.remove_css_class("status-dot-syncing");
-                        dot_rx.remove_css_class("status-dot-offline");
-                        dot_rx.add_css_class("status-dot-connected");
-                        lbl_rx.set_text("Online");
+                    DesktopEvent::SyncStarted { .. } => {
+                        set_status(&dot_rx, &lbl_rx, StatusKind::Syncing);
                     }
-                    nextcloud_desktop_core::events::DesktopEvent::Notification {
-                        level: nextcloud_desktop_core::events::NotificationLevel::Error,
+                    DesktopEvent::SyncCompleted { .. } => {
+                        set_status(&dot_rx, &lbl_rx, StatusKind::Connected);
+                    }
+                    DesktopEvent::Notification {
+                        level: NotificationLevel::Error,
                         ..
                     } => {
-                        dot_rx.remove_css_class("status-dot-syncing");
-                        dot_rx.remove_css_class("status-dot-connected");
-                        dot_rx.add_css_class("status-dot-offline");
-                        lbl_rx.set_text("Offline");
+                        set_status(&dot_rx, &lbl_rx, StatusKind::Offline);
                     }
                     _ => {}
                 }
@@ -292,13 +224,149 @@ fn build_sidebar_row(icon_name: &str, title: &str) -> ListBoxRow {
     row
 }
 
-/// Dynamically updates CSS colors according to the server's brand identity.
-pub fn apply_server_theme_color(color_hex: &str, text_color: Option<&str>) {
-    let clean_hex = color_hex.trim();
-    if !clean_hex.starts_with('#') || clean_hex.len() != 7 {
-        return;
+#[derive(Clone, Copy)]
+enum StatusKind {
+    Connected,
+    Syncing,
+    Offline,
+}
+
+fn set_status(dot: &GtkBox, label: &Label, kind: StatusKind) {
+    for class in [
+        "status-dot-connected",
+        "status-dot-syncing",
+        "status-dot-offline",
+    ] {
+        dot.remove_css_class(class);
+    }
+    let (class, text) = match kind {
+        StatusKind::Connected => ("status-dot-connected", "Online"),
+        StatusKind::Syncing => ("status-dot-syncing", "Syncing…"),
+        StatusKind::Offline => ("status-dot-offline", "Offline"),
+    };
+    dot.add_css_class(class);
+    label.set_text(text);
+}
+
+/// Re-reads branding for the active account and updates the banner title, slogan, color and logo.
+async fn refresh_brand_banner<B: FileExplorerBackend>(
+    backend: &B,
+    title: &Label,
+    slogan: &Label,
+    icon_box: &GtkBox,
+) {
+    let theme = backend.server_theming().await;
+    title.set_text(
+        theme
+            .as_ref()
+            .and_then(|t| t.name.clone())
+            .unwrap_or_default()
+            .as_str(),
+    );
+    slogan.set_text(
+        theme
+            .as_ref()
+            .and_then(|t| t.slogan.clone())
+            .unwrap_or_default()
+            .as_str(),
+    );
+    match theme.as_ref().and_then(|t| t.color.as_deref()) {
+        Some(color) => {
+            apply_server_theme_color(color, theme.as_ref().and_then(|t| t.color_text.as_deref()))
+        }
+        None => clear_server_theme_color(),
+    }
+    let logo = backend.fetch_theme_logo().await;
+    set_brand_logo(icon_box, logo.as_deref(), icon_box.scale_factor().max(2));
+}
+
+/// Renders `logo_path` into `icon_box`, falling back to a neutral folder icon when absent.
+fn set_brand_logo(icon_box: &GtkBox, logo_path: Option<&Path>, scale: i32) {
+    while let Some(child) = icon_box.first_child() {
+        icon_box.remove(&child);
     }
 
+    let texture = logo_path.and_then(|path| {
+        // Render at high resolution for sharp subpixel anti-aliasing
+        let target_w = 56 * scale.max(1);
+        let target_h = 40 * scale.max(1);
+        match gdk_pixbuf::Pixbuf::from_file_at_scale(path, target_w, target_h, true) {
+            Ok(pixbuf) => Some(gtk4::gdk::Texture::for_pixbuf(&pixbuf)),
+            Err(_) => {
+                let file = gtk4::gio::File::for_path(path);
+                gtk4::gdk::Texture::from_file(&file).ok()
+            }
+        }
+    });
+
+    match texture {
+        Some(texture) => {
+            let picture = gtk4::Picture::for_paintable(&texture);
+            picture.set_can_shrink(true);
+            picture.set_keep_aspect_ratio(true);
+            picture.set_size_request(56, 40);
+            icon_box.append(&picture);
+        }
+        None => {
+            let icon = Image::from_icon_name("folder-remote-symbolic");
+            icon.set_pixel_size(28);
+            icon_box.append(&icon);
+        }
+    }
+}
+
+thread_local! {
+    /// One provider is reused for every server theme so reloading it replaces the previous
+    /// server's rules instead of stacking a second provider with the same priority.
+    static THEME_PROVIDER: RefCell<Option<gtk4::CssProvider>> = const { RefCell::new(None) };
+}
+
+/// Dynamically updates CSS colors according to the server's brand identity.
+pub fn apply_server_theme_color(color_hex: &str, text_color: Option<&str>) {
+    let Some(clean_hex) = normalized_hex(color_hex) else {
+        return;
+    };
+    load_theme_css(&server_theme_css(&clean_hex, text_color));
+}
+
+/// Returns `hex` trimmed and lowercased when it is a `#rrggbb` color, otherwise `None`.
+fn normalized_hex(hex: &str) -> Option<String> {
+    let clean = hex.trim();
+    if clean.len() != 7 || !clean.starts_with('#') {
+        return None;
+    }
+    if !clean[1..].chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(clean.to_ascii_lowercase())
+}
+
+/// Restores the built-in Nextcloud branding by dropping any server theme overrides.
+pub fn clear_server_theme_color() {
+    load_theme_css("");
+}
+
+fn load_theme_css(css: &str) {
+    THEME_PROVIDER.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            let provider = gtk4::CssProvider::new();
+            if let Some(display) = gtk4::gdk::Display::default() {
+                gtk4::style_context_add_provider_for_display(
+                    &display,
+                    &provider,
+                    gtk4::STYLE_PROVIDER_PRIORITY_USER,
+                );
+            }
+            *slot = Some(provider);
+        }
+        if let Some(provider) = slot.as_ref() {
+            provider.load_from_data(css);
+        }
+    });
+}
+
+fn server_theme_css(clean_hex: &str, text_color: Option<&str>) -> String {
     let r = u8::from_str_radix(&clean_hex[1..3], 16).unwrap_or(0);
     let g = u8::from_str_radix(&clean_hex[3..5], 16).unwrap_or(130);
     let b = u8::from_str_radix(&clean_hex[5..7], 16).unwrap_or(201);
@@ -311,7 +379,7 @@ pub fn apply_server_theme_color(color_hex: &str, text_color: Option<&str>) {
 
     let text_hex = text_color.unwrap_or("#ffffff");
 
-    let css = format!(
+    format!(
         "
         @define-color accent_color {clean_hex};
         @define-color accent_bg_color {clean_hex};
@@ -353,15 +421,35 @@ pub fn apply_server_theme_color(color_hex: &str, text_color: Option<&str>) {
             min-height: 8px;
         }}
         "
-    );
+    )
+}
 
-    let provider = gtk4::CssProvider::new();
-    provider.load_from_data(&css);
-    if let Some(display) = gtk4::gdk::Display::default() {
-        gtk4::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk4::STYLE_PROVIDER_PRIORITY_USER,
-        );
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn server_theme_css_embeds_brand_color_and_text_color() {
+        let css = server_theme_css("#ff0000", Some("#101010"));
+        assert!(css.contains("@define-color accent_color #ff0000;"));
+        assert!(css.contains("linear-gradient(135deg, #ff0000 0%, #b20000 100%)"));
+        assert!(css.contains("color: #101010;"));
+        assert!(css.contains("alpha(#101010, 0.82)"));
+    }
+
+    #[test]
+    fn server_theme_css_defaults_text_color_to_white() {
+        let css = server_theme_css("#0082c9", None);
+        assert!(css.contains("color: #ffffff;"));
+        assert!(css.contains("alpha(#ffffff, 0.90)"));
+    }
+
+    #[test]
+    fn normalized_hex_accepts_only_rrggbb_colors() {
+        assert_eq!(normalized_hex("  #FF0000 ").as_deref(), Some("#ff0000"));
+        assert_eq!(normalized_hex("0082c9"), None);
+        assert_eq!(normalized_hex("#0082c"), None);
+        assert_eq!(normalized_hex("#0082c9ff"), None);
+        assert_eq!(normalized_hex("#zzzzzz"), None);
     }
 }

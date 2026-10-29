@@ -446,8 +446,9 @@ fn build_ui(
                     ctrl_for_events.mark_hydration_finished(path).await;
                     refresh_for_events();
                 }
-                nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. } => {
-                    ctrl_for_events.set_current_path("/").await;
+                nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. }
+                | nextcloud_desktop_core::events::DesktopEvent::AccountSignedOut { .. } => {
+                    ctrl_for_events.reload_account_view_state().await;
                     direct_refresh();
                 }
                 nextcloud_desktop_core::events::DesktopEvent::VfsTreeUpdated { .. }

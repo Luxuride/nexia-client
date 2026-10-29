@@ -15,6 +15,23 @@ use crate::widget::{FileExplorerBackend, ViewComponent};
 type RefreshCallback = Rc<dyn Fn()>;
 type RefreshHolder = Rc<RefCell<Option<RefreshCallback>>>;
 
+/// Renders the global pause row and master button for the active account.
+async fn refresh_global_pause_state<B: FileExplorerBackend>(
+    backend: &B,
+    button: &Button,
+    row: &adw::ActionRow,
+) {
+    if let Ok(true) = backend.is_sync_paused().await {
+        button.set_label("Resume All Sync");
+        button.add_css_class("destructive-action");
+        row.set_subtitle("Paused");
+    } else {
+        button.set_label("Pause All Sync");
+        button.remove_css_class("destructive-action");
+        row.set_subtitle("Active");
+    }
+}
+
 /// Preferences page configuring local folder synchronization pairings.
 #[derive(Clone)]
 pub struct SyncFoldersPage {
@@ -89,19 +106,22 @@ impl SyncFoldersPage {
             });
         });
 
-        // Initialize global pause status
-        let b_init_gp = backend.clone();
-        let btn_init_gp = global_pause_btn;
-        let row_init_gp = global_row;
-        glib::MainContext::default().spawn_local(async move {
-            if let Ok(true) = b_init_gp.is_sync_paused().await {
-                btn_init_gp.set_label("Resume All Sync");
-                btn_init_gp.add_css_class("destructive-action");
-                row_init_gp.set_subtitle("Paused");
-            } else {
-                row_init_gp.set_subtitle("Active");
-            }
-        });
+        // Global pause state is per-account, so it is re-read on account changes rather than
+        // captured once at construction.
+        let pause_state: RefreshCallback = {
+            let b = backend.clone();
+            let btn = global_pause_btn.clone();
+            let row = global_row.clone();
+            Rc::new(move || {
+                let b = b.clone();
+                let btn = btn.clone();
+                let row = row.clone();
+                glib::MainContext::default().spawn_local(async move {
+                    refresh_global_pause_state(&b, &btn, &row).await;
+                });
+            })
+        };
+        pause_state();
 
         // Dynamic list populator
         let b_list = backend.clone();
@@ -311,12 +331,16 @@ impl SyncFoldersPage {
         // Subscribe to account switches and sync events to update the sync folder pairings list
         let mut event_rx = backend.subscribe_events();
         let ref_for_events = refresh_list.clone();
+        let pause_for_events = pause_state.clone();
         glib::MainContext::default().spawn_local(async move {
             while let Ok(event) = event_rx.recv().await {
                 match event {
                     nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. }
-                    | nextcloud_desktop_core::events::DesktopEvent::AccountSignedOut { .. }
-                    | nextcloud_desktop_core::events::DesktopEvent::SyncMountAdded { .. }
+                    | nextcloud_desktop_core::events::DesktopEvent::AccountSignedOut { .. } => {
+                        pause_for_events();
+                        ref_for_events();
+                    }
+                    nextcloud_desktop_core::events::DesktopEvent::SyncMountAdded { .. }
                     | nextcloud_desktop_core::events::DesktopEvent::SyncMountUpdated { .. }
                     | nextcloud_desktop_core::events::DesktopEvent::SyncMountRemoved { .. } => {
                         ref_for_events();

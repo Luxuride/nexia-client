@@ -145,6 +145,32 @@ the headless daemon, or `launch_gtk_application(controller, background)`.
   `download_semaphore` (4 permits) cap simultaneous preview and payload fetches;
   `hydrate_file` acquires a download permit before touching the network.
 
+### Account switching repopulates UI state
+
+Account-scoped state is never cached across a switch. `switch_account`
+(`account.rs`) drops the cached theming snapshot (`clear_cached_theme`) before it
+emits `AccountSwitched`, and `cached_theme_logo` (`account.rs:83`) only matches
+logo files prefixed with the *active* server's authority, so branding cannot
+leak from one account to another. In the UI, every account-sensitive surface
+subscribes to `AccountSwitched`/`AccountSignedOut` and re-reads its own state:
+
+| Surface | Re-reads on switch |
+| --- | --- |
+| `desktop/pages/sidebar.rs` | Banner title, slogan, colour, logo, status dot. |
+| `desktop/header.rs` | Window title. |
+| `desktop/account/switcher.rs` | Active account name and avatar. |
+| `desktop/pages/settings.rs` | Active-account row and sign-out target. |
+| `desktop/pages/sync_folders.rs` | Mount list and global pause state. |
+| `desktop/pages/activity.rs` | Mount rows, activity rows, thumbnail counters. |
+| `desktop/files/page.rs` | Search query cleared, view refreshed. |
+| `desktop/gtk_app.rs` | `reload_account_view_state()` — navigation root, persisted view mode, zoom, and the root directory's sort criteria. |
+
+The themed CSS lives in exactly one `CssProvider` registered at
+`STYLE_PROVIDER_PRIORITY_USER`; `apply_server_theme_color` reloads its rules and
+`clear_server_theme_color` empties them, so the static `APPLICATION`-priority
+defaults from `gtk_app.rs` take over again instead of competing with stale
+providers.
+
 ### `DesktopEvent` variants
 
 `SyncStarted`, `TransferProgress`, `FileTransferCompleted`, `NodeHydrationStarted`,

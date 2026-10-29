@@ -4,8 +4,41 @@ use gtk4::{Button, Image};
 use libadwaita as adw;
 use libadwaita::prelude::*;
 use nextcloud_rust_sdk::format_bytes;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::widget::{FileExplorerBackend, ViewComponent};
+
+/// Renders `acc_row` for the active account and rebinds the sign-out button to it.
+async fn refresh_active_account_row<B: FileExplorerBackend>(
+    backend: &B,
+    acc_row: &adw::ActionRow,
+    sign_out_btn: &Button,
+    bound_account: &Rc<RefCell<Option<nextcloud_desktop_core::Account>>>,
+) {
+    let accounts = backend.accounts().await;
+    let active_id = backend.active_account_id().await;
+    let active = accounts
+        .into_iter()
+        .find(|a| Some(&a.id) == active_id.as_ref());
+
+    let Some(acc) = active else {
+        acc_row.set_title("No Account");
+        acc_row.set_subtitle("");
+        sign_out_btn.set_visible(false);
+        *bound_account.borrow_mut() = None;
+        return;
+    };
+
+    acc_row.set_title(&acc.name);
+    let sys_label = if acc.is_system { " (System SSO)" } else { "" };
+    acc_row.set_subtitle(&format!(
+        "{} • {}{sys_label}",
+        acc.credentials.username, acc.server.server_url
+    ));
+    sign_out_btn.set_visible(!acc.is_system);
+    *bound_account.borrow_mut() = Some(acc);
+}
 
 /// Preferences page displaying Nextcloud account security, local VFS cache, and thumbnail configuration.
 #[derive(Clone)]
@@ -44,34 +77,45 @@ impl SettingsPage {
         let acc_row_clone = acc_row.clone();
         let so_btn_clone = sign_out_btn.clone();
 
+        // The row content follows the active account, so switching or signing out elsewhere
+        // never leaves this page showing a stale profile.
+        let bound_account: Rc<RefCell<Option<nextcloud_desktop_core::Account>>> =
+            Rc::new(RefCell::new(None));
+        {
+            let bound_click = bound_account.clone();
+            let b = b_acc.clone();
+            let t = toast_acc.clone();
+            let row = acc_row_clone.clone();
+            so_btn_clone.connect_clicked(move |_| {
+                let acc = bound_click.borrow().clone();
+                if let Some(acc) = acc {
+                    crate::desktop::account::SignOutAccountDialog::present(
+                        Some(&row),
+                        &b,
+                        &t,
+                        acc,
+                        || {},
+                    );
+                }
+            });
+        }
+
+        let mut event_rx = backend.subscribe_events();
         glib::MainContext::default().spawn_local(async move {
-            let accounts = b_acc.accounts().await;
-            let active_id = b_acc.active_account_id().await;
-            let active = accounts
-                .into_iter()
-                .find(|a| Some(&a.id) == active_id.as_ref());
-            if let Some(acc) = active {
-                acc_row_clone.set_title(&acc.name);
-                let sys_label = if acc.is_system { " (System SSO)" } else { "" };
-                acc_row_clone.set_subtitle(&format!(
-                    "{} • {}{sys_label}",
-                    acc.credentials.username, acc.server.server_url
-                ));
-                if !acc.is_system {
-                    so_btn_clone.set_visible(true);
-                    let b = b_acc.clone();
-                    let t = toast_acc.clone();
-                    let row = acc_row_clone.clone();
-                    let acc_to_sign_out = acc.clone();
-                    so_btn_clone.connect_clicked(move |_| {
-                        crate::desktop::account::SignOutAccountDialog::present(
-                            Some(&row),
-                            &b,
-                            &t,
-                            acc_to_sign_out.clone(),
-                            || {},
-                        );
-                    });
+            refresh_active_account_row(&b_acc, &acc_row_clone, &so_btn_clone, &bound_account).await;
+            while let Ok(event) = event_rx.recv().await {
+                if matches!(
+                    event,
+                    nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. }
+                        | nextcloud_desktop_core::events::DesktopEvent::AccountSignedOut { .. }
+                ) {
+                    refresh_active_account_row(
+                        &b_acc,
+                        &acc_row_clone,
+                        &so_btn_clone,
+                        &bound_account,
+                    )
+                    .await;
                 }
             }
         });
