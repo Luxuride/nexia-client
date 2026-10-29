@@ -35,7 +35,7 @@ pub use controller::DesktopUiController;
 #[cfg(feature = "gtk")]
 pub use desktop::gtk_app::{launch_gtk_application, suppress_gtk_logs};
 #[cfg(feature = "tray")]
-pub use desktop::tray::{TrayAction, spawn_app_bar_tray};
+pub use desktop::tray::{TrayAction, TrayAvailability, spawn_app_bar_tray};
 pub use error::UiError;
 pub use headless::run_headless;
 pub use model::{

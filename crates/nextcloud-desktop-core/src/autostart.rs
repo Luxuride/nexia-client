@@ -5,16 +5,44 @@ use std::path::PathBuf;
 /// Application identifier used for autostart entries.
 pub const AUTOSTART_APP_NAME: &str = "eu.luxuride.nextcloud-desktop";
 
+/// Command line the autostart entry launches, presented as a single executable.
+#[cfg(target_os = "linux")]
+const AUTOSTART_BACKGROUND_ARG: &str = "--background";
+
 /// Resolves the current running executable path.
 pub fn current_exe_path() -> Option<PathBuf> {
     std::env::current_exe().ok()
+}
+
+/// Resolves the directory a session reads XDG autostart entries from.
+///
+/// Inside a Flatpak sandbox `dirs::config_dir()` honours the private
+/// `XDG_CONFIG_HOME`, which the host desktop never scans, so the host user's
+/// config directory is used instead.
+#[cfg(target_os = "linux")]
+fn autostart_config_dir() -> Option<PathBuf> {
+    if crate::sandbox::is_flatpak() {
+        let home = std::env::var_os("HOME").map(PathBuf::from)?;
+        return Some(home.join(".config"));
+    }
+    dirs::config_dir()
+}
+
+/// Builds the `Exec=` value for the autostart entry.
+#[cfg(target_os = "linux")]
+fn autostart_exec_line() -> String {
+    if let Some(app_id) = crate::sandbox::flatpak_app_id() {
+        return format!("flatpak run {app_id} {AUTOSTART_BACKGROUND_ARG}");
+    }
+    let exe = current_exe_path().unwrap_or_else(|| PathBuf::from("nextcloud-desktop-rs"));
+    format!("{} {AUTOSTART_BACKGROUND_ARG}", exe.to_string_lossy())
 }
 
 /// Checks whether autostart on system boot is currently configured.
 pub fn is_autostart_enabled() -> bool {
     #[cfg(target_os = "linux")]
     {
-        if let Some(config_dir) = dirs::config_dir() {
+        if let Some(config_dir) = autostart_config_dir() {
             let desktop_path = config_dir
                 .join("autostart")
                 .join(format!("{AUTOSTART_APP_NAME}.desktop"));
@@ -47,18 +75,24 @@ pub fn is_autostart_enabled() -> bool {
 
 /// Registers the application to automatically launch on system boot.
 pub fn register_autostart() -> Result<(), std::io::Error> {
+    #[cfg(not(target_os = "linux"))]
     let exe = current_exe_path().unwrap_or_else(|| PathBuf::from("nextcloud-desktop-rs"));
+    #[cfg(not(target_os = "linux"))]
     let exe_str = exe.to_string_lossy();
 
     #[cfg(target_os = "linux")]
     {
-        let Some(config_dir) = dirs::config_dir() else {
+        let Some(config_dir) = autostart_config_dir() else {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "User config directory not found",
             ));
         };
 
+        let exec_line = autostart_exec_line();
+        let flatpak_line = crate::sandbox::flatpak_app_id()
+            .map(|id| format!("X-Flatpak={id}\n"))
+            .unwrap_or_default();
         let autostart_dir = config_dir.join("autostart");
         std::fs::create_dir_all(&autostart_dir)?;
 
@@ -69,12 +103,13 @@ pub fn register_autostart() -> Result<(), std::io::Error> {
              Version=1.0\n\
              Name=Nextcloud Desktop\n\
              Comment=Nextcloud Desktop Sync Client\n\
-             Exec={exe_str}\n\
+             Exec={exec_line}\n\
              Icon={AUTOSTART_APP_NAME}\n\
              Terminal=false\n\
              Categories=Network;FileTransfer;\n\
              StartupNotify=false\n\
-             X-GNOME-Autostart-enabled=true\n"
+             X-GNOME-Autostart-enabled=true\n\
+             {flatpak_line}"
         );
 
         std::fs::write(desktop_file, content)?;
@@ -132,7 +167,7 @@ pub fn register_autostart() -> Result<(), std::io::Error> {
 pub fn unregister_autostart() -> Result<(), std::io::Error> {
     #[cfg(target_os = "linux")]
     {
-        if let Some(config_dir) = dirs::config_dir() {
+        if let Some(config_dir) = autostart_config_dir() {
             let desktop_file = config_dir
                 .join("autostart")
                 .join(format!("{AUTOSTART_APP_NAME}.desktop"));

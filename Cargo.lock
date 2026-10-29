@@ -2082,7 +2082,7 @@ dependencies = [
 
 [[package]]
 name = "nextcloud-desktop-core"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "chrono",
  "dirs",
@@ -2097,7 +2097,7 @@ dependencies = [
 
 [[package]]
 name = "nextcloud-desktop-rs"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "clap",
  "dirs",
@@ -2111,7 +2111,7 @@ dependencies = [
 
 [[package]]
 name = "nextcloud-desktop-sync"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "chrono",
  "dirs",
@@ -2129,7 +2129,7 @@ dependencies = [
 
 [[package]]
 name = "nextcloud-desktop-ui"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "gdk-pixbuf",
  "glib",

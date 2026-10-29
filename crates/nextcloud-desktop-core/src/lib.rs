@@ -8,6 +8,7 @@ pub mod autostart;
 pub mod config;
 pub mod error;
 pub mod events;
+pub mod sandbox;
 pub mod storage;
 
 pub use account::{Account, AccountCredentials, AccountId, AccountStatus, ServerConfig};
@@ -18,4 +19,5 @@ pub use config::{
 };
 pub use error::CoreError;
 pub use events::{DesktopEvent, EventBus, NotificationLevel, TransferKind, TransferProgress};
+pub use sandbox::{flatpak_app_id, is_flatpak};
 pub use storage::DesktopStorage;

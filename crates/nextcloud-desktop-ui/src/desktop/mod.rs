@@ -20,4 +20,4 @@ pub mod tray;
 #[cfg(feature = "gtk")]
 pub use gtk_app::{launch_gtk_application, suppress_gtk_logs};
 #[cfg(feature = "tray")]
-pub use tray::{TrayAction, spawn_app_bar_tray};
+pub use tray::{TrayAction, TrayAvailability, spawn_app_bar_tray};

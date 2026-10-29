@@ -251,7 +251,7 @@ fn build_ui(
 
     // App bar tray communication channel
     let (tx_tray, mut rx_tray) = mpsc::unbounded_channel::<TrayAction>();
-    spawn_app_bar_tray(tx_tray);
+    let tray_availability = spawn_app_bar_tray(tx_tray);
 
     let content_stack = Stack::new();
     content_stack.set_transition_type(StackTransitionType::Crossfade);
@@ -370,7 +370,14 @@ fn build_ui(
     window.add_controller(mouse_nav);
 
     // Intercept window close (X button) to keep running in background app bar
+    let availability_for_close = tray_availability.clone();
     window.connect_close_request(move |win| {
+        if !availability_for_close.is_registered() {
+            tracing::warn!(
+                "No app bar indicator is registered; closing the window quits instead of hiding"
+            );
+            return glib::Propagation::Proceed;
+        }
         tracing::info!("Minimizing Nextcloud Desktop to background app bar");
         win.set_visible(false);
         glib::Propagation::Stop
@@ -386,10 +393,12 @@ fn build_ui(
         while let Some(action) = rx_tray.recv().await {
             match action {
                 TrayAction::ShowWindow => {
+                    tracing::info!("App bar requested the main window");
                     win_for_tray.set_visible(true);
                     win_for_tray.present();
                 }
                 TrayAction::HideWindow => {
+                    tracing::info!("App bar requested the window be hidden");
                     win_for_tray.set_visible(false);
                 }
                 TrayAction::TriggerSync => {
@@ -463,9 +472,49 @@ fn build_ui(
     // Initial render of Cloud Files view from local persistent tree cache (0 ms first paint)
     refresh_cb();
 
-    if !start_minimized {
+    if start_minimized {
+        // The tray service settles on a runtime task, so without waiting the
+        // window could hide before its indicator is known to exist.
+        let window_for_settle = window.clone();
+        let availability_for_settle = tray_availability.clone();
+        glib::MainContext::default().spawn_local(async move {
+            availability_for_settle.wait_until_settled().await;
+            if availability_for_settle.is_registered() {
+                tracing::info!("Starting in the background behind the app bar indicator");
+            } else {
+                tracing::warn!(
+                    "Starting in the background without an app bar indicator; showing the window"
+                );
+                window_for_settle.present();
+            }
+        });
+    } else {
         window.present();
     }
+
+    // A hidden window with no indicator has no way back, so restore it whenever
+    // an indicator that was already working goes away.
+    let window_for_indicator = window.clone();
+    let availability_for_indicator = tray_availability.clone();
+    glib::MainContext::default().spawn_local(async move {
+        let mut changes = availability_for_indicator.subscribe();
+        let mut was_registered = *changes.borrow_and_update() == Some(true);
+        while changes.changed().await.is_ok() {
+            match *changes.borrow_and_update() {
+                Some(true) => was_registered = true,
+                Some(false) => {
+                    if was_registered && !window_for_indicator.is_visible() {
+                        tracing::warn!(
+                            "App bar indicator disappeared; restoring the window so it stays reachable"
+                        );
+                        window_for_indicator.present();
+                    }
+                    was_registered = false;
+                }
+                None => {}
+            }
+        }
+    });
 
     // Background remote tree refresh, automatic subfolder preloading, and active folder sync
     let ctrl_for_init = controller.clone();
