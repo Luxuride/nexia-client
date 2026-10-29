@@ -587,6 +587,47 @@ impl DesktopSyncCoordinator {
         Some((user, client, auth))
     }
 
+    /// Merges freshly discovered system accounts into the configuration and republishes the
+    /// account-scoped runtime state if the active profile changed as a result.
+    pub async fn reconcile_system_accounts(&self, discovered_accounts: Vec<Account>) {
+        // Reconcile unconditionally: an empty run is exactly how system accounts the OS no
+        // longer reports get purged, and how a dangling active account gets repaired.
+        let (previous_active, purged) = {
+            let mut conf = self.config.write().await;
+            let previous_active = conf.active_account_id.clone();
+            let before: Vec<Account> = conf.accounts.clone();
+            conf.sync_system_accounts(discovered_accounts);
+            let purged: Vec<Account> = before
+                .into_iter()
+                .filter(|old| !conf.accounts.iter().any(|a| a.id == old.id))
+                .collect();
+            (previous_active, purged)
+        };
+        self.persist_config().await;
+
+        for gone in &purged {
+            self.drop_client_for(gone).await;
+        }
+
+        let active_after = {
+            let conf = self.config.read().await;
+            conf.active_account_id.clone()
+        };
+        if active_after == previous_active {
+            return;
+        }
+
+        *self.default_mount_id.write().await = None;
+        self.clear_cached_theme();
+        let _ = self.refresh_virtual_tree().await;
+        match active_after {
+            Some(id) => self.emit_account_switched(&id),
+            None => self.event_bus.emit(DesktopEvent::AccountSignedOut {
+                account_id: previous_active.map(|a| a.0).unwrap_or_default(),
+            }),
+        }
+    }
+
     /// Helper resolving user name, SDK client, and auth credentials for any specific account.
     pub(crate) async fn dav_context_for_account(
         &self,
@@ -692,34 +733,26 @@ impl DesktopSyncCoordinator {
             discovered_accounts.push(sso_acc);
         }
 
-        if !discovered_accounts.is_empty() {
-            {
-                let mut conf = self.config.write().await;
-                conf.sync_system_accounts(discovered_accounts);
-            }
-            self.persist_config().await;
-        }
+        self.reconcile_system_accounts(discovered_accounts).await;
 
-        // Ensure all configured accounts have their clients built and registered
+        // Ensure every configured account has a registered client
         let configured = {
             let conf = self.config.read().await;
             conf.accounts.clone()
         };
         for acc in configured {
-            let exists = {
-                let clients = self.clients.read().await;
-                clients
-                    .iter()
-                    .any(|c| c.current_user_id().as_deref() == Some(&acc.credentials.username))
+            if self.client_index_for(&acc).await.is_some() {
+                continue;
+            }
+            let Ok(server_url) = ServerUrl::parse(&acc.server.server_url) else {
+                continue;
             };
-            if !exists && let Ok(server_url) = ServerUrl::parse(&acc.server.server_url) {
-                let secret = SecretString::new(acc.credentials.secret());
-                if let Ok(client) = self
-                    .build_account_client(server_url, &acc.credentials.username, secret, &acc.id.0)
-                    .await
-                {
-                    self.add_client(client).await;
-                }
+            let secret = SecretString::new(acc.credentials.secret());
+            if let Ok(client) = self
+                .build_account_client(server_url, &acc.credentials.username, secret, &acc.id.0)
+                .await
+            {
+                self.add_client(client).await;
             }
         }
 
@@ -803,35 +836,97 @@ impl DesktopSyncCoordinator {
         Ok(())
     }
 
-    /// Adds a new account profile, instantiating and appending a [`Client`] to the clients list.
+    /// Adds a new account profile and makes it active, registering a [`Client`] for it.
     pub async fn add_account(&self, account: Account) -> Result<(), SyncError> {
-        if let Ok(server_url) = ServerUrl::parse(&account.server.server_url) {
-            let secret = SecretString::new(account.credentials.secret());
-            if let Ok(client) = self
-                .build_account_client(
-                    server_url,
-                    &account.credentials.username,
-                    secret,
-                    &account.id.0,
-                )
-                .await
-            {
-                self.add_client(client).await;
-            }
-        }
+        // The OAuth flow registers a live client before calling here, so reuse it rather than
+        // registering a second client for the same profile.
+        let idx = match self.client_index_for(&account).await {
+            Some(i) => Some(i),
+            None => match ServerUrl::parse(&account.server.server_url) {
+                Ok(server_url) => {
+                    let secret = SecretString::new(account.credentials.secret());
+                    match self
+                        .build_account_client(
+                            server_url,
+                            &account.credentials.username,
+                            secret,
+                            &account.id.0,
+                        )
+                        .await
+                    {
+                        Ok(client) => Some(self.add_client(client).await),
+                        Err(_) => None,
+                    }
+                }
+                Err(_) => None,
+            },
+        };
 
         let account_id = account.id.clone();
         {
             let mut conf = self.config.write().await;
             conf.upsert_account(account);
-            conf.active_account_id = Some(account_id);
+            conf.active_account_id = Some(account_id.clone());
         }
         self.persist_config().await;
 
+        if let Some(i) = idx {
+            let _ = self.switch_client(i).await;
+        }
         *self.default_mount_id.write().await = None;
         self.clear_cached_theme();
         let _ = self.refresh_virtual_tree().await;
+
+        // The first sign-in goes through here rather than `switch_account`, so the UI has no
+        // other signal to repopulate its account-scoped state from.
+        self.emit_account_switched(&account_id);
         Ok(())
+    }
+
+    /// Emits the event every account-scoped view subscribes to when its state must be re-read.
+    fn emit_account_switched(&self, account_id: &AccountId) {
+        self.event_bus.emit(DesktopEvent::AccountSwitched {
+            account_id: account_id.0.clone(),
+        });
+    }
+
+    /// Finds the index of an already registered client matching `account`, if any.
+    async fn client_index_for(&self, account: &Account) -> Option<usize> {
+        let target_authority = ServerUrl::parse(&account.server.server_url)
+            .map(|u| u.authority().to_string())
+            .unwrap_or_default();
+        let clients = self.clients.read().await;
+        clients.iter().position(|c| {
+            (c.server_url().as_str() == account.server.server_url
+                || (!target_authority.is_empty() && c.server_url().authority() == target_authority))
+                && c.current_user_id().as_deref() == Some(&account.credentials.username)
+        })
+    }
+
+    /// Forgets the registered [`Client`] of an account that is no longer configured.
+    async fn drop_client_for(&self, account: &Account) {
+        let idx = {
+            let target_authority = ServerUrl::parse(&account.server.server_url)
+                .map(|u| u.authority().to_string())
+                .unwrap_or_default();
+            let clients = self.clients.read().await;
+            clients.iter().position(|c| {
+                (c.server_url().as_str() == account.server.server_url
+                    || (!target_authority.is_empty()
+                        && c.server_url().authority() == target_authority))
+                    && c.current_user_id().as_deref() == Some(&account.credentials.username)
+            })
+        };
+        let Some(idx) = idx else {
+            return;
+        };
+        let mut clients = self.clients.write().await;
+        if idx >= clients.len() {
+            return;
+        }
+        clients.remove(idx);
+        let mut active_idx = self.active_client_idx.write().await;
+        *active_idx = (*active_idx).min(clients.len().saturating_sub(1));
     }
 
     /// Signs out and removes a non-system account, optionally cleaning up synchronized files and pairings.
@@ -882,13 +977,15 @@ impl DesktopSyncCoordinator {
             let _ = std::fs::remove_dir_all(&account_cache);
         }
 
-        // 3. Remove client from self.clients
+        // 3. Remove client from self.clients, keeping the active index in range
         {
             let mut clients = self.clients.write().await;
             clients.retain(|c| {
                 !(c.server_url().as_str() == acc.server.server_url
                     && c.current_user_id().as_deref() == Some(&acc.credentials.username))
             });
+            let mut active_idx = self.active_client_idx.write().await;
+            *active_idx = (*active_idx).min(clients.len().saturating_sub(1));
         }
 
         // 4. Remove account from self.config and determine new active account
@@ -899,11 +996,18 @@ impl DesktopSyncCoordinator {
         };
         self.persist_config().await;
 
-        // 5. Switch to remaining account if active account was removed
-        if let Some(next_id) = next_account_id {
-            let _ = self.switch_account(&next_id).await;
-        } else {
-            *self.default_mount_id.write().await = None;
+        // 5. Switch to the remaining account if there is one, otherwise drop the account-scoped
+        // runtime state so nothing is left pointing at the account that just went away.
+        match next_account_id {
+            Some(next_id) => {
+                // `switch_account` emits `AccountSwitched`, which is what repopulates the UI.
+                let _ = self.switch_account(&next_id).await;
+            }
+            None => {
+                *self.default_mount_id.write().await = None;
+                *self.active_client_idx.write().await = 0;
+                self.clear_cached_theme();
+            }
         }
 
         self.event_bus.emit(DesktopEvent::AccountSignedOut {

@@ -5,7 +5,7 @@ pub use crate::coordinator::DesktopSyncCoordinator;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nextcloud_desktop_core::account::{Account, AccountCredentials, ServerConfig};
+    use nextcloud_desktop_core::account::{Account, AccountCredentials, AccountId, ServerConfig};
     use nextcloud_desktop_core::config::AppConfig;
     use nextcloud_desktop_core::events::EventBus;
     use nextcloud_rust_sdk::{MountDescriptor, MountMode};
@@ -51,6 +51,151 @@ mod tests {
             .await
             .expect("switch to alice succeeds");
         assert_eq!(coordinator.active_account().await.unwrap().id, alice_id);
+    }
+
+    /// Drains whatever the bus has buffered, returning it as a vector.
+    fn drain_events(
+        rx: &mut tokio::sync::broadcast::Receiver<nextcloud_desktop_core::events::DesktopEvent>,
+    ) -> Vec<nextcloud_desktop_core::events::DesktopEvent> {
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+        events
+    }
+
+    #[tokio::test]
+    async fn first_sign_in_from_zero_accounts_announces_active_account() {
+        let config = AppConfig::default();
+        let config_lock = Arc::new(tokio::sync::RwLock::new(config));
+        let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
+        let mut rx = coordinator.event_bus().subscribe();
+
+        assert!(coordinator.accounts().await.is_empty());
+        assert!(coordinator.active_account().await.is_none());
+        let _ = drain_events(&mut rx);
+
+        let account = Account::new(
+            "First Nextcloud",
+            ServerConfig::new("https://cloud.first.example"),
+            AccountCredentials::new("first", "token"),
+        );
+        let id = account.id.clone();
+        coordinator
+            .add_account(account)
+            .await
+            .expect("add first account succeeds");
+
+        let switched: Vec<_> = drain_events(&mut rx)
+            .into_iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { .. }
+                )
+            })
+            .collect();
+        assert_eq!(
+            switched.len(),
+            1,
+            "signing in from zero accounts must emit AccountSwitched so account-scoped UI state repopulates"
+        );
+        assert!(matches!(
+            &switched[0],
+            nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { account_id }
+                if account_id == &id.0
+        ));
+        assert_eq!(coordinator.active_account().await.map(|a| a.id), Some(id));
+    }
+
+    #[tokio::test]
+    async fn empty_discovery_purges_stale_system_accounts() {
+        let mut config = AppConfig::default();
+        let stale = Account::system_sso_account(
+            "sso-cloud.stale.example-ghost",
+            "Ghost",
+            ServerConfig::new("https://cloud.stale.example"),
+            AccountCredentials::new("ghost", "token"),
+            None,
+        );
+        let stale_id = stale.id.clone();
+        config.accounts.push(stale);
+        config.active_account_id = Some(stale_id.clone());
+
+        let config_lock = Arc::new(tokio::sync::RwLock::new(config));
+        let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
+        let mut rx = coordinator.event_bus().subscribe();
+        assert_eq!(
+            coordinator.active_account().await.map(|a| a.id),
+            Some(stale_id)
+        );
+        let _ = drain_events(&mut rx);
+
+        coordinator.reconcile_system_accounts(Vec::new()).await;
+
+        assert!(
+            coordinator.accounts().await.is_empty(),
+            "an account the OS no longer reports must not survive reconciliation"
+        );
+        assert!(
+            coordinator.active_account().await.is_none(),
+            "active account must not dangle once nothing is left"
+        );
+        assert!(
+            drain_events(&mut rx).iter().any(|e| matches!(
+                e,
+                nextcloud_desktop_core::events::DesktopEvent::AccountSignedOut { .. }
+            )),
+            "losing the last account must notify the UI so it can clear account-scoped state"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconciliation_promotes_remaining_account_as_active() {
+        let mut config = AppConfig::default();
+        let stale = Account::system_sso_account(
+            "sso-cloud.gone.example-old",
+            "Old SSO",
+            ServerConfig::new("https://cloud.gone.example"),
+            AccountCredentials::new("old", "token"),
+            None,
+        );
+        config.accounts.push(stale);
+
+        let manual = Account::new(
+            "Manual",
+            ServerConfig::new("https://cloud.manual.example"),
+            AccountCredentials::new("manual", "token"),
+        );
+        let manual_id = manual.id.clone();
+        config.accounts.push(manual);
+        config.active_account_id = Some(AccountId("sso-cloud.gone.example-old".to_string()));
+
+        let config_lock = Arc::new(tokio::sync::RwLock::new(config));
+        let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
+        let mut rx = coordinator.event_bus().subscribe();
+        let _ = drain_events(&mut rx);
+
+        coordinator.reconcile_system_accounts(Vec::new()).await;
+
+        assert_eq!(
+            coordinator.accounts().await.len(),
+            1,
+            "only the manually added account survives an empty discovery run"
+        );
+        assert_eq!(
+            coordinator.active_account().await.map(|a| a.id),
+            Some(manual_id.clone()),
+            "the surviving account becomes active instead of leaving a dangling id"
+        );
+        assert!(
+            drain_events(&mut rx).iter().any(|e| matches!(
+                e,
+                nextcloud_desktop_core::events::DesktopEvent::AccountSwitched { account_id }
+                    if account_id == &manual_id.0
+            )),
+            "promoting a new active account must repopulate the UI"
+        );
     }
 
     #[tokio::test]

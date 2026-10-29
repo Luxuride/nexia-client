@@ -255,14 +255,18 @@ async fn refresh_brand_banner<B: FileExplorerBackend>(
     slogan: &Label,
     icon_box: &GtkBox,
 ) {
-    let theme = backend.server_theming().await;
-    title.set_text(
-        theme
-            .as_ref()
-            .and_then(|t| t.name.clone())
-            .unwrap_or_default()
-            .as_str(),
-    );
+    let has_account = backend.active_account_id().await.is_some();
+    let theme = if has_account {
+        backend.server_theming().await
+    } else {
+        None
+    };
+    let title_text = match (has_account, theme.as_ref().and_then(|t| t.name.clone())) {
+        (false, _) => NO_ACCOUNT_TITLE.to_string(),
+        (true, Some(name)) => name,
+        (true, None) => "Nextcloud".to_string(),
+    };
+    title.set_text(&title_text);
     slogan.set_text(
         theme
             .as_ref()
@@ -276,9 +280,16 @@ async fn refresh_brand_banner<B: FileExplorerBackend>(
         }
         None => clear_server_theme_color(),
     }
-    let logo = backend.fetch_theme_logo().await;
+    let logo = if has_account {
+        backend.fetch_theme_logo().await
+    } else {
+        None
+    };
     set_brand_logo(icon_box, logo.as_deref(), icon_box.scale_factor().max(2));
 }
+
+/// Banner title shown while no account profile exists.
+const NO_ACCOUNT_TITLE: &str = "No account";
 
 /// Renders `logo_path` into `icon_box`, falling back to a neutral folder icon when absent.
 fn set_brand_logo(icon_box: &GtkBox, logo_path: Option<&Path>, scale: i32) {

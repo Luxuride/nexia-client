@@ -30,9 +30,13 @@ pub struct AccountSwitcher {
     button: Button,
 }
 
+/// Button text shown while no account profile exists.
+const NO_ACCOUNT_LABEL: &str = "No Account";
+
 /// Rebinds the switcher button to the currently active account's name and avatar.
 async fn refresh_active_account<B: FileExplorerBackend>(
     backend: &B,
+    button: &Button,
     label: &Label,
     avatar_bin: &GtkBox,
 ) {
@@ -43,9 +47,10 @@ async fn refresh_active_account<B: FileExplorerBackend>(
         .find(|a| Some(&a.id) == active_id.as_ref());
     let (name, avatar_path) = match active {
         Some(acc) => (acc.name, acc.avatar_path),
-        None => ("System Account".to_string(), None),
+        None => (NO_ACCOUNT_LABEL.to_string(), None),
     };
     label.set_label(&name);
+    button.set_tooltip_text(Some(&format!("Nextcloud accounts — {name}")));
     while let Some(child) = avatar_bin.first_child() {
         avatar_bin.remove(&child);
     }
@@ -67,10 +72,10 @@ impl AccountSwitcher {
 
         let avatar_bin = GtkBox::new(Orientation::Horizontal, 0);
         avatar_bin.set_can_target(false);
-        let default_avatar = make_avatar("System", None, 24);
+        let default_avatar = make_avatar(NO_ACCOUNT_LABEL, None, 24);
         avatar_bin.append(&default_avatar);
 
-        let active_label = Label::new(Some("System Account"));
+        let active_label = Label::new(Some(NO_ACCOUNT_LABEL));
         active_label.set_can_target(false);
 
         let arrow = Image::from_icon_name("pan-down-symbolic");
@@ -96,18 +101,20 @@ impl AccountSwitcher {
         // triggered outside the popover (sign-out, add-dialog, tray actions).
         {
             let b = backend.clone();
+            let button_init = button.clone();
             let label_init = active_label.clone();
             let avatar_bin_init = avatar_bin.clone();
             let mut event_rx = backend.subscribe_events();
             glib::MainContext::default().spawn_local(async move {
-                refresh_active_account(&b, &label_init, &avatar_bin_init).await;
+                refresh_active_account(&b, &button_init, &label_init, &avatar_bin_init).await;
                 while let Ok(event) = event_rx.recv().await {
                     if matches!(
                         event,
                         DesktopEvent::AccountSwitched { .. }
                             | DesktopEvent::AccountSignedOut { .. }
                     ) {
-                        refresh_active_account(&b, &label_init, &avatar_bin_init).await;
+                        refresh_active_account(&b, &button_init, &label_init, &avatar_bin_init)
+                            .await;
                     }
                 }
             });
@@ -121,8 +128,6 @@ impl AccountSwitcher {
             let pop = popover.clone();
             let btn_clone = button.clone();
             let content_box = popover_content;
-            let current_label = active_label;
-            let current_avatar_bin = avatar_bin;
 
             button.connect_clicked(move |_| {
                 let b_async = b.clone();
@@ -131,8 +136,6 @@ impl AccountSwitcher {
                 let pop_async = pop.clone();
                 let btn_async = btn_clone.clone();
                 let container = content_box.clone();
-                let label_async = current_label.clone();
-                let avatar_bin_async = current_avatar_bin.clone();
 
                 glib::MainContext::default().spawn_local(async move {
                     while let Some(child) = container.first_child() {
@@ -149,6 +152,18 @@ impl AccountSwitcher {
                     header_lbl.set_margin_bottom(6);
                     header_lbl.set_margin_start(4);
                     container.append(&header_lbl);
+
+                    if accounts.is_empty() {
+                        let empty_lbl = Label::new(Some(
+                            "No accounts yet. Sign in to a Nextcloud server to get started.",
+                        ));
+                        empty_lbl.set_wrap(true);
+                        empty_lbl.set_xalign(0.0);
+                        empty_lbl.set_margin_bottom(6);
+                        empty_lbl.add_css_class("dim-label");
+                        empty_lbl.add_css_class("caption");
+                        container.append(&empty_lbl);
+                    }
 
                     // Accounts list
                     for acc in accounts {
@@ -209,13 +224,6 @@ impl AccountSwitcher {
                             check.set_can_target(false);
                             check.add_css_class("success");
                             row_box.append(&check);
-
-                            label_async.set_label(&acc.name);
-                            while let Some(child) = avatar_bin_async.first_child() {
-                                avatar_bin_async.remove(&child);
-                            }
-                            let av = make_avatar(&acc.name, acc.avatar_path.as_deref(), 24);
-                            avatar_bin_async.append(&av);
                         }
 
                         row_btn.set_child(Some(&row_box));
