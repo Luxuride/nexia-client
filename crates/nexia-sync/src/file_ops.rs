@@ -936,29 +936,10 @@ impl DesktopSyncCoordinator {
                 }
             }
 
-            // Also remove any fail markers created for synced files
-            let fail_dirs = [
-                parent.join("fail"),
-                parent.join("fail").join("gnome-thumbnail-factory"),
-            ];
-            for f_dir in fail_dirs {
-                if let Ok(entries) = std::fs::read_dir(&f_dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_file()
-                            && let Ok(mut file) = std::fs::File::open(&path)
-                        {
-                            use std::io::Read;
-                            let mut buf = [0u8; 2048];
-                            if let Ok(n) = file.read(&mut buf)
-                                && crate::freedesktop_thumbs::is_app_thumbnail(&buf[..n])
-                            {
-                                let _ = std::fs::remove_file(&path);
-                            }
-                        }
-                    }
-                }
-            }
+            // Fail markers are not cleaned here: the SDK writes them without a `Software`
+            // chunk (`install_freedesktop_fail_marker` passes `None`), so this application has
+            // no way to tell its own markers from another thumbnailer's in the shared `fail`
+            // directory, and deleting all of them would break other applications' caching.
         }
 
         Ok(freed)

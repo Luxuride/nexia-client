@@ -6,9 +6,23 @@
 /// accounting and cleanup has to identify its own entries. The PNG `Software`
 /// chunk written by `crate::THUMBNAIL_SOFTWARE` is that marker.
 pub(crate) fn is_app_thumbnail(bytes: &[u8]) -> bool {
-    bytes
-        .windows(crate::THUMBNAIL_SOFTWARE.len())
-        .any(|w| w == crate::THUMBNAIL_SOFTWARE.as_bytes())
+    // Anchored on the `Software` text-chunk keyword instead of scanning for the product name
+    // alone: a `Thumb::URI` chunk naming a file like `Nexia Client notes.png` would otherwise be
+    // mistaken for a thumbnail this application wrote, and then deleted or counted.
+    const KEYWORD: &[u8] = b"Software\0";
+    let product = crate::THUMBNAIL_SOFTWARE.as_bytes();
+    let mut cursor = bytes;
+    while let Some(idx) = cursor
+        .windows(KEYWORD.len())
+        .position(|window| window == KEYWORD)
+    {
+        let value = &cursor[idx + KEYWORD.len()..];
+        if value.starts_with(product) {
+            return true;
+        }
+        cursor = &cursor[idx + KEYWORD.len()..];
+    }
+    false
 }
 
 pub use nexia_nextcloud_sdk::{
@@ -26,6 +40,14 @@ mod tests {
     fn recognises_thumbnails_tagged_by_this_app() {
         let tagged = make_png_text_chunk("Software", crate::THUMBNAIL_SOFTWARE);
         assert!(is_app_thumbnail(&tagged));
+    }
+
+    #[test]
+    fn ignores_a_product_name_that_only_appears_in_the_uri() {
+        // The product name inside `Thumb::URI` is not a tag: it must not mark the file as ours.
+        let mut bytes = make_png_text_chunk("Thumb::URI", "file:///tmp/Nexia Client notes.png");
+        bytes.extend_from_slice(&make_png_text_chunk("Software", "GNOME Thumbnail Factory"));
+        assert!(!is_app_thumbnail(&bytes));
     }
 
     #[test]
