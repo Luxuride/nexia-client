@@ -190,6 +190,18 @@ are not cosmetic:
   | `--device=all` | FUSE needs `/dev/fuse` to exist and be openable. Flatpak has no `--device=fuse`, and `--filesystem=/dev/fuse` is rejected (`has unsupported type`), so `all` is the only way to expose it. |
   | `--talk-name=org.freedesktop.Flatpak` | Permits `flatpak-spawn --host`, which the `fusermount3` shim below uses. |
 
+  What the manifest deliberately does **not** grant is keyring access, and that
+  is load-bearing in the other direction. `oo7` 0.6 checks `ashpd::is_sandboxed()`
+  (presence of `/.flatpak-info`) and, when sandboxed, uses its *file* backend
+  sealed by `org.freedesktop.portal.Secret`, so the keyring lives at
+  `$XDG_DATA_HOME/keyrings/default.keyring` inside the app's own data directory.
+  Adding `--talk-name=org.freedesktop.secrets`, `--talk-name=org.kde.ksecretservice`
+  or `--filesystem=xdg-run/keyring` is not just redundant — it widens the
+  sandbox's reach to every secret in the host keyring for no benefit. Verified
+  by running the bundle with all three removed: the encrypted databases still
+  open, and the keyring file is written under
+  `~/.var/app/eu.luxuride.nexia/data/keyrings/`.
+
 - **`flatpak/fusermount3` is a shim, and the app ships it as `fusermount3` on
 `PATH`.** The real helper must be setuid root, and Flatpak never ships setuid
 binaries in `/app`, so the sandbox has no usable `fusermount3`. `fuser` opens

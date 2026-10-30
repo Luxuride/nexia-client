@@ -87,6 +87,27 @@ fn finish_args_allow_host_spawn_for_the_fuse_shim() -> Result<(), Box<dyn Error>
 }
 
 #[test]
+fn finish_args_do_not_grant_host_keyring_access() -> Result<(), Box<dyn Error>> {
+    let args = finish_args(&manifest()?);
+    // Inside a sandbox `oo7` detects /.flatpak-info and switches to its file
+    // backend sealed by org.freedesktop.portal.Secret, so the keyring stays in
+    // $XDG_DATA_HOME/keyrings. Reaching the host Secret Service would expose
+    // every secret in the user's keyring to this app for no functional gain.
+    for forbidden in [
+        "--talk-name=org.freedesktop.secrets",
+        "--talk-name=org.kde.ksecretservice",
+        "--filesystem=xdg-run/keyring",
+    ] {
+        assert!(
+            !args.iter().any(|a| a == forbidden),
+            "finish-args must not contain {forbidden}: oo7 uses its sandboxed \
+             file backend instead; got {args:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn manifest_installs_the_fusermount_shim_on_path() -> Result<(), Box<dyn Error>> {
     let manifest = manifest()?;
     assert!(
