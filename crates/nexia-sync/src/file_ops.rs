@@ -2,11 +2,125 @@
 
 use nexia_nextcloud_sdk::{DavPath, DavProperty, Depth, FolderSyncRunner, PropfindBody};
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::Duration;
+use tokio::time::Instant;
 
 use crate::coordinator::DesktopSyncCoordinator;
 use crate::error::SyncError;
 use nexia_core::config::SyncMode;
 use nexia_core::events::DesktopEvent;
+
+/// How long a directory listing must be quiet before its thumbnail pass starts.
+///
+/// A file manager lists a folder several times while opening it. Waiting out the burst means the
+/// pass runs once, after the file manager has stopped asking, instead of competing with it.
+const THUMBNAIL_PASS_DEBOUNCE: Duration = Duration::from_millis(700);
+
+/// Upper bound on how long a listing may wait for its pass.
+///
+/// Scrolling through a large folder re-lists it continuously, which would otherwise defer the pass
+/// for the whole session and leave the folder without thumbnails.
+const THUMBNAIL_PASS_MAX_DELAY: Duration = Duration::from_secs(4);
+
+/// A queued thumbnail pass: the listing's remote paths with any known file IDs, and the size.
+type ThumbnailPassJob = (Vec<(String, Option<u64>)>, u32);
+
+/// The newest thumbnail pass still waiting to run, plus the runner's bookkeeping.
+#[derive(Default)]
+struct ThumbnailPassQueue {
+    /// The newest listing: later listings replace it, since the user has moved on.
+    pending: Option<ThumbnailPassJob>,
+    /// When the current burst of listings started, used for the cap.
+    first_request: Option<Instant>,
+    /// When the newest listing arrived, used for the debounce.
+    last_request: Option<Instant>,
+    /// Whether a runner task already exists; only one may drain the queue at a time.
+    running: bool,
+}
+
+static THUMBNAIL_PASS_QUEUE: OnceLock<tokio::sync::Mutex<ThumbnailPassQueue>> = OnceLock::new();
+
+fn thumbnail_pass_queue() -> &'static tokio::sync::Mutex<ThumbnailPassQueue> {
+    THUMBNAIL_PASS_QUEUE.get_or_init(|| tokio::sync::Mutex::new(ThumbnailPassQueue::default()))
+}
+
+/// Records `job` as the pass to run, replacing any earlier one still waiting.
+///
+/// Returns whether the caller has to start the runner: exactly one caller is told to, and it then
+/// stays responsible for the queue until the queue runs dry.
+async fn enqueue_thumbnail_pass(
+    queue: &tokio::sync::Mutex<ThumbnailPassQueue>,
+    job: ThumbnailPassJob,
+) -> bool {
+    let mut q = queue.lock().await;
+    let now = Instant::now();
+    q.pending = Some(job);
+    q.first_request.get_or_insert(now);
+    q.last_request = Some(now);
+    let start = !q.running;
+    q.running = true;
+    start
+}
+
+/// Waits for the listing burst to settle, then hands the newest listing to `run`, until the queue
+/// runs dry.
+///
+/// Kept separate from the queue so the timing rules can be exercised without a coordinator: the
+/// caller supplies what running a pass means. `run` is awaited, so a slow pass makes later listings
+/// wait in the queue rather than pile up beside it.
+async fn drain_thumbnail_passes<F, Fut>(
+    queue: &tokio::sync::Mutex<ThumbnailPassQueue>,
+    run: F,
+) where
+    F: Fn(ThumbnailPassJob) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    loop {
+        let (has_work, sleep_for) = {
+            let q = queue.lock().await;
+            let last = q.last_request.unwrap_or_else(Instant::now);
+            let first = q.first_request.unwrap_or_else(Instant::now);
+            let until_cap = THUMBNAIL_PASS_MAX_DELAY.saturating_sub(first.elapsed());
+            (
+                q.pending.is_some(),
+                THUMBNAIL_PASS_DEBOUNCE
+                    .saturating_sub(last.elapsed())
+                    .min(until_cap),
+            )
+        };
+
+        if !has_work {
+            let mut q = queue.lock().await;
+            // Re-checked under the lock: a listing that arrived while the pass was running must not
+            // be stranded by this runner standing down.
+            if q.pending.is_none() {
+                q.running = false;
+                q.first_request = None;
+                q.last_request = None;
+                return;
+            }
+            continue;
+        }
+
+        if !sleep_for.is_zero() {
+            tokio::time::sleep(sleep_for).await;
+            continue;
+        }
+
+        let job = {
+            let mut q = queue.lock().await;
+            let job = q.pending.take();
+            q.first_request = None;
+            q.last_request = None;
+            job
+        };
+        let Some(job) = job else {
+            continue;
+        };
+        run(job).await;
+    }
+}
 
 /// Constructs a normalized [`DavPath`] from user name and relative path.
 pub fn make_dav_path(user: &str, relative: &str) -> Result<DavPath, SyncError> {
@@ -1229,92 +1343,100 @@ impl DesktopSyncCoordinator {
         remote_path: &str,
         png_bytes: &[u8],
     ) {
-        let clean_path = remote_path.trim_matches('/');
-        let png = crate::freedesktop_thumbs::ensure_png_bytes(png_bytes);
+        self.install_freedesktop_previews_batch(&[(remote_path.to_string(), png_bytes.to_vec())])
+            .await;
+    }
 
-        // 1. Resolve mtime from active VFS or fallback to now
-        let vfs = self.active_vfs().await;
-        let mtime_sec = vfs
-            .entry(remote_path)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|e| e.modified_at)
-            .and_then(|s| nexia_nextcloud_sdk::parse_date_to_unix_secs(&s))
-            .unwrap_or_else(|| {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0)
-            });
-
-        // 2. FUSE mountpoint (if mounted)
-        if let Some(fuse_mp) = self.fuse_mountpoint().await {
-            let target = fuse_mp.join(clean_path);
-            let target_mtime = target
-                .metadata()
-                .and_then(|m| m.modified())
-                .unwrap_or_else(|_| std::time::SystemTime::now())
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(mtime_sec);
-            crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
-                &target,
-                &png,
-                target_mtime,
-                crate::THUMBNAIL_SOFTWARE,
-            );
+    /// Installs FreeDesktop system thumbnails for a whole directory's worth of remote files,
+    /// resolving the mount roots once instead of once per file.
+    ///
+    /// A directory listing hands over several hundred paths at a time. Resolving the FUSE
+    /// mountpoint, the account VFS directory, the sync mounts and the remote mtime per file turns
+    /// that into thousands of awaits, and every thumbnail is decoded and re-encoded from the source
+    /// image; together that is seconds of work competing with the file manager populating the same
+    /// folder, which is felt as stutter while it opens.
+    ///
+    /// Two things keep it cheap: the roots are looked up once per batch, and a target whose
+    /// thumbnails are already present is skipped before any decoding happens.
+    pub async fn install_freedesktop_previews_batch(&self, items: &[(String, Vec<u8>)]) {
+        if items.is_empty() {
+            return;
         }
 
-        // 3. Account internal VFS directory
-        if let Some(account) = self.active_account().await {
-            let vfs_target = self.account_vfs_dir(&account.id.0).join(clean_path);
-            if vfs_target.exists() {
-                let vfs_mtime = vfs_target
+        let fuse_mp = self.fuse_mountpoint().await;
+        let account_vfs_dir = match self.active_account().await {
+            Some(account) => Some(self.account_vfs_dir(&account.id.0)),
+            None => None,
+        };
+        let folder_mounts: Vec<(String, PathBuf)> = self
+            .sync_mounts()
+            .await
+            .into_iter()
+            .filter(|mount| mount.enabled && !Self::is_internal_vfs(&mount.id))
+            .map(|mount| {
+                (
+                    mount
+                        .remote_path
+                        .trim_end_matches('/')
+                        .trim_start_matches('/')
+                        .to_string(),
+                    PathBuf::from(&mount.local_target),
+                )
+            })
+            .collect();
+
+        let now_sec = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        for (remote_path, png_bytes) in items {
+            let clean_path = remote_path.trim_matches('/');
+            let mut targets: Vec<PathBuf> = Vec::new();
+            if let Some(ref fuse_mp) = fuse_mp {
+                targets.push(fuse_mp.join(clean_path));
+            }
+            if let Some(ref dir) = account_vfs_dir {
+                targets.push(dir.join(clean_path));
+            }
+            for (mount_remote, mount_local) in &folder_mounts {
+                let rel = if mount_remote.is_empty() {
+                    Some(clean_path)
+                } else {
+                    clean_path.strip_prefix(mount_remote.as_str())
+                };
+                if let Some(rel) = rel {
+                    targets.push(mount_local.join(rel.trim_start_matches('/')));
+                }
+            }
+
+            // Decoded lazily: reinstalling thumbnails that are already current is the common case
+            // for a folder that has been opened before, and decoding every source image to throw
+            // the result away is what made reopening such a folder expensive.
+            let mut png: Option<Vec<u8>> = None;
+            for target in targets {
+                if !target.exists() {
+                    continue;
+                }
+                if crate::freedesktop_thumbs::freedesktop_thumbnail_is_current(&target) {
+                    continue;
+                }
+                let png = png.get_or_insert_with(|| crate::freedesktop_thumbs::ensure_png_bytes(png_bytes));
+                // The standard keys a thumbnail on the file's own modification time, so the value
+                // that makes it valid is the one on disk rather than the remote date.
+                let target_mtime = target
                     .metadata()
                     .and_then(|m| m.modified())
-                    .unwrap_or_else(|_| std::time::SystemTime::now())
-                    .duration_since(std::time::UNIX_EPOCH)
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs())
-                    .unwrap_or(mtime_sec);
+                    .unwrap_or(now_sec);
                 crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
-                    &vfs_target,
-                    &png,
-                    vfs_mtime,
+                    &target,
+                    png,
+                    target_mtime,
                     crate::THUMBNAIL_SOFTWARE,
                 );
-            }
-        }
-
-        // 4. Any user sync folders matching remote_path
-        for mount in self.sync_mounts().await {
-            if Self::is_internal_vfs(&mount.id) || !mount.enabled {
-                continue;
-            }
-            let m_remote = mount.remote_path.trim_end_matches('/');
-            let rel = if m_remote.is_empty() || m_remote == "/" {
-                Some(clean_path)
-            } else {
-                clean_path.strip_prefix(m_remote.trim_start_matches('/'))
-            };
-            if let Some(rel_path) = rel {
-                let rel_clean = rel_path.trim_start_matches('/');
-                let local_target = PathBuf::from(&mount.local_target).join(rel_clean);
-                if local_target.exists() {
-                    let local_mtime = local_target
-                        .metadata()
-                        .and_then(|m| m.modified())
-                        .unwrap_or_else(|_| std::time::SystemTime::now())
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(mtime_sec);
-                    crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
-                        &local_target,
-                        &png,
-                        local_mtime,
-                        crate::THUMBNAIL_SOFTWARE,
-                    );
-                }
             }
         }
     }
@@ -1486,48 +1608,76 @@ impl DesktopSyncCoordinator {
         if items.is_empty() {
             return;
         }
+        self.queue_thumbnail_pass(items, size);
+    }
 
+    /// Queues a deferred thumbnail pass for a directory listing.
+    ///
+    /// Listings are coalesced rather than served one by one: the newest listing replaces any
+    /// earlier one still waiting (the user has moved on), a pass starts only after the folder has
+    /// been quiet for [`THUMBNAIL_PASS_DEBOUNCE`], and a folder that keeps being listed is still
+    /// served once [`THUMBNAIL_PASS_MAX_DELAY`] has elapsed. Only one runner drains the queue at a
+    /// time, so the decoding work cannot stack up behind a scrolling user.
+    fn queue_thumbnail_pass(&self, items: Vec<(String, Option<u64>)>, size: u32) {
         let coord = self.clone();
         tokio::spawn(async move {
-            let max_size = coord.max_thumbnail_size().await;
-            let effective_size = size.clamp(64, max_size);
-
-            let mut missing_items: Vec<(String, Option<u64>)> = Vec::new();
-            for (path, fid) in items {
-                if let Some(cached_file) = coord.cached_thumbnail_path(&path, Some(effective_size))
-                    && let Ok(bytes) = tokio::fs::read(&cached_file).await
-                {
-                    coord
-                        .install_freedesktop_previews_for_remote_path(&path, &bytes)
-                        .await;
-                    continue;
-                }
-                missing_items.push((path, fid));
-            }
-
-            if missing_items.is_empty() {
+            let queue = thumbnail_pass_queue();
+            if !enqueue_thumbnail_pass(queue, (items, size)).await {
                 return;
             }
-
-            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
-            let mut tasks = Vec::with_capacity(missing_items.len());
-            for (path, fid) in missing_items {
-                let c = coord.clone();
-                let sem = semaphore.clone();
-                tasks.push(tokio::spawn(async move {
-                    c.wait_for_priority_ops().await;
-                    let _permit = match sem.acquire().await {
-                        Ok(p) => p,
-                        Err(_) => return,
-                    };
-                    c.wait_for_priority_ops().await;
-                    let _ = c.fetch_thumbnail_with_id(&path, fid, effective_size).await;
-                }));
-            }
-            for task in tasks {
-                let _ = task.await;
-            }
+            drain_thumbnail_passes(queue, |(items, size)| {
+                let coord = coord.clone();
+                async move { coord.run_thumbnail_pass(items, size).await }
+            })
+            .await;
         });
+    }
+
+    /// Installs already-cached thumbnails for `items` in one pass, then fetches the missing ones.
+    async fn run_thumbnail_pass(&self, items: Vec<(String, Option<u64>)>, size: u32) {
+        let max_size = self.max_thumbnail_size().await;
+        let effective_size = size.clamp(64, max_size);
+
+        let mut missing_items: Vec<(String, Option<u64>)> = Vec::new();
+        let mut cached_installs: Vec<(String, Vec<u8>)> = Vec::new();
+        for (path, fid) in items {
+            if let Some(cached_file) = self.cached_thumbnail_path(&path, Some(effective_size))
+                && let Ok(bytes) = tokio::fs::read(&cached_file).await
+            {
+                cached_installs.push((path, bytes));
+                continue;
+            }
+            missing_items.push((path, fid));
+        }
+
+        // Install the already-cached thumbnails in one pass: the mount roots are resolved once and
+        // up-to-date entries are skipped before any decoding, instead of paying both costs per file
+        // while the file manager is still populating the folder.
+        self.install_freedesktop_previews_batch(&cached_installs)
+            .await;
+
+        if missing_items.is_empty() {
+            return;
+        }
+
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+        let mut tasks = Vec::with_capacity(missing_items.len());
+        for (path, fid) in missing_items {
+            let c = self.clone();
+            let sem = semaphore.clone();
+            tasks.push(tokio::spawn(async move {
+                c.wait_for_priority_ops().await;
+                let _permit = match sem.acquire().await {
+                    Ok(p) => p,
+                    Err(_) => return,
+                };
+                c.wait_for_priority_ops().await;
+                let _ = c.fetch_thumbnail_with_id(&path, fid, effective_size).await;
+            }));
+        }
+        for task in tasks {
+            let _ = task.await;
+        }
     }
 
     /// Pre-populates FreeDesktop system thumbnails for all files in the virtual tree that already have local cached previews.
@@ -1679,4 +1829,106 @@ fn decode_percent_str(input: &str) -> String {
         }
     }
     String::from_utf8_lossy(&bytes).to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds a one-file listing, which is all the scheduler looks at.
+    fn listing(name: &str) -> ThumbnailPassJob {
+        (vec![(name.to_string(), None)], 256)
+    }
+
+    /// A queue of its own per test: the production queue is a process-wide static.
+    fn fresh_queue() -> &'static tokio::sync::Mutex<ThumbnailPassQueue> {
+        Box::leak(Box::new(tokio::sync::Mutex::new(
+            ThumbnailPassQueue::default(),
+        )))
+    }
+
+    /// Mirrors `queue_thumbnail_pass`: whoever is told to start the runner does so, and reports each
+    /// listing the scheduler actually runs.
+    fn spawn_runner(
+        queue: &'static tokio::sync::Mutex<ThumbnailPassQueue>,
+        tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) {
+        tokio::spawn(drain_thumbnail_passes(queue, move |(items, _size)| {
+            let tx = tx.clone();
+            async move {
+                let _ = tx.send(items[0].0.clone());
+            }
+        }));
+    }
+
+    /// A file manager lists a folder several times while opening it. Running one pass per listing
+    /// put hundreds of thumbnail decodes and cache writes on the machine while that same file
+    /// manager was still resolving the folder, and the newest listing is the only one the user is
+    /// still looking at.
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_of_listings_runs_only_the_newest_pass() {
+        let queue = fresh_queue();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        assert!(enqueue_thumbnail_pass(queue, listing("first")).await);
+        spawn_runner(queue, tx.clone());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        assert!(
+            !enqueue_thumbnail_pass(queue, listing("second")).await,
+            "the running scheduler already owns the queue"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(!enqueue_thumbnail_pass(queue, listing("third")).await);
+
+        assert_eq!(
+            rx.recv().await.as_deref(),
+            Some("third"),
+            "only the newest listing of the burst is worth running"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "the replaced listings must not run as well"
+        );
+    }
+
+    /// A folder that keeps being listed — the user scrolling — must not defer its pass forever.
+    #[tokio::test(start_paused = true)]
+    async fn a_folder_listed_continuously_still_gets_a_pass() {
+        let queue = fresh_queue();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        for round in 0..40 {
+            let start = enqueue_thumbnail_pass(queue, listing(&format!("listing-{round}"))).await;
+            if start {
+                spawn_runner(queue, tx.clone());
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+
+        let first = rx
+            .recv()
+            .await
+            .expect("the delay cap must admit a pass instead of deferring it indefinitely");
+        assert!(first.starts_with("listing-"));
+    }
+
+    /// Once the queue is empty the scheduler stands down, so the next listing starts a fresh one
+    /// with its own delay window rather than inheriting a stale deadline.
+    #[tokio::test(start_paused = true)]
+    async fn the_scheduler_stands_down_and_a_later_listing_gets_its_own_pass() {
+        let queue = fresh_queue();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        assert!(enqueue_thumbnail_pass(queue, listing("early")).await);
+        spawn_runner(queue, tx.clone());
+        assert_eq!(rx.recv().await.as_deref(), Some("early"));
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(!queue.lock().await.running, "the scheduler must stand down");
+
+        assert!(enqueue_thumbnail_pass(queue, listing("late")).await);
+        spawn_runner(queue, tx.clone());
+        assert_eq!(rx.recv().await.as_deref(), Some("late"));
+    }
 }

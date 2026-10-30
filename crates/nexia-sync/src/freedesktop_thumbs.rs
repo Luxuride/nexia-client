@@ -13,9 +13,9 @@ pub(crate) fn is_app_thumbnail(bytes: &[u8]) -> bool {
 
 pub use nexia_nextcloud_sdk::{
     crc32, embed_freedesktop_metadata, ensure_png_bytes, freedesktop_thumbnail_dirs,
-    install_freedesktop_fail_marker, install_freedesktop_thumbnail,
-    install_freedesktop_thumbnail_with_mtime, make_png_text_chunk, md5_hex, path_to_file_uri,
-    remove_freedesktop_fail_marker,
+    freedesktop_thumbnail_is_current, install_freedesktop_fail_marker,
+    install_freedesktop_thumbnail, install_freedesktop_thumbnail_with_mtime, make_png_text_chunk,
+    md5_hex, path_to_file_uri, remove_freedesktop_fail_marker,
 };
 
 #[cfg(test)]

@@ -20,3 +20,7 @@ uuid.workspace = true
 dirs = "7.0"
 notify = "8.0.0"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+
+[dev-dependencies]
+# `test-util` provides the paused clock the thumbnail pass scheduler is tested against.
+tokio = { version = "1", features = ["test-util"] }
