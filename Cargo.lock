@@ -2087,7 +2087,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-activity"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2099,7 +2099,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-auth"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "base64",
  "nexia-nextcloud-core",
@@ -2109,7 +2109,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-client-config"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-sdk-keyring",
@@ -2120,12 +2120,12 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-core"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 
 [[package]]
 name = "nexia-nextcloud-dav"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "tracing",
@@ -2134,7 +2134,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-deck"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-auth",
  "nexia-nextcloud-core",
@@ -2146,7 +2146,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-goa"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-auth",
  "nexia-nextcloud-core",
@@ -2158,7 +2158,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-kaccounts"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-sdk-keyring",
@@ -2170,7 +2170,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-notifications"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2182,7 +2182,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-ocs"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "serde",
@@ -2193,7 +2193,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-preview"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "image",
  "nexia-nextcloud-auth",
@@ -2204,7 +2204,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-activity",
  "nexia-nextcloud-auth",
@@ -2245,7 +2245,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-fuse"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "fuser",
  "nexia-nextcloud-core",
@@ -2257,7 +2257,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-keyring"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "keyring",
  "oo7",
@@ -2267,7 +2267,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-orchestrator"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-dav",
@@ -2287,7 +2287,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-ratelimit"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "tokio",
  "tracing",
@@ -2296,7 +2296,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-request"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "tracing",
@@ -2305,7 +2305,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-session"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-auth",
  "nexia-nextcloud-core",
@@ -2315,7 +2315,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-storage"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "getrandom 0.3.4",
  "nexia-nextcloud-sdk-keyring",
@@ -2326,7 +2326,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-vfs"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "serde",
@@ -2337,7 +2337,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-search"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2349,7 +2349,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-shares"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2361,7 +2361,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sync"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "serde",
@@ -2373,7 +2373,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-talk"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2385,7 +2385,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-theming"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2397,7 +2397,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-transport"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "futures-util",
  "nexia-nextcloud-core",
@@ -2409,7 +2409,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-trashbin"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-auth",
  "nexia-nextcloud-core",
@@ -2420,7 +2420,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-uploads"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-auth",
  "nexia-nextcloud-core",
@@ -2431,7 +2431,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-users"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2443,7 +2443,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-versions"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=8623273#8623273cc08c815f1173f765936664a02b06ecb8"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk?rev=f40b23e#f40b23e6a2a796f4a8805aab1223282f1e054b3b"
 dependencies = [
  "nexia-nextcloud-auth",
  "nexia-nextcloud-core",
