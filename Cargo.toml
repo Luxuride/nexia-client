@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/Luxuride/nexia-client"
@@ -19,9 +19,9 @@ authors = ["Luxuride"]
 nexia-nextcloud-sdk = { git = "https://github.com/Luxuride/nextcloud-rust-sdk" }
 
 # Workspace crates
-nexia-core = { path = "crates/nexia-core", version = "0.0.3" }
-nexia-sync = { path = "crates/nexia-sync", version = "0.0.3" }
-nexia-ui = { path = "crates/nexia-ui", version = "0.0.3", default-features = false }
+nexia-core = { path = "crates/nexia-core", version = "0.0.4" }
+nexia-sync = { path = "crates/nexia-sync", version = "0.0.4" }
+nexia-ui = { path = "crates/nexia-ui", version = "0.0.4", default-features = false }
 
 # External dependencies
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros", "time", "net", "io-util", "fs", "signal"] }
