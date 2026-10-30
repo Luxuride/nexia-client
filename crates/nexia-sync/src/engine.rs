@@ -361,7 +361,7 @@ mod tests {
         let config_lock = Arc::new(tokio::sync::RwLock::new(config));
         let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(100));
 
-        let vfs = coordinator.active_vfs().await;
+        let vfs = coordinator.active_vfs().await.expect("active vfs");
         let root_entries = vfs.list_children("/").await.expect("list root");
         assert!(root_entries.is_empty());
 

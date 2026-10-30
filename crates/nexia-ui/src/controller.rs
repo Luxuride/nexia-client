@@ -167,9 +167,11 @@ impl DesktopUiController {
             let mut prefs = cfg.get_account_preferences(account_id);
             prefs.display = display;
             cfg.set_account_preferences(account_id, prefs);
-            let _ = cfg.save_user_config(account_id);
         }
-        self.coordinator.persist_config().await;
+        self.coordinator
+            .persist_config()
+            .await
+            .map_err(|err| UiError::Controller(format!("set account display config: {err}")))?;
         self.coordinator
             .event_bus()
             .emit(nexia_core::events::DesktopEvent::DisplaySettingsChanged);
@@ -185,7 +187,10 @@ impl DesktopUiController {
             let mut cfg = self.coordinator.config().write().await;
             cfg.global.default_display = display;
         }
-        self.coordinator.persist_config().await;
+        self.coordinator
+            .persist_config()
+            .await
+            .map_err(|err| UiError::Controller(format!("set global display config: {err}")))?;
         self.coordinator
             .event_bus()
             .emit(nexia_core::events::DesktopEvent::DisplaySettingsChanged);
@@ -309,22 +314,16 @@ impl DesktopUiController {
         self.coordinator.fetch_theme_logo().await
     }
 
-    /// Searches files matching `query` across local VFS and server unified search.
-    pub async fn search_items(&self, query: &str) -> Result<Vec<FileViewItem>, UiError> {
-        let trimmed = query.trim();
-        if trimmed.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let entries = self
-            .coordinator
-            .search(trimmed)
-            .await
-            .map_err(|err| UiError::Controller(err.to_string()))?;
-
-        let display_cfg = self.effective_display_config().await;
-        let active_hydrations = self.active_hydrations.read().await;
-        let mut items: Vec<FileViewItem> = entries
+    /// Projects SDK entries into the rows the file view renders.
+    ///
+    /// A listing and a search result show the same row, so both go through this one mapping
+    /// instead of each carrying its own copy of the status and size presentation rules.
+    fn project_entries(
+        entries: Vec<nexia_nextcloud_sdk::VirtualEntrySummary>,
+        display_cfg: &nexia_core::AdditionalItemsDisplayConfig,
+        active_hydrations: &HashSet<String>,
+    ) -> Vec<FileViewItem> {
+        entries
             .into_iter()
             .map(|e| {
                 let clean_p = format!("/{}", e.path.trim_matches('/'));
@@ -332,20 +331,14 @@ impl DesktopUiController {
                 let status = if is_syncing {
                     FileSyncStatus::Syncing
                 } else if e.is_directory {
-                    if let Some(ref dir_sum) = e.directory_summary {
-                        if dir_sum.has_unhydrated && dir_sum.has_unsynced {
+                    match e.directory_summary.as_ref() {
+                        Some(dir_sum) if dir_sum.has_unhydrated && dir_sum.has_unsynced => {
                             FileSyncStatus::UnhydratedAndUnsynced
-                        } else if dir_sum.has_unhydrated {
-                            FileSyncStatus::CloudPlaceholder
-                        } else if dir_sum.has_unsynced {
-                            FileSyncStatus::LocalOnly
-                        } else if dir_sum.file_count > 0 {
-                            FileSyncStatus::HydratedOffline
-                        } else {
-                            FileSyncStatus::CloudPlaceholder
                         }
-                    } else {
-                        FileSyncStatus::CloudPlaceholder
+                        Some(dir_sum) if dir_sum.has_unhydrated => FileSyncStatus::CloudPlaceholder,
+                        Some(dir_sum) if dir_sum.has_unsynced => FileSyncStatus::LocalOnly,
+                        Some(dir_sum) if dir_sum.file_count > 0 => FileSyncStatus::HydratedOffline,
+                        _ => FileSyncStatus::CloudPlaceholder,
                     }
                 } else if e.etag.is_none() {
                     FileSyncStatus::LocalOnly
@@ -356,13 +349,14 @@ impl DesktopUiController {
                 };
 
                 let size_formatted = if e.is_directory {
-                    if let Some(ref sum) = e.directory_summary {
-                        format_folder_presentation(sum, e.modified_at.as_deref(), &display_cfg)
-                    } else {
-                        "—".to_string()
+                    match e.directory_summary.as_ref() {
+                        Some(sum) => {
+                            format_folder_presentation(sum, e.modified_at.as_deref(), display_cfg)
+                        }
+                        None => "—".to_string(),
                     }
                 } else {
-                    format_file_presentation(e.size, e.modified_at.as_deref(), &display_cfg)
+                    format_file_presentation(e.size, e.modified_at.as_deref(), display_cfg)
                 };
 
                 FileViewItem {
@@ -380,7 +374,25 @@ impl DesktopUiController {
                     directory_summary: e.directory_summary,
                 }
             })
-            .collect();
+            .collect()
+    }
+
+    /// Searches files matching `query` across local VFS and server unified search.
+    pub async fn search_items(&self, query: &str) -> Result<Vec<FileViewItem>, UiError> {
+        let trimmed = query.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let entries = self
+            .coordinator
+            .search(trimmed)
+            .await
+            .map_err(|err| UiError::Controller(err.to_string()))?;
+
+        let display_cfg = self.effective_display_config().await;
+        let active_hydrations = self.active_hydrations.read().await;
+        let mut items = Self::project_entries(entries, &display_cfg, &active_hydrations);
 
         let criteria = self.sort_criteria().await;
         FileViewItem::sort_items(&mut items, &criteria);
@@ -471,14 +483,20 @@ impl DesktopUiController {
     /// Lists items in the current virtual directory for display in the file view.
     pub async fn list_current_items(&self) -> Result<Vec<FileViewItem>, UiError> {
         let path = self.current_path().await;
-        let vfs = self.coordinator.active_vfs().await;
+        let vfs = self.coordinator.active_vfs().await.map_err(|err| {
+            UiError::Controller(format!(
+                "list current items: open virtual filesystem: {err}"
+            ))
+        })?;
         let is_populated = vfs.is_directory_populated(&path).await.unwrap_or(false);
         let mut entries = vfs
             .list_children(&path)
             .await
             .map_err(|err| UiError::Controller(err.to_string()))?;
 
-        if !is_populated || (entries.is_empty() && path != "/") {
+        // Only an unpopulated directory is worth a PROPFIND: one the crawl already visited and
+        // found empty stays empty, so re-listing it on every refresh is pure latency.
+        if !is_populated {
             let _ = self.coordinator.refresh_path(&path).await;
             if let Ok(fresh) = vfs.list_children(&path).await {
                 entries = fresh;
@@ -487,63 +505,7 @@ impl DesktopUiController {
 
         let display_cfg = self.effective_display_config().await;
         let active_hydrations = self.active_hydrations.read().await;
-        let mut items: Vec<FileViewItem> = entries
-            .into_iter()
-            .map(|e| {
-                let clean_p = format!("/{}", e.path.trim_matches('/'));
-                let is_syncing = active_hydrations.contains(&clean_p);
-                let status = if is_syncing {
-                    FileSyncStatus::Syncing
-                } else if e.is_directory {
-                    if let Some(ref dir_sum) = e.directory_summary {
-                        if dir_sum.has_unhydrated && dir_sum.has_unsynced {
-                            FileSyncStatus::UnhydratedAndUnsynced
-                        } else if dir_sum.has_unhydrated {
-                            FileSyncStatus::CloudPlaceholder
-                        } else if dir_sum.has_unsynced {
-                            FileSyncStatus::LocalOnly
-                        } else if dir_sum.file_count > 0 {
-                            FileSyncStatus::HydratedOffline
-                        } else {
-                            FileSyncStatus::CloudPlaceholder
-                        }
-                    } else {
-                        FileSyncStatus::CloudPlaceholder
-                    }
-                } else if e.etag.is_none() {
-                    FileSyncStatus::LocalOnly
-                } else if e.is_hydrated {
-                    FileSyncStatus::HydratedOffline
-                } else {
-                    FileSyncStatus::CloudPlaceholder
-                };
-
-                let size_formatted = if e.is_directory {
-                    if let Some(ref sum) = e.directory_summary {
-                        format_folder_presentation(sum, e.modified_at.as_deref(), &display_cfg)
-                    } else {
-                        "—".to_string()
-                    }
-                } else {
-                    format_file_presentation(e.size, e.modified_at.as_deref(), &display_cfg)
-                };
-
-                FileViewItem {
-                    path: e.path,
-                    name: e.name,
-                    is_directory: e.is_directory,
-                    size_formatted,
-                    size_bytes: e.size,
-                    status,
-                    mime_type: e.mime_type,
-                    file_id: e.file_id,
-                    icon_category: e.icon_category,
-                    modified_at: e.modified_at,
-                    permissions: e.permissions,
-                    directory_summary: e.directory_summary,
-                }
-            })
-            .collect();
+        let mut items = Self::project_entries(entries, &display_cfg, &active_hydrations);
 
         // Sort directories first, then alphabetically by name
         let criteria = self.sort_criteria().await;
@@ -652,8 +614,6 @@ impl DesktopUiController {
 
     /// Dehydrates a file back to a placeholder, freeing disk space.
     pub async fn dehydrate_file(&self, remote_path: &str) -> Result<(), UiError> {
-        let clean = format!("/{}", remote_path.trim_matches('/'));
-        self.mark_hydration_finished(&clean).await;
         self.coordinator
             .dehydrate_file(remote_path)
             .await

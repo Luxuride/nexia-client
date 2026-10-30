@@ -16,6 +16,23 @@ impl AccountId {
     pub fn new() -> Self {
         Self(Uuid::new_v4().to_string())
     }
+
+    /// Returns whether the identifier is usable as a single filesystem path component.
+    ///
+    /// Identifiers are interpolated into cache, configuration and account directory
+    /// paths, so a value carrying a separator or a parent-directory component would
+    /// escape the directory it is joined onto.
+    #[must_use]
+    pub fn is_safe_path_segment(&self) -> bool {
+        !self.0.is_empty()
+            && self.0.len() <= 128
+            && self.0 != "."
+            && self.0 != ".."
+            && self
+                .0
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    }
 }
 
 impl Default for AccountId {
@@ -96,9 +113,10 @@ impl ServerConfig {
 }
 
 /// State of an account connection.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AccountStatus {
     /// Account is disconnected or idle.
+    #[default]
     Disconnected,
     /// Account is currently connecting or authenticating.
     Connecting,
@@ -119,7 +137,8 @@ pub struct Account {
     pub server: ServerConfig,
     /// Credentials for authentication.
     pub credentials: AccountCredentials,
-    /// Current connection status.
+    /// Current connection status. Runtime state, so it is never persisted.
+    #[serde(skip)]
     pub status: AccountStatus,
     /// Whether this is the built-in system account (immutable).
     #[serde(default)]

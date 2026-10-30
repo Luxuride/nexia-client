@@ -223,7 +223,9 @@ impl DesktopSyncCoordinator {
             }
         }
 
-        let result = self.mount_claimed_fuse_folder(mount_id, remote_path, &mp).await;
+        let result = self
+            .mount_claimed_fuse_folder(mount_id, remote_path, &mp)
+            .await;
 
         self.fuse_mounting
             .lock()
@@ -397,7 +399,10 @@ mod tests {
 
     #[test]
     fn mountinfo_escape_matches_kernel_notation() {
-        assert_eq!(mountinfo_escape("/home/lux/Pictures/Nextcloud"), "/home/lux/Pictures/Nextcloud");
+        assert_eq!(
+            mountinfo_escape("/home/lux/Pictures/Nextcloud"),
+            "/home/lux/Pictures/Nextcloud"
+        );
         assert_eq!(mountinfo_escape("/media/My Disk"), "/media/My\\040Disk");
         assert_eq!(mountinfo_escape("/a\\b"), "/a\\134b");
     }
@@ -412,7 +417,8 @@ mod tests {
 
     #[test]
     fn is_mountpoint_resolves_symlinked_paths() {
-        let link = std::env::temp_dir().join(format!("nexia-mountpoint-link-{}", std::process::id()));
+        let link =
+            std::env::temp_dir().join(format!("nexia-mountpoint-link-{}", std::process::id()));
         let _ = std::fs::remove_file(&link);
         if std::os::unix::fs::symlink("/", &link).is_err() {
             return;

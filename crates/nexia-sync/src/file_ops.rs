@@ -138,11 +138,66 @@ pub struct PreviewInstallSummary {
     pub skipped: usize,
 }
 
+/// Resolves `remote_path` relative to a mount's remote root, on path-segment boundaries.
+///
+/// A plain prefix test would let a mount rooted at `/photos` claim `/photos2/x`, writing a file
+/// that belongs to a sibling folder into the wrong local tree. The result is empty for the mount
+/// root itself and `None` when the path is outside the mount.
+fn mount_relative_path(remote_path: &str, mount_remote: &str) -> Option<String> {
+    let mount_remote = mount_remote.trim_matches('/');
+    let remote_path = remote_path.trim_matches('/');
+    if mount_remote.is_empty() {
+        return Some(remote_path.to_string());
+    }
+    let rest = remote_path.strip_prefix(mount_remote)?;
+    if rest.is_empty() {
+        return Some(String::new());
+    }
+    rest.strip_prefix('/').map(|rest| rest.to_string())
+}
+
+/// Converts a PROPFIND result into the summary shape the SDK virtual tree consumes.
+///
+/// Every discovery path (full refresh, single directory refresh, per-account refresh) feeds the
+/// same tree, so the field mapping lives here once instead of being repeated at each call site.
+fn dav_summaries(
+    resources: &[nexia_nextcloud_sdk::DavResource],
+) -> Vec<nexia_nextcloud_sdk::DavResourceSummary> {
+    resources
+        .iter()
+        .map(|res| {
+            let mut sum =
+                nexia_nextcloud_sdk::DavResourceSummary::new(&res.href, res.is_collection);
+            if let Some(len) = res.content_length {
+                sum = sum.with_content_length(len);
+            }
+            if let Some(ref etag) = res.etag {
+                sum = sum.with_etag(etag);
+            }
+            if let Some(ref lm) = res.last_modified {
+                sum = sum.with_last_modified(lm);
+            }
+            if let Some(ref mime) = res.content_type {
+                sum = sum.with_content_type(mime);
+            }
+            if let Some(ref fid) = res.file_id
+                && let Ok(id) = fid.parse::<u64>()
+            {
+                sum = sum.with_file_id(id);
+            }
+            if let Some(prev) = res.has_preview {
+                sum = sum.with_has_preview(prev);
+            }
+            sum
+        })
+        .collect()
+}
+
 impl DesktopSyncCoordinator {
     /// Refreshes the virtual file tree for the active configured account, or resets to local virtual hierarchy.
     pub async fn refresh_virtual_tree(&self) -> Result<usize, SyncError> {
         let _priority = self.priority_permit();
-        let vfs = self.active_vfs().await;
+        let vfs = self.active_vfs().await?;
 
         let Some((user, client, auth)) = self.active_dav_context().await else {
             tracing::warn!("Cannot refresh virtual tree: no active DAV context");
@@ -167,34 +222,7 @@ impl DesktopSyncCoordinator {
         };
 
         let dav_prefix = format!("/remote.php/dav/files/{user}");
-        let summaries: Vec<nexia_nextcloud_sdk::DavResourceSummary> = resources
-            .iter()
-            .map(|res| {
-                let mut sum =
-                    nexia_nextcloud_sdk::DavResourceSummary::new(&res.href, res.is_collection);
-                if let Some(len) = res.content_length {
-                    sum = sum.with_content_length(len);
-                }
-                if let Some(ref etag) = res.etag {
-                    sum = sum.with_etag(etag);
-                }
-                if let Some(ref lm) = res.last_modified {
-                    sum = sum.with_last_modified(lm);
-                }
-                if let Some(ref mime) = res.content_type {
-                    sum = sum.with_content_type(mime);
-                }
-                if let Some(ref fid) = res.file_id
-                    && let Ok(id) = fid.parse::<u64>()
-                {
-                    sum = sum.with_file_id(id);
-                }
-                if let Some(prev) = res.has_preview {
-                    sum = sum.with_has_preview(prev);
-                }
-                sum
-            })
-            .collect();
+        let summaries = dav_summaries(&resources);
 
         // Repopulate directly inside the orchestrator actor thread
         let inserted = match vfs
@@ -254,7 +282,7 @@ impl DesktopSyncCoordinator {
     /// Refreshes the virtual file entries for a specific relative directory path.
     pub async fn refresh_path(&self, relative_path: &str) -> Result<usize, SyncError> {
         let _priority = self.priority_permit();
-        let vfs = self.active_vfs().await;
+        let vfs = self.active_vfs().await?;
 
         let Some((user, client, auth)) = self.active_dav_context().await else {
             return Ok(0);
@@ -273,34 +301,7 @@ impl DesktopSyncCoordinator {
         };
 
         let dav_prefix = format!("/remote.php/dav/files/{user}");
-        let summaries: Vec<nexia_nextcloud_sdk::DavResourceSummary> = resources
-            .iter()
-            .map(|res| {
-                let mut sum =
-                    nexia_nextcloud_sdk::DavResourceSummary::new(&res.href, res.is_collection);
-                if let Some(len) = res.content_length {
-                    sum = sum.with_content_length(len);
-                }
-                if let Some(ref etag) = res.etag {
-                    sum = sum.with_etag(etag);
-                }
-                if let Some(ref lm) = res.last_modified {
-                    sum = sum.with_last_modified(lm);
-                }
-                if let Some(ref mime) = res.content_type {
-                    sum = sum.with_content_type(mime);
-                }
-                if let Some(ref fid) = res.file_id
-                    && let Ok(id) = fid.parse::<u64>()
-                {
-                    sum = sum.with_file_id(id);
-                }
-                if let Some(prev) = res.has_preview {
-                    sum = sum.with_has_preview(prev);
-                }
-                sum
-            })
-            .collect();
+        let summaries = dav_summaries(&resources);
 
         let inserted = vfs
             .populate_from_resources(&dav_prefix, summaries.clone())
@@ -420,7 +421,7 @@ impl DesktopSyncCoordinator {
             } else {
                 href
             };
-            let decoded = decode_percent_str(relative);
+            let decoded = crate::folder_sync::decode_percent_str(relative);
             let clean = format!("/{}", decoded.trim_matches('/'));
             let requested_clean = format!("/{}", relative_path.trim_matches('/'));
             if clean != requested_clean && clean != "/" {
@@ -437,10 +438,7 @@ impl DesktopSyncCoordinator {
         let _priority = self.priority_permit();
         let _download_permit = self.download_semaphore.acquire().await.ok();
         let clean = format!("/{}", remote_path.trim_matches('/'));
-        self.event_bus.emit(DesktopEvent::NodeHydrationStarted {
-            path: clean.clone(),
-        });
-        let vfs = self.active_vfs().await;
+        let vfs = self.active_vfs().await?;
 
         let Some((user, client, auth)) = self.active_dav_context().await else {
             return Err(SyncError::NotFound("No active account session".to_string()));
@@ -450,6 +448,11 @@ impl DesktopSyncCoordinator {
         let clean_sub = remote_path.trim_matches('/');
         let dav_path = make_dav_path(&user, clean_sub)?;
 
+        // Announced after the checks: a request that fails here leaves no transfer behind, and
+        // the view keeps the path in its in-flight set until a matching completion arrives.
+        self.event_bus.emit(DesktopEvent::NodeHydrationStarted {
+            path: clean.clone(),
+        });
         let bytes = dav_client.get(&dav_path).await.map_err(SyncError::WebDav)?;
         let byte_len = bytes.len() as u64;
         let local_path = vfs
@@ -462,13 +465,7 @@ impl DesktopSyncCoordinator {
             if Self::is_internal_vfs(&mount.id) || !mount.enabled {
                 continue;
             }
-            let m_remote = mount.remote_path.trim_end_matches('/');
-            let rel = if m_remote.is_empty() || m_remote == "/" {
-                Some(clean_sub)
-            } else {
-                clean_sub.strip_prefix(m_remote.trim_start_matches('/'))
-            };
-            if let Some(rel_path) = rel {
+            if let Some(rel_path) = mount_relative_path(clean_sub, &mount.remote_path) {
                 let rel_clean = rel_path.trim_start_matches('/');
                 let target_file = PathBuf::from(&mount.local_target).join(rel_clean);
                 if let Some(parent) = target_file.parent() {
@@ -597,7 +594,7 @@ impl DesktopSyncCoordinator {
 
     /// Recursively hydrates all unhydrated files within a virtual directory path.
     pub async fn hydrate_directory(&self, remote_dir: &str) -> Result<usize, SyncError> {
-        let vfs = self.active_vfs().await;
+        let vfs = self.active_vfs().await?;
         let mut queue = vec![remote_dir.to_string()];
         let mut count = 0;
 
@@ -619,14 +616,15 @@ impl DesktopSyncCoordinator {
     /// Dehydrates a file node, freeing local cache space.
     pub async fn dehydrate_file(&self, remote_path: &str) -> Result<(), SyncError> {
         let clean = format!("/{}", remote_path.trim_matches('/'));
-        let vfs = self.active_vfs().await;
-        let res = vfs
-            .dehydrate_local(remote_path)
+        let vfs = self.active_vfs().await?;
+        vfs.dehydrate_local(remote_path)
             .await
-            .map_err(SyncError::Orchestrator);
+            .map_err(SyncError::Orchestrator)?;
+        // Emitted only after the transition happened: announcing a still-hydrated file would make
+        // the file manager show a placeholder that still occupies its full payload.
         self.event_bus
             .emit(DesktopEvent::NodeDehydrated { path: clean });
-        res
+        Ok(())
     }
 
     /// Creates a new directory in the virtual tree and on the remote WebDAV server if online.
@@ -645,7 +643,7 @@ impl DesktopSyncCoordinator {
             }
         }
 
-        let vfs = self.active_vfs().await;
+        let vfs = self.active_vfs().await?;
         vfs.create_directory(remote_path)
             .await
             .map_err(SyncError::Orchestrator)
@@ -672,7 +670,7 @@ impl DesktopSyncCoordinator {
             }
         }
 
-        let vfs = self.active_vfs().await;
+        let vfs = self.active_vfs().await?;
         vfs.hydrate_local(&clean_path, content.to_vec())
             .await
             .map_err(SyncError::Orchestrator)?;
@@ -705,7 +703,7 @@ impl DesktopSyncCoordinator {
             }
         }
 
-        let vfs = self.active_vfs().await;
+        let vfs = self.active_vfs().await?;
         vfs.rename(&clean_old, trimmed_name)
             .await
             .map_err(SyncError::Orchestrator)?;
@@ -738,7 +736,7 @@ impl DesktopSyncCoordinator {
             }
         }
 
-        let vfs = self.active_vfs().await;
+        let vfs = self.active_vfs().await?;
         vfs.rename(&clean_src, file_name)
             .await
             .map_err(SyncError::Orchestrator)?;
@@ -756,7 +754,7 @@ impl DesktopSyncCoordinator {
             }
         }
 
-        let vfs = self.active_vfs().await;
+        let vfs = self.active_vfs().await?;
         vfs.remove(&clean_path)
             .await
             .map_err(SyncError::Orchestrator)
@@ -1053,7 +1051,7 @@ impl DesktopSyncCoordinator {
 
         let this = self.clone();
         tokio::task::spawn(async move {
-            let vfs = this.active_vfs().await;
+            let vfs = this.active_vfs().await?;
             let term_lower = trimmed.to_lowercase();
 
             let local_future = async {
@@ -1272,34 +1270,7 @@ impl DesktopSyncCoordinator {
         };
 
         let dav_prefix = format!("/remote.php/dav/files/{user}");
-        let summaries: Vec<nexia_nextcloud_sdk::DavResourceSummary> = resources
-            .iter()
-            .map(|res| {
-                let mut sum =
-                    nexia_nextcloud_sdk::DavResourceSummary::new(&res.href, res.is_collection);
-                if let Some(len) = res.content_length {
-                    sum = sum.with_content_length(len);
-                }
-                if let Some(ref etag) = res.etag {
-                    sum = sum.with_etag(etag);
-                }
-                if let Some(ref lm) = res.last_modified {
-                    sum = sum.with_last_modified(lm);
-                }
-                if let Some(ref mime) = res.content_type {
-                    sum = sum.with_content_type(mime);
-                }
-                if let Some(ref fid) = res.file_id
-                    && let Ok(id) = fid.parse::<u64>()
-                {
-                    sum = sum.with_file_id(id);
-                }
-                if let Some(prev) = res.has_preview {
-                    sum = sum.with_has_preview(prev);
-                }
-                sum
-            })
-            .collect();
+        let summaries = dav_summaries(&resources);
 
         // 1. Update the account's persistent VFS tree on disk
         let vfs_dir = self.account_vfs_dir(&account.id.0);
@@ -1323,7 +1294,7 @@ impl DesktopSyncCoordinator {
             .map(|a| a.id.0 == account.id.0)
             .unwrap_or(false);
         if is_active {
-            let vfs = self.active_vfs().await;
+            let vfs = self.active_vfs().await?;
             let _ = vfs
                 .populate_from_resources(&dav_prefix, summaries.clone())
                 .await;
@@ -1411,12 +1382,7 @@ impl DesktopSyncCoordinator {
                 targets.push(dir.join(clean_path));
             }
             for (mount_remote, mount_local) in &folder_mounts {
-                let rel = if mount_remote.is_empty() {
-                    Some(clean_path)
-                } else {
-                    clean_path.strip_prefix(mount_remote.as_str())
-                };
-                if let Some(rel) = rel {
+                if let Some(rel) = mount_relative_path(clean_path, mount_remote) {
                     targets.push(mount_local.join(rel.trim_start_matches('/')));
                 }
             }
@@ -1554,7 +1520,7 @@ impl DesktopSyncCoordinator {
         let file_id = if known_file_id.is_some() {
             known_file_id
         } else {
-            let vfs = self.active_vfs().await;
+            let vfs = self.active_vfs().await?;
             vfs.entry(remote_path)
                 .await
                 .ok()
@@ -1659,7 +1625,8 @@ impl DesktopSyncCoordinator {
     /// later listings install the cached result instead of repeating it.
     async fn thumbnail_from_original(&self, remote_path: &str, size: u32) -> Option<Vec<u8>> {
         let clean = remote_path.trim_matches('/');
-        let entry = self.active_vfs().await.entry(clean).await.ok().flatten()?;
+        let vfs = self.active_vfs().await.ok()?;
+        let entry = vfs.entry(clean).await.ok().flatten()?;
         if entry.is_directory || entry.size > Self::LOCAL_THUMBNAIL_MAX_BYTES {
             return None;
         }
@@ -1724,7 +1691,9 @@ impl DesktopSyncCoordinator {
     /// Installs already-cached thumbnails for `items` in one pass, then fetches the missing ones.
     async fn run_thumbnail_pass(&self, items: Vec<(String, Option<u64>)>, size: u32) {
         let max_size = self.max_thumbnail_size().await;
-        let effective_size = size.clamp(64, max_size);
+        // The maximum comes from a persisted setting, so it may sit below the 64px floor that
+        // `clamp` requires; taking the floor as the lower bound of the range keeps this total.
+        let effective_size = size.clamp(64, max_size.max(64));
 
         let mut missing_items: Vec<(String, Option<u64>)> = Vec::new();
         let mut cached_installs: Vec<(String, Vec<u8>)> = Vec::new();
@@ -1830,7 +1799,9 @@ impl DesktopSyncCoordinator {
     }
 
     async fn run_background_tree_preload(&self) {
-        let vfs = self.active_vfs().await;
+        let Ok(vfs) = self.active_vfs().await else {
+            return;
+        };
         while let Ok(unpopulated) = vfs.unpopulated_directories().await {
             if unpopulated.is_empty() {
                 break;
@@ -1918,37 +1889,25 @@ fn downscale_image_to_png(bytes: &[u8], size: u32) -> Option<Vec<u8>> {
     Some(crate::freedesktop_thumbs::ensure_png_bytes(&png))
 }
 
-fn decode_percent_str(input: &str) -> String {
-    let mut bytes = Vec::with_capacity(input.len());
-    let mut chars = input.bytes();
-    while let Some(b) = chars.next() {
-        if b == b'%' {
-            let h1 = chars.next();
-            let h2 = chars.next();
-            if let (Some(c1), Some(c2)) = (h1, h2) {
-                let hex_slice = [c1, c2];
-                if let Ok(s) = std::str::from_utf8(&hex_slice)
-                    && let Ok(val) = u8::from_str_radix(s, 16)
-                {
-                    bytes.push(val);
-                    continue;
-                }
-                bytes.push(b'%');
-                bytes.push(c1);
-                bytes.push(c2);
-            } else {
-                bytes.push(b'%');
-            }
-        } else {
-            bytes.push(b);
-        }
-    }
-    String::from_utf8_lossy(&bytes).to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mount_relative_path_respects_segment_boundaries() {
+        assert_eq!(
+            mount_relative_path("photos/2024/a.jpg", "/photos").as_deref(),
+            Some("2024/a.jpg")
+        );
+        assert_eq!(mount_relative_path("photos", "photos").as_deref(), Some(""));
+        assert_eq!(
+            mount_relative_path("/anything", "/").as_deref(),
+            Some("anything")
+        );
+        // A sibling folder sharing the mount name as a prefix is not inside the mount.
+        assert_eq!(mount_relative_path("photos2/a.jpg", "/photos"), None);
+        assert_eq!(mount_relative_path("other/a.jpg", "/photos"), None);
+    }
 
     /// Builds a one-file listing, which is all the scheduler looks at.
     fn listing(name: &str) -> ThumbnailPassJob {

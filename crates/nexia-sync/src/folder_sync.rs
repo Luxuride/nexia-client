@@ -112,12 +112,10 @@ impl FolderSyncEngine {
 
         let coord = self.coordinator.clone();
         let m_id_str = mount_id.to_string();
-        let is_cancelled = move || {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(async { coord.is_mount_cancelled(&m_id_str).await })
-            })
-        };
+        // The runner polls this from a blocking loop, so it reads the cancellation set directly:
+        // `block_in_place` around `Handle::block_on` panics when the cycle runs on a
+        // current-thread runtime, and there is no runtime handle at all on a blocking thread.
+        let is_cancelled = move || coord.is_mount_cancelled_sync(&m_id_str);
 
         let coord_prog = self.coordinator.clone();
         let m_id_prog = m_id_typed.clone();
@@ -145,7 +143,9 @@ impl FolderSyncEngine {
                 mount_id,
                 "Sync mount was cancelled; skipping thumbnail prefetching and progress"
             );
-            return Ok(outcome.downloaded);
+            // Reported in the same unit as the completion path below, so a cancelled cycle
+            // does not look like it transferred fewer files than it did.
+            return Ok(outcome.downloaded + outcome.uploaded);
         }
 
         // Prefetch thumbnails for candidates if needed
@@ -222,8 +222,40 @@ impl FolderSyncEngine {
     }
 }
 
+/// Decodes `%XX` escapes in a DAV href.
+///
+/// Nextcloud reports hrefs percent-encoded, while every path the application compares them
+/// against (tree keys, local file names, `make_dav_path` input) is plain UTF-8.
+pub(crate) fn decode_percent_str(input: &str) -> String {
+    let mut bytes = Vec::with_capacity(input.len());
+    let mut chars = input.bytes();
+    while let Some(b) = chars.next() {
+        if b == b'%' {
+            let h1 = chars.next();
+            let h2 = chars.next();
+            if let (Some(c1), Some(c2)) = (h1, h2) {
+                let hex_slice = [c1, c2];
+                if let Ok(s) = std::str::from_utf8(&hex_slice)
+                    && let Ok(val) = u8::from_str_radix(s, 16)
+                {
+                    bytes.push(val);
+                    continue;
+                }
+                bytes.push(b'%');
+                bytes.push(c1);
+                bytes.push(c2);
+            } else {
+                bytes.push(b'%');
+            }
+        } else {
+            bytes.push(b);
+        }
+    }
+    String::from_utf8_lossy(&bytes).to_string()
+}
+
 pub(crate) fn extract_clean_dav_path(href: &str, base_dav_prefix: &str) -> String {
-    let decoded = href;
+    let decoded = decode_percent_str(href);
     let prefix = base_dav_prefix.trim_end_matches('/');
 
     let path_after_prefix = if let Some(idx) = decoded.find(prefix) {
@@ -244,10 +276,10 @@ pub(crate) fn extract_clean_dav_path(href: &str, base_dav_prefix: &str) -> Strin
         if let Some(first_slash) = after_scheme.find('/') {
             &after_scheme[first_slash..]
         } else {
-            decoded
+            decoded.as_str()
         }
     } else {
-        decoded
+        decoded.as_str()
     };
 
     let trimmed = path_after_prefix.trim_matches('/');
@@ -279,6 +311,26 @@ pub(crate) fn is_thumbnail_candidate(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_percent_str_decodes_escapes() {
+        assert_eq!(decode_percent_str("a%20b.txt"), "a b.txt");
+        assert_eq!(decode_percent_str("%C3%BCber.txt"), "über.txt");
+        // A truncated or invalid escape is kept verbatim instead of being dropped.
+        assert_eq!(decode_percent_str("100%"), "100%");
+        assert_eq!(decode_percent_str("%zz"), "%zz");
+    }
+
+    #[test]
+    fn extract_clean_dav_path_decodes_the_remote_name() {
+        assert_eq!(
+            extract_clean_dav_path(
+                "https://cloud.example.com/remote.php/dav/files/user/Docs/My%20File.pdf",
+                "/remote.php/dav/files/user"
+            ),
+            "/Docs/My File.pdf"
+        );
+    }
 
     #[test]
     fn thumbnail_candidate_matching() {

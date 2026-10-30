@@ -66,7 +66,7 @@ pub struct DesktopSyncCoordinator {
     pub(crate) last_root_etags: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
     pub(crate) priority_ops_counter: Arc<std::sync::atomic::AtomicUsize>,
     pub(crate) priority_ops_notify: Arc<tokio::sync::Notify>,
-    pub(crate) cancelled_mounts: Arc<tokio::sync::RwLock<std::collections::HashSet<String>>>,
+    pub(crate) cancelled_mounts: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
 }
 
 /// RAII guard representing an active high-priority operation (hydration, sync, directory listing).
@@ -109,38 +109,51 @@ impl DesktopSyncCoordinator {
     }
 
     /// Marks a mount point as cancelled or unmounted so that any active sync loop aborts immediately.
+    ///
+    /// The set is a synchronous lock because the synchronization runner polls its cancellation
+    /// closure from a blocking loop, where no async lock can be awaited.
     pub async fn cancel_mount(&self, mount_id: &str) {
-        let mut cancelled = self.cancelled_mounts.write().await;
-        cancelled.insert(mount_id.to_string());
+        if let Ok(mut cancelled) = self.cancelled_mounts.write() {
+            cancelled.insert(mount_id.to_string());
+        }
     }
 
     /// Checks whether a mount point has been cancelled.
     pub async fn is_mount_cancelled(&self, mount_id: &str) -> bool {
-        let cancelled = self.cancelled_mounts.read().await;
-        cancelled.contains(mount_id)
+        self.is_mount_cancelled_sync(mount_id)
+    }
+
+    /// Reports whether a mount was cancelled, without awaiting a runtime.
+    pub fn is_mount_cancelled_sync(&self, mount_id: &str) -> bool {
+        self.cancelled_mounts
+            .read()
+            .map(|cancelled| cancelled.contains(mount_id))
+            .unwrap_or(false)
     }
 
     /// Clears the cancellation status for a mount point (e.g. when added or resumed).
     pub async fn uncancel_mount(&self, mount_id: &str) {
-        let mut cancelled = self.cancelled_mounts.write().await;
-        cancelled.remove(mount_id);
+        if let Ok(mut cancelled) = self.cancelled_mounts.write() {
+            cancelled.remove(mount_id);
+        }
     }
 
     /// Asynchronously waits until all active high-priority operations have completed.
+    ///
+    /// The waiter is registered *before* the counter is re-checked. Registering afterwards
+    /// (by awaiting an un-polled `Notified`) leaves a window in which the last permit drops
+    /// and notifies an empty waiter list, which would park this task forever.
     pub async fn wait_for_priority_ops(&self) {
-        while self
-            .priority_ops_counter
-            .load(std::sync::atomic::Ordering::SeqCst)
-            > 0
-        {
+        use std::sync::atomic::Ordering;
+
+        loop {
             let notified = self.priority_ops_notify.notified();
-            if self
-                .priority_ops_counter
-                .load(std::sync::atomic::Ordering::SeqCst)
-                > 0
-            {
-                notified.await;
+            let mut notified = std::pin::pin!(notified);
+            notified.as_mut().enable();
+            if self.priority_ops_counter.load(Ordering::SeqCst) == 0 {
+                return;
             }
+            notified.await;
         }
     }
 
@@ -153,7 +166,15 @@ impl DesktopSyncCoordinator {
         };
 
         let orch_config = OrchestratorConfig::new(cache_dir);
-        let orch = NextcloudOrchestrator::start(orch_config).ok();
+        let orch = match NextcloudOrchestrator::start(orch_config) {
+            Ok(orch) => Some(orch),
+            Err(e) => {
+                // Every VFS operation needs this actor, so the failure has to be visible now
+                // rather than as a confusing error on the first file the user touches.
+                tracing::error!(error = %e, "Failed to start the background orchestrator");
+                None
+            }
+        };
         let handle = orch.as_ref().map(|o| o.handle());
 
         let coord = Self {
@@ -182,7 +203,7 @@ impl DesktopSyncCoordinator {
             last_root_etags: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             priority_ops_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             priority_ops_notify: Arc::new(tokio::sync::Notify::new()),
-            cancelled_mounts: Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new())),
+            cancelled_mounts: Arc::new(std::sync::RwLock::new(std::collections::HashSet::new())),
         };
 
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
@@ -196,7 +217,22 @@ impl DesktopSyncCoordinator {
                 let mut orch_rx = h.subscribe_events();
                 let bus = event_bus;
                 rt_handle.spawn(async move {
-                    while let Ok(event) = orch_rx.recv().await {
+                    loop {
+                        let event = match orch_rx.recv().await {
+                            Ok(event) => event,
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                                // Falling behind drops events, not the stream: dropping the loop
+                                // here would silently stop every UI update for the rest of the
+                                // session. Ask the views to resynchronise instead.
+                                tracing::warn!(
+                                    skipped,
+                                    "Orchestrator event stream lagged; requested UI resync"
+                                );
+                                bus.emit(DesktopEvent::VfsTreeUpdated { node_count: 0 });
+                                continue;
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                        };
                         match event {
                             OrchestratorEvent::VfsTreeChanged { .. } => {
                                 bus.emit(DesktopEvent::VfsTreeUpdated { node_count: 0 });
@@ -287,15 +323,29 @@ impl DesktopSyncCoordinator {
     }
 
     /// Persists current application configuration into the encrypted database and optionally JSON file.
-    pub async fn persist_config(&self) {
+    /// Persists the configuration to every attached store.
+    ///
+    /// Returns the first failure instead of logging and continuing, so a caller that must not
+    /// lose the write (a settings change, an account removal) can react to it.
+    pub async fn persist_config(&self) -> Result<(), nexia_core::CoreError> {
         let conf = self.config.read().await.clone();
+        let mut first_error = None;
         if let Some(ref storage) = self.storage
             && let Err(e) = storage.save_app_config(&conf)
         {
-            tracing::warn!(error = %e, "Failed to persist app config to encrypted storage");
+            first_error = Some(e);
         }
-        if let Some(ref path) = self.config_path {
-            let _ = conf.save_to_path(path);
+        if let Some(ref path) = self.config_path
+            && let Err(e) = conf.save_to_path(path)
+        {
+            first_error.get_or_insert(e);
+        }
+        match first_error {
+            Some(e) => {
+                tracing::warn!(error = %e, "Failed to persist the application configuration");
+                Err(e)
+            }
+            None => Ok(()),
         }
     }
 
@@ -309,7 +359,16 @@ impl DesktopSyncCoordinator {
 
     /// Returns the cache directory for a specific account.
     pub fn account_dir(&self, account_id: &str) -> PathBuf {
-        self.cache_dir().join("accounts").join(account_id)
+        // The id comes from the configuration file, so it is reduced to one portable path
+        // component: a value carrying a separator must not be able to walk out of the cache
+        // root that every per-account file is written under.
+        let component =
+            if nexia_core::account::AccountId(account_id.to_string()).is_safe_path_segment() {
+                account_id.to_string()
+            } else {
+                "default".to_string()
+            };
+        self.cache_dir().join("accounts").join(component)
     }
 
     /// Returns the thumbnails directory for a specific account.
@@ -399,7 +458,7 @@ impl DesktopSyncCoordinator {
     }
 
     /// Access the virtual filesystem handle for the active account mount.
-    pub async fn active_vfs(&self) -> VfsHandle {
+    pub async fn active_vfs(&self) -> Result<VfsHandle, SyncError> {
         let active_account = self.active_account().await;
         let account_id_str = active_account
             .as_ref()
@@ -411,49 +470,54 @@ impl DesktopSyncCoordinator {
             .read()
             .await
             .clone()
-            .expect("orchestrator actor must be running");
+            .ok_or_else(|| {
+                SyncError::OperationDisabled("background orchestrator is not running".to_string())
+            })?;
 
-        let mut mount_lock = self.default_mount_id.write().await;
-        let mount_id = if let Some(ref id) = *mount_lock {
-            id.clone()
-        } else {
-            let initial_id = MountId::from(format!("app-vfs-{}", account_id_str));
-            let vfs_dir = self.account_vfs_dir(&account_id_str);
-            let tree_file = vfs_dir.join("tree.json");
-            if !tree_file.exists() {
-                let _ = std::fs::create_dir_all(&vfs_dir);
-                let legacy_tree = self
-                    .cache_dir()
-                    .join("mounts")
-                    .join("app-default-vfs")
-                    .join("vfs")
-                    .join("tree.json");
-                // Adopt a tree written by an older build, migrating its inline payloads into the
-                // account cache. Copying the file instead would carry hundreds of megabytes of
-                // embedded content forward.
-                let mut tree = legacy_tree
-                    .exists()
-                    .then(|| std::fs::read_to_string(&legacy_tree).ok())
-                    .flatten()
-                    .and_then(|data| serde_json::from_str::<VirtualTree>(&data).ok())
-                    .unwrap_or_else(|| VirtualTree::new("Nexia"));
-                let _ = self.persist_account_tree(&account_id_str, &mut tree);
+        let cached = self.default_mount_id.read().await.clone();
+        let mount_id = match cached {
+            Some(id) => id,
+            None => {
+                let initial_id = MountId::from(format!("app-vfs-{}", account_id_str));
+                let vfs_dir = self.account_vfs_dir(&account_id_str);
+                let tree_file = vfs_dir.join("tree.json");
+                if !tree_file.exists() {
+                    let _ = std::fs::create_dir_all(&vfs_dir);
+                    let legacy_tree = self
+                        .cache_dir()
+                        .join("mounts")
+                        .join("app-default-vfs")
+                        .join("vfs")
+                        .join("tree.json");
+                    // Adopt a tree written by an older build, migrating its inline payloads into
+                    // the account cache. Copying the file instead would carry hundreds of
+                    // megabytes of embedded content forward.
+                    let mut tree = legacy_tree
+                        .exists()
+                        .then(|| std::fs::read_to_string(&legacy_tree).ok())
+                        .flatten()
+                        .and_then(|data| serde_json::from_str::<VirtualTree>(&data).ok())
+                        .unwrap_or_else(|| VirtualTree::new("Nexia"));
+                    let _ = self.persist_account_tree(&account_id_str, &mut tree);
+                }
+
+                let mut desc =
+                    MountDescriptor::new(&account_id_str, "/", vfs_dir, MountMode::VirtualVfs);
+                desc.id = initial_id.clone();
+                desc.display_name = Some("Application Virtual Drive".to_string());
+                // Only cache a mount id the orchestrator accepted: caching the fallback would
+                // point every later VFS call at a mount that does not exist.
+                let registered = handle
+                    .mounts()
+                    .add_mount(desc)
+                    .await
+                    .map_err(SyncError::Orchestrator)?;
+                *self.default_mount_id.write().await = Some(registered.clone());
+                registered
             }
-
-            let mut desc =
-                MountDescriptor::new(&account_id_str, "/", vfs_dir, MountMode::VirtualVfs);
-            desc.id = initial_id.clone();
-            desc.display_name = Some("Application Virtual Drive".to_string());
-            let registered = handle
-                .mounts()
-                .add_mount(desc)
-                .await
-                .unwrap_or_else(|_| initial_id.clone());
-            *mount_lock = Some(registered.clone());
-            registered
         };
 
-        handle.vfs(mount_id)
+        Ok(handle.vfs(mount_id))
     }
 
     /// Access the shared event bus.

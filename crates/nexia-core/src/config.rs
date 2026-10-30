@@ -69,6 +69,7 @@ pub enum FolderItemsDisplay {
 
 /// Metadata presentation options configuring what additional items are always shown.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AdditionalItemsDisplayConfig {
     /// How folder item counts are presented in file explorer tiles and rows.
     #[serde(default)]
@@ -131,6 +132,7 @@ impl Default for AdditionalItemsDisplayConfig {
 
 /// Per-account configuration preferences stored in desktop app config database.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AccountPreferences {
     /// Additional display items configuration for this account.
     pub display: AdditionalItemsDisplayConfig,
@@ -142,6 +144,7 @@ pub struct AccountPreferences {
 
 /// Global desktop application configuration.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct GlobalPreferences {
     /// Start application minimized to background app bar / system tray.
     pub start_minimized: bool,
@@ -152,7 +155,12 @@ pub struct GlobalPreferences {
 }
 
 /// Root application configuration persisted across sessions.
+///
+/// Every field carries a serde default so that a configuration written by an older or
+/// newer build stays readable: a missing field falls back to its default instead of
+/// rejecting the whole file and losing the accounts it describes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     /// List of configured accounts.
     pub accounts: Vec<Account>,
@@ -204,7 +212,11 @@ impl AppConfig {
             source,
         })?;
 
-        let cfg: Self = serde_json::from_str(&content).map_err(CoreError::ConfigParse)?;
+        let cfg: Self =
+            serde_json::from_str(&content).map_err(|source| CoreError::ConfigParse {
+                path: path.to_path_buf(),
+                source,
+            })?;
         Ok(cfg)
     }
 
@@ -214,14 +226,24 @@ impl AppConfig {
         self.accounts.retain(|acc| acc.id.0 != "system-account");
 
         // Remove obsolete system accounts that are no longer discovered
+        let discovered: std::collections::HashSet<&AccountId> =
+            system_accounts.iter().map(|sys| &sys.id).collect();
         self.accounts
-            .retain(|acc| !acc.is_system || system_accounts.iter().any(|sys| sys.id == acc.id));
+            .retain(|acc| !acc.is_system || discovered.contains(&acc.id));
 
         for sys in system_accounts {
-            if let Some(pos) = self.accounts.iter().position(|a| a.id == sys.id) {
-                self.accounts[pos] = sys;
-            } else {
-                self.accounts.push(sys);
+            match self.accounts.iter_mut().find(|a| a.id == sys.id) {
+                Some(existing) => {
+                    // A discovery pass only refreshes what it knows. Credentials it could not
+                    // resolve arrive empty, and must not wipe a working stored secret.
+                    let keep_secret = sys.credentials.password.is_empty();
+                    let previous = existing.credentials.clone();
+                    *existing = sys;
+                    if keep_secret {
+                        existing.credentials = previous;
+                    }
+                }
+                None => self.accounts.push(sys),
             }
         }
 
@@ -237,20 +259,11 @@ impl AppConfig {
 
     /// Saves configuration to the specified file path, creating parent directories if needed.
     pub fn save_to_path(&self, path: &Path) -> Result<(), CoreError> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|source| CoreError::ConfigSave {
-                path: parent.to_path_buf(),
-                source,
-            })?;
-        }
-
-        let data = serde_json::to_string_pretty(self).map_err(CoreError::ConfigParse)?;
-        fs::write(path, data).map_err(|source| CoreError::ConfigSave {
+        let data = serde_json::to_string_pretty(self).map_err(|source| CoreError::ConfigParse {
             path: path.to_path_buf(),
             source,
         })?;
-
-        Ok(())
+        write_private_atomic(path, &data)
     }
 
     /// Finds an account by its ID.
@@ -267,10 +280,11 @@ impl AppConfig {
         }
     }
 
-    /// Removes an account by ID.
+    /// Removes an account by ID, along with the state that refers to it.
     pub fn remove_account(&mut self, id: &AccountId) {
         self.accounts.retain(|acc| &acc.id != id);
         self.account_preferences.remove(&id.0);
+        self.sync_folders.retain(|pair| &pair.account_id != id);
         if self.active_account_id.as_ref() == Some(id) {
             self.active_account_id = self.accounts.first().map(|a| a.id.clone());
         }
@@ -306,41 +320,48 @@ impl AppConfig {
             self.global.default_display.clone()
         }
     }
+}
 
-    /// Returns the directory used for per-account / per-user configuration files.
-    pub fn user_config_dir() -> Result<PathBuf, CoreError> {
-        let base = dirs::config_dir().ok_or(CoreError::MissingConfigDir)?;
-        Ok(base.join("nexia-client").join("accounts"))
+/// Writes `data` to `path` atomically, readable only by the current user.
+///
+/// The configuration carries account credentials, so the file is created with mode
+/// `0600`, written through a sibling temporary file, flushed, and renamed into place:
+/// a crash or a full disk leaves the previous configuration intact instead of a
+/// truncated one.
+fn write_private_atomic(path: &Path, data: &str) -> Result<(), CoreError> {
+    use std::io::Write as _;
+
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|source| CoreError::ConfigSave {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+
+    let tmp = path.with_extension("json.tmp");
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
     }
-
-    /// Persists an account's configuration into a dedicated per-user database/file.
-    pub fn save_user_config(&self, id: &AccountId) -> Result<(), CoreError> {
-        let dir = Self::user_config_dir()?;
-        fs::create_dir_all(&dir).map_err(|source| CoreError::ConfigSave {
-            path: dir.clone(),
+    let mut file = options.open(&tmp).map_err(|source| CoreError::ConfigSave {
+        path: tmp.clone(),
+        source,
+    })?;
+    file.write_all(data.as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|source| CoreError::ConfigSave {
+            path: tmp.clone(),
             source,
         })?;
-        let prefs = self.get_account_preferences(id);
-        let path = dir.join(format!("{}.json", id.0));
-        let data = serde_json::to_string_pretty(&prefs).map_err(CoreError::ConfigParse)?;
-        fs::write(&path, data).map_err(|source| CoreError::ConfigSave { path, source })?;
-        Ok(())
-    }
+    drop(file);
 
-    /// Loads an account's configuration from its dedicated per-user database/file if present.
-    pub fn load_user_config(id: &AccountId) -> Result<Option<AccountPreferences>, CoreError> {
-        let path = Self::user_config_dir()?.join(format!("{}.json", id.0));
-        if !path.exists() {
-            return Ok(None);
-        }
-        let data = fs::read_to_string(&path).map_err(|source| CoreError::ConfigLoad {
-            path: path.clone(),
-            source,
-        })?;
-        let prefs: AccountPreferences =
-            serde_json::from_str(&data).map_err(CoreError::ConfigParse)?;
-        Ok(Some(prefs))
-    }
+    fs::rename(&tmp, path).map_err(|source| CoreError::ConfigSave {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -27,12 +27,32 @@ pub enum CoreError {
     },
 
     /// Failed to serialize or deserialize configuration data.
-    #[error("configuration parse error: {0}")]
-    ConfigParse(#[from] serde_json::Error),
+    #[error("failed to parse configuration at {path}: {source}")]
+    ConfigParse {
+        /// Configuration file the data came from (or was destined for).
+        path: PathBuf,
+        /// Underlying JSON error.
+        #[source]
+        source: serde_json::Error,
+    },
 
     /// Missing or invalid configuration directory.
     #[error("could not determine user configuration directory")]
     MissingConfigDir,
+
+    /// Missing or invalid user data directory.
+    #[error("could not determine user data directory")]
+    MissingDataDir,
+
+    /// The storage key file exists but does not hold a usable key.
+    #[error("unreadable storage key at {path}: {source}")]
+    StorageKey {
+        /// Path of the key file that could not be decoded.
+        path: PathBuf,
+        /// Underlying storage error.
+        #[source]
+        source: nexia_nextcloud_sdk::StorageError,
+    },
 
     /// Account with the requested ID was not found.
     #[error("account '{0}' was not found")]

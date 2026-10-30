@@ -105,8 +105,9 @@ On start the binary:
 5. Builds the `DesktopSyncCoordinator` over an `EventBus` (capacity 256),
    attaches storage, sets the config path and persists config once.
 6. Creates the `DesktopUiController`.
-7. Calls `register_autostart()` — unconditionally, on every start, regardless of
-   the `global.autostart` preference (which is persisted but unread).
+7. Refreshes the autostart desktop entry only when `is_autostart_enabled()`
+   finds one already present, so the launcher never creates or removes the entry
+   itself; the `global.autostart` preference is persisted but unread.
 8. Calls `controller.ensure_discovered_accounts()` — existing local accounts
    (`nextcloud.cfg`, GNOME Online Accounts, KAccounts) are adopted through the
    SDK's `DesktopSso` discovery here.
@@ -251,7 +252,7 @@ eu.luxuride.nexia master`.
 | Flatpak build fails with `can't checkout from 'https://github.com/Luxuride/nexia-nextcloud-sdk': you are in the offline mode` | `flatpak/cargo-sources.json` is missing, stale, or not listed in the manifest's `sources`; regenerate it from `Cargo.lock`. |
 | Flatpak build dies with `Invalid cross-device link` | `--repo`/`--state-dir` and `/var/lib/flatpak` are on different filesystems; use one podman volume for both. |
 | `flatpak-builder` reports the manifest's runtime as end-of-life | Move `runtime-version` and the builder image tag together; flathub drops EOL GNOME branches. |
-| Config edits appear to do nothing | `sync_folders`, `sync_interval_secs`, `global.autostart` and `global.start_minimized` are persisted but not read — see [`CONFIGURATION.md`](CONFIGURATION.md) §3. |
+| Config edits appear to do nothing | `sync_folders`, `sync_interval_secs` and `global.start_minimized` are persisted but not read — see [`CONFIGURATION.md`](CONFIGURATION.md) §3. |
 | `--set-mount-mode` does nothing and prints no error | It takes exactly **two** values (`--set-mount-mode <MOUNT_ID> Fuse`; `num_args = 2`). An **unknown mount id is a silent no-op** — `update_sync_mount_mode` only emits `SyncMountUpdated` inside `if let Some(target) = ... find(|m| m.id == id)`, and returns `Ok(())` otherwise. An unknown mode string is also accepted: it is stored verbatim, and anything that is not `"BidirectionalSync"` is mapped to `MountMode::VirtualVfs`. |
 | `--mount-vfs` leaves a stale mountpoint behind | An interrupted run can leave the FUSE mount attached. Unmount with `fusermount3 -u -z <MOUNTPOINT>`; the coordinator also tries this itself before mounting. |
 | GNOME Online Accounts are configured but the app shows no account | The sandbox is missing `--talk-name=org.gnome.OnlineAccounts`; GOA answers `ServiceUnknown` and `DesktopSso::discover_accounts()` returns nothing. Verify from inside the sandbox with `gdbus call --session --dest org.gnome.OnlineAccounts --object-path /org/gnome/OnlineAccounts --method org.freedesktop.DBus.ObjectManager.GetManagedObjects`. |

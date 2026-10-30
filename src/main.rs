@@ -92,27 +92,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     let _rt_guard = rt.enter();
 
-    let (storage, mut config) = match rt.block_on(nexia_core::DesktopStorage::open_default()) {
-        Ok(s) => {
-            let loaded = match s.load_app_config() {
-                Ok(Some(cfg)) => cfg,
-                _ => AppConfig::load_from_path(&config_path).unwrap_or_default(),
-            };
-            (Some(Arc::new(s)), loaded)
-        }
+    let (storage, mut config, needs_initial_persist) = match rt
+        .block_on(nexia_core::DesktopStorage::open_default())
+    {
+        Ok(s) => match s.load_app_config() {
+            Ok(Some(cfg)) => (Some(Arc::new(s)), cfg, false),
+            // An empty database is the only case where the JSON file is the source of
+            // truth: it is imported once, then the database takes over.
+            Ok(None) => (
+                Some(Arc::new(s)),
+                AppConfig::load_from_path(&config_path)?,
+                true,
+            ),
+            // A configuration that exists but cannot be read must not be replaced by
+            // defaults, because the defaults would be written straight back over the
+            // user's accounts, mounts and preferences.
+            Err(e) => {
+                return Err(format!("cannot read the configuration database: {e}").into());
+            }
+        },
         Err(e) => {
-            tracing::warn!(error = %e, "Failed to open encrypted desktop storage, falling back to JSON");
-            (
-                None,
-                AppConfig::load_from_path(&config_path).unwrap_or_default(),
-            )
+            tracing::warn!(error = %e, "Encrypted desktop storage unavailable, using the JSON configuration");
+            (None, AppConfig::load_from_path(&config_path)?, true)
         }
     };
 
     if config.cache_dir.is_none() {
-        config.cache_dir = dirs::cache_dir()
-            .map(|c| c.join("nexia"))
-            .or_else(|| Some(std::env::temp_dir().join("nexia_cache")));
+        config.cache_dir = Some(AppConfig::default_cache_dir());
     }
 
     let event_bus = EventBus::new(256);
@@ -122,19 +128,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(s) = storage {
         coordinator = coordinator.with_storage(s);
     }
-    rt.block_on(coordinator.persist_config());
+    if needs_initial_persist && let Err(e) = rt.block_on(coordinator.persist_config()) {
+        tracing::warn!(error = %e, "Failed to persist the initial configuration");
+    }
 
     let controller = DesktopUiController::new(coordinator.clone());
 
-    // Register autolaunch on boot
-    let _ = nexia_core::register_autostart();
+    // Refresh an autostart entry that already exists so it points at this binary, but never
+    // create one: the settings page owns the on/off decision.
+    if nexia_core::is_autostart_enabled()
+        && let Err(e) = nexia_core::register_autostart()
+    {
+        tracing::warn!(error = %e, "Failed to refresh the autostart entry");
+    }
 
     rt.block_on(async {
         controller.ensure_discovered_accounts().await;
     });
 
-    if args.headless
-        || args.sync
+    let has_one_shot_action = args.sync
         || args.refresh_vfs
         || args.hydrate.is_some()
         || args.dehydrate.is_some()
@@ -142,14 +154,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || args.resume_sync
         || args.list_mounts
         || args.mount_vfs.is_some()
-        || args.set_mount_mode.is_some()
-    {
+        || args.set_mount_mode.is_some();
+
+    if args.headless || has_one_shot_action {
+        // Every failing command records itself here so the process can exit non-zero and
+        // a caller (cron, a unit file, a shell chain) sees the failure.
+        let mut failures: Vec<String> = Vec::new();
         rt.block_on(async {
             if args.pause_sync {
                 tracing::info!("Pausing synchronization globally...");
                 match controller.pause_all_sync().await {
                     Ok(()) => tracing::info!("Synchronization paused successfully"),
-                    Err(e) => tracing::error!(error = %e, "Failed to pause synchronization"),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to pause synchronization");
+                        failures.push(format!("pause synchronization: {e}"));
+                    }
                 }
             }
 
@@ -157,7 +176,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::info!("Resuming synchronization globally...");
                 match controller.resume_all_sync().await {
                     Ok(()) => tracing::info!("Synchronization resumed successfully"),
-                    Err(e) => tracing::error!(error = %e, "Failed to resume synchronization"),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to resume synchronization");
+                        failures.push(format!("resume synchronization: {e}"));
+                    }
                 }
             }
 
@@ -190,7 +212,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                         }
                     }
-                    Err(e) => tracing::error!(error = %e, "Failed to list mounts"),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to list mounts");
+                        failures.push(format!("list mounts: {e}"));
+                    }
                 }
             }
 
@@ -198,7 +223,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::info!("Refreshing virtual file hierarchy...");
                 match controller.refresh_virtual_tree().await {
                     Ok(count) => tracing::info!(count, "Virtual tree updated"),
-                    Err(e) => tracing::error!(error = %e, "Failed to refresh virtual tree"),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to refresh virtual tree");
+                        failures.push(format!("refresh virtual tree: {e}"));
+                    }
                 }
             }
 
@@ -206,7 +234,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::info!(path = %path, "Hydrating virtual file...");
                 match controller.hydrate_file(path).await {
                     Ok(cached) => tracing::info!(cached_path = %cached.display(), "File hydrated successfully"),
-                    Err(e) => tracing::error!(error = %e, "Failed to hydrate file"),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to hydrate file");
+                        failures.push(format!("hydrate {path}: {e}"));
+                    }
                 }
             }
 
@@ -214,7 +245,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::info!(path = %path, "Dehydrating virtual file...");
                 match controller.dehydrate_file(path).await {
                     Ok(()) => tracing::info!("File dehydrated successfully"),
-                    Err(e) => tracing::error!(error = %e, "Failed to dehydrate file"),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to dehydrate file");
+                        failures.push(format!("dehydrate {path}: {e}"));
+                    }
                 }
             }
 
@@ -222,7 +256,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::info!("Running folder synchronization cycle...");
                 match controller.trigger_sync().await {
                     Ok(()) => tracing::info!("Synchronization cycle completed"),
-                    Err(e) => tracing::error!(error = %e, "Sync cycle failed"),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Sync cycle failed");
+                        failures.push(format!("sync: {e}"));
+                    }
                 }
             }
 
@@ -234,7 +271,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tracing::info!(mount_id, mode, "Setting mount synchronization mode...");
                 match controller.update_sync_mount_mode(mount_id, mode).await {
                     Ok(()) => tracing::info!(mount_id, mode, "Mount mode updated successfully"),
-                    Err(e) => tracing::error!(error = %e, "Failed to update mount mode"),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to update mount mode");
+                        failures.push(format!("set mount mode {mount_id}: {e}"));
+                    }
                 }
             }
 
@@ -251,18 +291,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         controller.unmount_fuse_vfs().await;
                         tracing::info!("Virtual drive unmounted.");
                     }
-                    Err(e) => tracing::error!(error = %e, "Failed to mount virtual drive"),
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to mount virtual drive");
+                        failures.push(format!("mount virtual drive: {e}"));
+                    }
                 }
             }
 
-            if args.headless
-                && !args.sync
-                && !args.refresh_vfs
-                && args.hydrate.is_none()
-                && args.dehydrate.is_none()
-                && args.mount_vfs.is_none()
-                && args.set_mount_mode.is_none()
-            {
+            if args.headless && !has_one_shot_action {
                 tracing::info!("Running Nexia background daemon. Press Ctrl+C to terminate.");
                 tokio::signal::ctrl_c().await?;
                 tracing::info!("Shutting down Nexia background daemon.");
@@ -271,6 +307,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok::<(), Box<dyn std::error::Error>>(())
         })?;
 
+        if !failures.is_empty() {
+            return Err(format!(
+                "{} requested operation(s) failed: {}",
+                failures.len(),
+                failures.join("; ")
+            )
+            .into());
+        }
         return Ok(());
     }
 

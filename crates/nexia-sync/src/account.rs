@@ -31,8 +31,14 @@ impl DesktopSyncCoordinator {
         for (i, b) in seed.as_bytes().iter().cycle().take(32).enumerate() {
             key_bytes[i] = b ^ (i as u8).wrapping_mul(31);
         }
-        let store_key =
-            StoreKey::from_bytes(key_bytes).unwrap_or_else(|_| StoreKey::generate().unwrap());
+        // The SDK expects full-entropy key material here (it goes straight into the database's
+        // `PRAGMA key`), so the derivation is a known weakness rather than a substitute for a
+        // KDF; it is documented in docs/ARCHITECTURE.md. What matters here is that a length
+        // violation is reported instead of falling back to a random key, which would silently
+        // make the existing account database undecryptable.
+        let store_key = StoreKey::from_bytes(key_bytes).map_err(|e| {
+            SyncError::Journal(format!("invalid store key for account {account_id}: {e}"))
+        })?;
 
         let client = Client::builder()
             .server_url(server_url)
@@ -46,7 +52,17 @@ impl DesktopSyncCoordinator {
         let mut client_events = client.subscribe_events();
         let bus = self.event_bus.clone();
         tokio::spawn(async move {
-            while let Ok(evt) = client_events.recv().await {
+            loop {
+                let evt = match client_events.recv().await {
+                    Ok(evt) => evt,
+                    // A lagging consumer must drop events, not the subscription: ending the
+                    // loop here would stop mount updates for the rest of the session.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!(skipped, "Client event stream lagged");
+                        continue;
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                };
                 match evt {
                     nexia_nextcloud_sdk::ClientEvent::SyncMountAdded(m) => {
                         bus.emit(DesktopEvent::SyncMountAdded { mount_id: m.id });
@@ -115,15 +131,24 @@ impl DesktopSyncCoordinator {
 
     /// Returns an SDK [`Client`] instance for the specified account.
     pub async fn client_for_account(&self, account: &Account) -> Result<Option<Client>, SyncError> {
-        let clients = self.clients.read().await;
-        for c in clients.iter() {
-            if c.server_url().as_str() == account.server.server_url
-                && c.current_user_id().as_deref() == Some(&account.credentials.username)
-            {
-                return Ok(Some(c.clone()));
-            }
+        let found = {
+            let clients = self.clients.read().await;
+            clients
+                .iter()
+                .find(|c| {
+                    c.server_url().as_str() == account.server.server_url
+                        && c.current_user_id().as_deref() == Some(&account.credentials.username)
+                })
+                .cloned()
+        };
+        // The borrow has to end before the fallback: `active_client` takes the same read lock,
+        // and a queued writer would then block both requests behind this task's guard.
+        match found {
+            Some(client) => Ok(Some(client)),
+            // Substitute the active client only for the active account; handing another
+            // account's session to a caller that asked for this one would act on the wrong data.
+            None => Ok(self.active_client().await),
         }
-        Ok(self.active_client().await)
     }
 
     /// Returns the active `nexia-nextcloud-sdk` [`Client`] handle if configured.
@@ -612,7 +637,7 @@ impl DesktopSyncCoordinator {
                 .collect();
             (previous_active, purged)
         };
-        self.persist_config().await;
+        let _ = self.persist_config().await;
 
         for gone in &purged {
             self.drop_client_for(gone).await;
@@ -797,7 +822,7 @@ impl DesktopSyncCoordinator {
             conf.active_account_id = Some(account_id.clone());
             acc
         };
-        self.persist_config().await;
+        let _ = self.persist_config().await;
 
         // Match existing running client by server URL and username, or create it if not present
         let target_idx = {
@@ -877,7 +902,7 @@ impl DesktopSyncCoordinator {
             conf.upsert_account(account);
             conf.active_account_id = Some(account_id.clone());
         }
-        self.persist_config().await;
+        let _ = self.persist_config().await;
 
         if let Some(i) = idx {
             let _ = self.switch_client(i).await;
@@ -1003,7 +1028,7 @@ impl DesktopSyncCoordinator {
             conf.remove_account(account_id);
             conf.active_account_id.clone()
         };
-        self.persist_config().await;
+        let _ = self.persist_config().await;
 
         // 5. Switch to the remaining account if there is one, otherwise drop the account-scoped
         // runtime state so nothing is left pointing at the account that just went away.

@@ -20,10 +20,12 @@ If the database cannot be opened at all, the app runs on JSON alone and logs
 
 > **The JSON fallback is not encrypted.** `Account.credentials` serialises
 > `password: String` verbatim, so `~/.config/nexia-client/config.json`
-> contains the app password in cleartext — `AppConfig` persistence uses
-> `fs::write`, so the file gets the process umask (typically `0644`). Only
-> `desktop_config.db` is SQLCipher-encrypted. Treat the JSON file as secret
-> material, and prefer ensuring the keychain works on a real desktop.
+> contains the app password in cleartext. Only `desktop_config.db` is
+> SQLCipher-encrypted. The file itself is written with mode `0600` through a
+> temporary file in the same directory that is renamed into place, so a crash
+> mid-write cannot leave a truncated config behind, but the contents are
+> still plaintext. Treat the JSON file as secret material, and prefer ensuring
+> the keychain works on a real desktop.
 
 ---
 
@@ -34,22 +36,27 @@ If the database cannot be opened at all, the app runs on JSON alone and logs
 | Settings database | `~/.local/share/nexia/desktop_config.db` |
 | Keychain-backed key, local fallback key | `<data dir>/nexia/.storage_key` |
 | JSON config fallback | `~/.config/nexia-client/config.json` |
-| Per-account preferences dump | `~/.config/nexia-client/accounts/<account_id>.json` |
 | Cache root (`cache_dir`) | `~/.cache/nexia` |
 
-The per-account dump is written by `AppConfig::save_user_config(id)` whenever the
-UI changes an account's display settings
-(`DesktopUiController::set_account_display_config`). It holds
-only that account's `AccountPreferences` and is **a dump, not a load source** —
-nothing calls `AppConfig::load_user_config()`, so editing the file changes
-nothing. The live value is `account_preferences` in the database/JSON above.
+There is no per-account config file: an account's preferences live inside
+`account_preferences` in the database/JSON above and nowhere else. Writing them
+to a second location would create a dump that nothing reads back.
 
 The database key is loaded from the keychain
 (`KeychainKeyStore::new("eu.luxuride.nexia", "desktop-storage-key")`).
 If the keychain is unavailable, `DesktopStorage::resolve_key` reads or creates
-`.storage_key` next to the database. The database therefore survives a missing
-keyring, but a key file is not a substitute for one — if neither is readable the
-app starts on JSON and logs a warning.
+`.storage_key` next to the database (mode `0600`, created once with `O_EXCL`).
+The database therefore survives a missing keyring, but a key file is not a
+substitute for one.
+
+A key file that exists but cannot be read or decoded is an **error**, not a
+reason to mint a new key: a fresh key would make the existing
+`desktop_config.db` undecryptable, so `DesktopStorage::resolve_key` returns
+`CoreError::ConfigLoad` / `CoreError::StorageKey` naming the path and the app
+falls back to `config.json` instead of silently replacing the key. The same
+applies to a missing user data directory: `open_default()` fails with
+`CoreError::MissingDataDir` rather than opening a database in the working
+directory.
 
 ---
 
@@ -65,7 +72,6 @@ The JSON fallback is the complete `AppConfig`:
       "name": "Work",
       "server": { "server_url": "https://cloud.example.org" },
       "credentials": { "username": "alice", "password": "<app password>" },
-      "status": "Connected",
       "is_system": false,
       "avatar_path": null
     }
@@ -195,7 +201,7 @@ nothing at all; the poll cadence is a literal in the constructor.
 | Field | Meaning |
 | --- | --- |
 | `start_minimized` | Persisted "launch hidden" intent. **Not yet read by the launcher** — hiding comes from the `--background` / `-b` flag passed to `launch_gtk_application`. |
-| `autostart` | Persisted autostart intent. **Not yet read by the launcher** — the launcher calls `register_autostart()` unconditionally on every start. |
+| `autostart` | Persisted autostart intent. **Not read by the launcher** — the launcher refreshes an existing autostart entry only when `is_autostart_enabled()` reports one, and never creates or removes one; the settings page owns the on/off decision. |
 | `default_display` | Display defaults used when an account has no override. |
 
 Because both booleans are persisted but unused, treat them as reserved fields: do
@@ -282,6 +288,12 @@ directory.
   the JSON file is loaded; on failure of that, `AppConfig::default()`.
 - The keychain always wins over `.storage_key`; a fresh key is minted and written
   if neither is usable.
-- `persist_config()` writes both stores and ignores write errors with a warning rather
-  than failing the operation that triggered it — the in-memory config is the
-  source of truth for the running process.
+- `persist_config()` writes both stores and returns the first error, but callers
+  in the coordinator log it and continue rather than failing the operation that
+  triggered it — the in-memory config is the source of truth for the running
+  process. The UI's own settings setters (`set_account_display_config`,
+  `set_global_display_config`) propagate the error, so a write that cannot land
+  is reported to the user.
+- `Account.status` is runtime connection state, not configuration: it is
+  `#[serde(skip)]` and `Default`-initialised, so it is never persisted and a
+  stored `"status"` key in an old config file is ignored.

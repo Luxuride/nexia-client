@@ -28,30 +28,38 @@ impl DesktopStorage {
     }
 
     /// Resolves the storage key using the platform keychain, falling back to a local key file.
+    ///
+    /// The key file is created with mode `0600` because it decrypts the database that
+    /// holds the configured credentials. An existing but unreadable key is an error:
+    /// generating a replacement would orphan the database it was protecting.
     pub async fn resolve_key(key_file: &Path) -> Result<StoreKey, CoreError> {
         let keystore = KeychainKeyStore::new("eu.luxuride.nexia", "desktop-storage-key");
         if let Ok(key) = keystore.load_or_create().await {
             return Ok(key);
         }
 
-        if key_file.exists()
-            && let Ok(content) = std::fs::read_to_string(key_file)
-            && let Ok(key) = StoreKey::from_hex(content.trim(), "desktop-storage-key")
-        {
-            return Ok(key);
+        if key_file.exists() {
+            let content =
+                std::fs::read_to_string(key_file).map_err(|source| CoreError::ConfigLoad {
+                    path: key_file.to_path_buf(),
+                    source,
+                })?;
+            return StoreKey::from_hex(content.trim(), "desktop-storage-key").map_err(|source| {
+                CoreError::StorageKey {
+                    path: key_file.to_path_buf(),
+                    source,
+                }
+            });
         }
 
         let key = StoreKey::generate()?;
-        if let Some(parent) = key_file.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(key_file, key.to_hex());
+        write_key_file(key_file, &key.to_hex())?;
         Ok(key)
     }
 
     /// Opens the default encrypted database in the user data directory.
     pub async fn open_default() -> Result<Self, CoreError> {
-        let data_dir = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+        let data_dir = dirs::data_dir().ok_or(CoreError::MissingDataDir)?;
         let db_dir = data_dir.join("nexia");
         let db_path = db_dir.join("desktop_config.db");
         let key_file = db_dir.join(".storage_key");
@@ -86,7 +94,7 @@ impl DesktopStorage {
 
     /// Saves the complete application configuration into the encrypted database.
     pub fn save_app_config(&self, config: &AppConfig) -> Result<(), CoreError> {
-        let json = serde_json::to_string(config)?;
+        let json = encode(config, &self.db_path)?;
         self.set_setting("app_config", &json)?;
         Ok(())
     }
@@ -94,7 +102,7 @@ impl DesktopStorage {
     /// Loads the application configuration from the encrypted database if present.
     pub fn load_app_config(&self) -> Result<Option<AppConfig>, CoreError> {
         if let Some(json) = self.get_setting("app_config")? {
-            let cfg: AppConfig = serde_json::from_str(&json)?;
+            let cfg: AppConfig = decode(&json, &self.db_path)?;
             Ok(Some(cfg))
         } else {
             Ok(None)
@@ -107,7 +115,7 @@ impl DesktopStorage {
         account_id: &AccountId,
         prefs: &AccountPreferences,
     ) -> Result<(), CoreError> {
-        let json = serde_json::to_string(prefs)?;
+        let json = encode(prefs, &self.db_path)?;
         self.set_setting(&format!("account_preferences:{}", account_id.0), &json)?;
         Ok(())
     }
@@ -118,7 +126,7 @@ impl DesktopStorage {
         account_id: &AccountId,
     ) -> Result<Option<AccountPreferences>, CoreError> {
         if let Some(json) = self.get_setting(&format!("account_preferences:{}", account_id.0))? {
-            let prefs: AccountPreferences = serde_json::from_str(&json)?;
+            let prefs: AccountPreferences = decode(&json, &self.db_path)?;
             Ok(Some(prefs))
         } else {
             Ok(None)
@@ -127,7 +135,7 @@ impl DesktopStorage {
 
     /// Saves global application preferences into the encrypted database.
     pub fn save_global_preferences(&self, prefs: &GlobalPreferences) -> Result<(), CoreError> {
-        let json = serde_json::to_string(prefs)?;
+        let json = encode(prefs, &self.db_path)?;
         self.set_setting("global_preferences", &json)?;
         Ok(())
     }
@@ -135,12 +143,58 @@ impl DesktopStorage {
     /// Loads global application preferences from the encrypted database if present.
     pub fn load_global_preferences(&self) -> Result<Option<GlobalPreferences>, CoreError> {
         if let Some(json) = self.get_setting("global_preferences")? {
-            let prefs: GlobalPreferences = serde_json::from_str(&json)?;
+            let prefs: GlobalPreferences = decode(&json, &self.db_path)?;
             Ok(Some(prefs))
         } else {
             Ok(None)
         }
     }
+}
+
+/// Serializes a value into the database, naming the database in the error.
+fn encode<T: serde::Serialize>(value: &T, db_path: &Path) -> Result<String, CoreError> {
+    serde_json::to_string(value).map_err(|source| CoreError::ConfigParse {
+        path: db_path.to_path_buf(),
+        source,
+    })
+}
+
+/// Decodes a value read from the database, naming the database in the error.
+fn decode<T: serde::de::DeserializeOwned>(json: &str, db_path: &Path) -> Result<T, CoreError> {
+    serde_json::from_str(json).map_err(|source| CoreError::ConfigParse {
+        path: db_path.to_path_buf(),
+        source,
+    })
+}
+
+/// Writes the storage key to `path` with owner-only permissions, never overwriting.
+fn write_key_file(path: &Path, hex: &str) -> Result<(), CoreError> {
+    use std::io::Write as _;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| CoreError::ConfigSave {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|source| CoreError::ConfigSave {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    file.write_all(hex.as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|source| CoreError::ConfigSave {
+            path: path.to_path_buf(),
+            source,
+        })
 }
 
 #[cfg(test)]

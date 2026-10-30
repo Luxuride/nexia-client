@@ -282,41 +282,31 @@ impl FileViewItem {
 
     /// Sorts a slice of [`FileViewItem`] in place according to the specified criteria.
     pub fn sort_items(items: &mut [Self], criteria: &FileSortCriteria) {
-        items.sort_by(|a, b| {
-            if criteria.folders_first && a.is_directory != b.is_directory {
-                return if a.is_directory {
-                    std::cmp::Ordering::Less
-                } else {
-                    std::cmp::Ordering::Greater
-                };
-            }
+        // The field pass uses `sort_by_cached_key`, which lowercases each name once instead of
+        // allocating two lowercase copies for every comparison. The folder rank is a second,
+        // stable pass: it lifts directories above files while keeping the field order inside
+        // each group, which is why only the field pass is reversed for a descending sort.
+        match criteria.field {
+            FileSortField::Name => items.sort_by_cached_key(|i| i.name.to_lowercase()),
+            FileSortField::Size => items.sort_by_cached_key(|i| i.size_bytes),
+            FileSortField::Modified => items.sort_by_cached_key(|i| i.modified_at.clone()),
+            FileSortField::Type => items.sort_by_cached_key(|i| {
+                let ext = std::path::Path::new(&i.name)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                (ext, i.name.to_lowercase())
+            }),
+        }
 
-            let ord = match criteria.field {
-                FileSortField::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                FileSortField::Size => a.size_bytes.cmp(&b.size_bytes),
-                FileSortField::Modified => a.modified_at.cmp(&b.modified_at),
-                FileSortField::Type => {
-                    let ext_a = std::path::Path::new(&a.name)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("")
-                        .to_lowercase();
-                    let ext_b = std::path::Path::new(&b.name)
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("")
-                        .to_lowercase();
-                    ext_a
-                        .cmp(&ext_b)
-                        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-                }
-            };
+        if criteria.order == FileSortOrder::Descending {
+            items.reverse();
+        }
 
-            match criteria.order {
-                FileSortOrder::Ascending => ord,
-                FileSortOrder::Descending => ord.reverse(),
-            }
-        });
+        if criteria.folders_first {
+            items.sort_by_key(|i| !i.is_directory);
+        }
     }
 
     /// Returns the symbolic icon name matching this item.
@@ -368,6 +358,90 @@ pub struct TransferItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Builds the minimal item a sort test needs: name, kind and size.
+    fn item(name: &str, is_directory: bool, size_bytes: u64) -> FileViewItem {
+        FileViewItem {
+            path: format!("/{name}"),
+            name: name.to_string(),
+            is_directory,
+            size_formatted: String::new(),
+            size_bytes,
+            status: FileSyncStatus::CloudPlaceholder,
+            mime_type: None,
+            file_id: None,
+            icon_category: if is_directory {
+                ResourceIconCategory::Folder
+            } else {
+                ResourceIconCategory::Document
+            },
+            modified_at: None,
+            permissions: None,
+            directory_summary: None,
+        }
+    }
+
+    fn names(items: &[FileViewItem]) -> Vec<&str> {
+        items.iter().map(|i| i.name.as_str()).collect()
+    }
+
+    #[test]
+    fn sort_items_is_case_insensitive_by_name() {
+        let mut items = vec![item("beta.txt", false, 0), item("Alpha.txt", false, 0)];
+        FileViewItem::sort_items(
+            &mut items,
+            &FileSortCriteria::new(FileSortField::Name, FileSortOrder::Ascending, false),
+        );
+        assert_eq!(names(&items), ["Alpha.txt", "beta.txt"]);
+    }
+
+    #[test]
+    fn sort_items_keeps_folders_first_for_both_orders() {
+        for order in [FileSortOrder::Ascending, FileSortOrder::Descending] {
+            let mut items = vec![
+                item("a.txt", false, 3),
+                item("b-folder", true, 1),
+                item("c.txt", false, 1),
+                item("d-folder", true, 9),
+            ];
+            FileViewItem::sort_items(
+                &mut items,
+                &FileSortCriteria::new(FileSortField::Size, order, true),
+            );
+            assert!(items[0].is_directory, "folders stay on top for {order:?}");
+            assert!(items[1].is_directory, "folders stay on top for {order:?}");
+            assert!(!items[2].is_directory);
+            assert!(!items[3].is_directory);
+        }
+    }
+
+    #[test]
+    fn sort_items_descending_reverses_only_the_field() {
+        let mut items = vec![
+            item("small.txt", false, 1),
+            item("large.txt", false, 10),
+            item("folder", true, 0),
+        ];
+        FileViewItem::sort_items(
+            &mut items,
+            &FileSortCriteria::new(FileSortField::Size, FileSortOrder::Descending, true),
+        );
+        assert_eq!(names(&items), ["folder", "large.txt", "small.txt"]);
+    }
+
+    #[test]
+    fn sort_items_by_type_groups_extensions() {
+        let mut items = vec![
+            item("z.txt", false, 0),
+            item("a.png", false, 0),
+            item("m.png", false, 0),
+        ];
+        FileViewItem::sort_items(
+            &mut items,
+            &FileSortCriteria::new(FileSortField::Type, FileSortOrder::Ascending, false),
+        );
+        assert_eq!(names(&items), ["a.png", "m.png", "z.txt"]);
+    }
 
     #[test]
     fn format_bytes_calculation() {

@@ -292,8 +292,7 @@ internal VFS mounts and are skipped by the sync loop.
 | --- | --- |
 | `~/.config/nexia-client/config.json` | `AppConfig` fallback when the encrypted database is unavailable. |
 | `~/.local/share/nexia/desktop_config.db` | Encrypted settings database (SDK `ConfigStore`; key from the platform keychain, `.storage_key` fallback). |
-| `~/.local/share/nexia/.storage_key` | Hex `StoreKey` written only when the keychain is unavailable (`DesktopStorage::resolve_key`). |
-| `~/.config/nexia-client/accounts/<account_id>.json` | Write-only per-account `AccountPreferences` dump — never read back. |
+| `~/.local/share/nexia/.storage_key` | Hex `StoreKey` written only when the keychain is unavailable (`DesktopStorage::resolve_key`); mode `0600`, created with `O_EXCL`, and read back in preference to minting a new key. |
 | `<cache_dir>/accounts/<account_id>/` | SDK `StoragePaths` (per-account auth/cache/config databases). |
 | `<cache_dir>/accounts/<account_id>/vfs/tree.json` | Persisted virtual tree snapshot. |
 | `<cache_dir>/accounts/<account_id>/mounts/<mount_id>/journal.json` | Per-mount sync journal. |
@@ -304,6 +303,20 @@ internal VFS mounts and are skipped by the sync loop.
 `<cache_dir>` defaults to `~/.cache/nexia` and is per-account
 subdivided so switching accounts never mixes caches.
 
+### Per-account database keys
+
+Each account's SDK databases are opened with a `StoreKey` derived in
+`DesktopSyncCoordinator::build_account_client` by folding
+`"{account_id}:{app password}"` into 32 bytes with a fixed XOR pattern. This is
+a derivation, **not** a key-derivation function: it has none of the memory
+hardness or salting that would make the key expensive to brute-force, and it
+inherits the entropy of the app password rather than guaranteeing full 32-byte
+entropy. It is accepted because the key never leaves the process, the ciphertext
+is a local SQLite database, and the alternative — a per-account key in the
+keychain — needs a migration for existing account directories. Changing the
+derivation would make every existing account database undecryptable, so any
+future change must ship with a migration path.
+
 ### Migration from the pre-rename layout
 
 The application was previously published under a Nextcloud-derived name, and
@@ -313,7 +326,7 @@ its accounts. The superseded paths were:
 
 | Superseded path | Current path |
 | --- | --- |
-| `~/.config/nextcloud-desktop-rs/` | `~/.config/nexia-client/` (JSON config, account dumps) |
+| `~/.config/nextcloud-desktop-rs/` | `~/.config/nexia-client/` (JSON config) |
 | `~/.local/share/nextcloud-desktop/` | `~/.local/share/nexia/` (settings database, `.storage_key`) |
 | `~/.cache/nextcloud-desktop/` | `~/.cache/nexia/` (per-account caches, journals, thumbnails) |
 

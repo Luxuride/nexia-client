@@ -242,15 +242,20 @@ Two behaviours of that chain are easy to be surprised by:
   `--refresh-vfs --sync` does both, in the order listed above (`pause`/`resume`,
   `list-mounts`, `refresh-vfs`, `hydrate`, `dehydrate`, `sync`,
   `set-mount-mode`, `mount-vfs`), then falls through to the `--headless` wait.
-- **Failures are logged, not propagated.** Each operation logs
-  `tracing::error!` and continues, so the process still exits `0` after a failed
-  `--sync`. Shell scripts cannot use the exit status as a success signal; watch
-  the log instead (default filter `info`, override with `RUST_LOG`).
+- **Failures are logged and reported through the exit status.** Each operation
+  logs `tracing::error!`, keeps going with the remaining operations, and records
+  itself in a failure list; `main` returns `Err` when that list is non-empty, so
+  the process exits non-zero and prints
+  `<n> requested operation(s) failed: <operation>: <error>; …`. A `--sync` that
+  fails is therefore visible to cron, a systemd unit or a shell chain, and a
+  partial success reports the operations that failed rather than only the log.
 
-The `--headless` guard excludes itself when `--sync`, `--refresh-vfs`,
-`--hydrate`, `--dehydrate`, `--mount-vfs` or `--set-mount-mode` was given, but
-*not* when `--list-mounts`, `--pause-sync` or `--resume-sync` was given — so
-`--headless --list-mounts` lists and then waits for `Ctrl+C`.
+The `--headless` guard excludes itself whenever any one-shot action was given —
+`--sync`, `--refresh-vfs`, `--hydrate`, `--dehydrate`, `--list-mounts`,
+`--pause-sync`, `--resume-sync`, `--mount-vfs` or `--set-mount-mode` — so
+`--headless --list-mounts` lists and exits. `--headless` alone (or with
+`--background` and `--config` only) is the daemon that waits for `Ctrl+C`;
+`--mount-vfs` blocks on its own mountpoint instead.
 
 No display server is needed for any row above. Logging goes through
 `tracing-subscriber`, filtered by `RUST_LOG` and defaulting to `info`.
