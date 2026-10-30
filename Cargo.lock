@@ -591,6 +591,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "color_quant"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1126,6 +1132,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gif"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee8cfcc411d9adbbaba82fb72661cc1bcca13e8bba98b364e62b2dba8f960159"
+dependencies = [
+ "color_quant",
+ "weezl",
+]
+
+[[package]]
 name = "gio"
 version = "0.22.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1646,11 +1662,24 @@ checksum = "85ab80394333c02fe689eaf900ab500fbd0c2213da414687ebf995a65d5a6104"
 dependencies = [
  "bytemuck",
  "byteorder-lite",
+ "color_quant",
+ "gif",
+ "image-webp",
  "moxcms",
  "num-traits",
  "png",
  "zune-core",
  "zune-jpeg",
+]
+
+[[package]]
+name = "image-webp"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
+dependencies = [
+ "byteorder-lite",
+ "quick-error",
 ]
 
 [[package]]
@@ -2058,7 +2087,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-activity"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2070,7 +2099,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-auth"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "base64",
  "nexia-nextcloud-core",
@@ -2080,7 +2109,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-client-config"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-sdk-keyring",
@@ -2091,12 +2120,12 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-core"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 
 [[package]]
 name = "nexia-nextcloud-dav"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "tracing",
@@ -2105,7 +2134,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-deck"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-auth",
  "nexia-nextcloud-core",
@@ -2117,7 +2146,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-goa"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-auth",
  "nexia-nextcloud-core",
@@ -2129,7 +2158,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-kaccounts"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-sdk-keyring",
@@ -2141,7 +2170,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-notifications"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2153,7 +2182,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-ocs"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "serde",
@@ -2164,7 +2193,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-preview"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "image",
  "nexia-nextcloud-auth",
@@ -2175,7 +2204,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-activity",
  "nexia-nextcloud-auth",
@@ -2216,7 +2245,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-fuse"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "fuser",
  "nexia-nextcloud-core",
@@ -2228,7 +2257,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-keyring"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "keyring",
  "oo7",
@@ -2238,7 +2267,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-orchestrator"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-dav",
@@ -2258,7 +2287,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-ratelimit"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "tokio",
  "tracing",
@@ -2267,7 +2296,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-request"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "tracing",
@@ -2276,7 +2305,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-session"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-auth",
  "nexia-nextcloud-core",
@@ -2286,7 +2315,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-storage"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "getrandom 0.3.4",
  "nexia-nextcloud-sdk-keyring",
@@ -2297,7 +2326,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sdk-vfs"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "serde",
@@ -2308,7 +2337,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-search"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2320,7 +2349,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-shares"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2332,7 +2361,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-sync"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "serde",
@@ -2344,7 +2373,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-talk"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2356,7 +2385,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-theming"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2368,7 +2397,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-transport"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "futures-util",
  "nexia-nextcloud-core",
@@ -2380,7 +2409,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-trashbin"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-auth",
  "nexia-nextcloud-core",
@@ -2391,7 +2420,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-uploads"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-auth",
  "nexia-nextcloud-core",
@@ -2402,7 +2431,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-users"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-core",
  "nexia-nextcloud-ocs",
@@ -2414,7 +2443,7 @@ dependencies = [
 [[package]]
 name = "nexia-nextcloud-versions"
 version = "0.2.1"
-source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#9f7fd60ffa87a6a7bb87d045fbb9a16f2bb87ecb"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#c51816323d88b7e726c31ff98c70f173609e00a7"
 dependencies = [
  "nexia-nextcloud-auth",
  "nexia-nextcloud-core",
@@ -2916,6 +2945,12 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
+
+[[package]]
+name = "quick-error"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
 name = "quinn"
@@ -4304,6 +4339,12 @@ checksum = "998d2c24ec099a87daf9467808859f9d82b61f1d9c9701251aea037f514eae0e"
 dependencies = [
  "nom",
 ]
+
+[[package]]
+name = "weezl"
+version = "0.1.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "winapi"
