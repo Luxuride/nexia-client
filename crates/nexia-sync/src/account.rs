@@ -334,6 +334,15 @@ impl DesktopSyncCoordinator {
         // 2. Filter to only mounts belonging to the active account (or unassigned)
         mounts.retain(|m| m.account_id.is_empty() || m.account_id == account.id.0);
 
+        // 2b. The sparse-placeholder mode is retired: every mount that is not a local mirror is a
+        // FUSE on-demand mount now. Internal application mounts keep their own mode because they
+        // back the local content cache rather than a folder the user chose.
+        for mount in mounts.iter_mut() {
+            if mount.mode == "VirtualVfs" && !Self::is_internal_vfs(&mount.id) {
+                mount.mode = "Fuse".to_string();
+            }
+        }
+
         // 3. Ensure per-account virtual mount exists
         let has_app_vfs = mounts.iter().any(|m| m.id == active_vfs_id);
         if !has_app_vfs {

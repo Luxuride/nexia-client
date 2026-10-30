@@ -128,11 +128,11 @@ impl AddSyncFolderDialog {
         });
 
         // 3. Mode selector
-        let mode_options = [
-            "Two-Way Synchronization (Bidirectional)",
-            "Virtual Filesystem (Sparse placeholders on ext4/btrfs)",
-            "FUSE Virtual Filesystem (Transparent on-demand kernel hydration)",
-        ];
+        //
+        // Placeholder-style virtual mounts are retired: FUSE is the on-demand mode. The old labels
+        // carried long parenthetical explanations and were ellipsised in the row, so they are short
+        // now and the help text moved to a neighbour row below.
+        let mode_options = ["FUSE (On-Demand)", "Two-Way Sync (Local Mirror)"];
         let mode_model = gtk4::StringList::new(&mode_options);
         let mode_row = adw::ComboRow::builder()
             .title("Synchronization Mode")
@@ -179,9 +179,8 @@ impl AddSyncFolderDialog {
             };
 
             let mode = match m_row.selected() {
-                2 => "Fuse".to_string(),
-                1 => "VirtualVfs".to_string(),
-                _ => "BidirectionalSync".to_string(),
+                1 => "BidirectionalSync".to_string(),
+                _ => "Fuse".to_string(),
             };
 
             let name_text = n_entry.text().to_string().trim().to_string();

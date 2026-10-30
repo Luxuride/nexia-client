@@ -174,7 +174,7 @@ impl SyncFoldersPage {
                 }
 
                 for mount in mounts {
-                    let is_vfs = mount.mode == "VirtualVfs";
+                    let is_on_demand = mount.mode != "BidirectionalSync";
                     let is_app_vfs = mount.id.starts_with("app-") || mount.id == "app-default-vfs";
 
                     let title_text = mount.display_name.clone().unwrap_or_else(|| {
@@ -185,8 +185,10 @@ impl SyncFoldersPage {
                         }
                     });
 
-                    let mode_badge = if is_vfs {
-                        "Virtual Filesystem"
+                    let mode_badge = if is_app_vfs {
+                        "Internal Cache"
+                    } else if is_on_demand {
+                        "On-Demand (FUSE)"
                     } else {
                         "Two-Way Sync"
                     };
@@ -200,7 +202,7 @@ impl SyncFoldersPage {
                         .activatable(true)
                         .build();
 
-                    let icon_name = if is_vfs {
+                    let icon_name = if is_on_demand {
                         "folder-remote-symbolic"
                     } else {
                         "folder-download-symbolic"

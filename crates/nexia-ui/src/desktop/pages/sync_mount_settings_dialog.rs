@@ -69,15 +69,13 @@ impl SyncMountSettingsDialog {
         details_group.add(&remote_row);
 
         // Changeable Synchronization Mode
-        let mode_options = [
-            "Two-Way Synchronization (Local files mirrored to cloud)",
-            "Virtual Filesystem (Sparse placeholders on ext4/btrfs)",
-            "FUSE Virtual Filesystem (Transparent on-demand kernel hydration)",
-        ];
+        // Placeholder-style virtual mounts are retired: FUSE is the on-demand mode. Short labels
+        // keep the selected value readable instead of ellipsised in the row.
+        let mode_options = ["FUSE (On-Demand)", "Two-Way Sync (Local Mirror)"];
         let mode_model = gtk4::StringList::new(&mode_options);
         let initial_selected = match mount.mode.as_str() {
-            "Fuse" => 2,
-            "VirtualVfs" => 1,
+            "BidirectionalSync" => 1,
+            // Retired "VirtualVfs" mounts are served by FUSE now.
             _ => 0,
         };
 
@@ -100,19 +98,17 @@ impl SyncMountSettingsDialog {
             let toast = toast_mode.clone();
             let cb = on_change_mode.clone();
             let new_mode = match combo.selected() {
-                2 => "Fuse",
-                1 => "VirtualVfs",
-                _ => "BidirectionalSync",
+                1 => "BidirectionalSync",
+                _ => "Fuse",
             };
             glib::MainContext::default().spawn_local(async move {
                 if b.update_sync_mount_mode(&m_id, new_mode).await.is_ok() {
                     let desc = match new_mode {
-                        "Fuse" => "Switched to FUSE Virtual Filesystem",
-                        "VirtualVfs" => "Switched to Virtual Filesystem",
-                        _ => {
+                        "BidirectionalSync" => {
                             let _ = b.trigger_sync().await;
                             "Switched to Two-Way Synchronization (Downloading…)"
                         }
+                        _ => "Switched to FUSE On-Demand",
                     };
                     toast.add_toast(adw::Toast::new(desc));
                     cb();
@@ -128,8 +124,12 @@ impl SyncMountSettingsDialog {
             .description("Disk space consumed on your local drive by this synchronization mount.")
             .build();
 
+        // On-demand mounts only hold what was opened, which is not the same as a mirrored copy, so
+        // the wording follows "not a mirror" instead of a specific mode name.
+        let is_on_demand = mount.mode != "BidirectionalSync";
+
         let local_usage_row = adw::ActionRow::builder()
-            .title(if mount.mode == "VirtualVfs" {
+            .title(if is_on_demand {
                 "Downloaded & Hydrated Files"
             } else {
                 "Local Synced Files"
@@ -155,13 +155,13 @@ impl SyncMountSettingsDialog {
             .build();
 
         let clear_files_row = adw::ActionRow::builder()
-            .title(if mount.mode == "VirtualVfs" {
+            .title(if is_on_demand {
                 "Clear Downloaded Files"
             } else {
                 "Clear Local Sync Cache"
             })
-            .subtitle(if mount.mode == "VirtualVfs" {
-                "Dehydrate local files back to placeholders to reclaim storage"
+            .subtitle(if is_on_demand {
+                "Remove hydrated file copies to reclaim storage"
             } else {
                 "Reset temporary synchronization journal and cache"
             })
