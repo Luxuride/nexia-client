@@ -8,7 +8,7 @@ one-shot CLI paths.
 
 Everything described here is app-side presentation and process lifecycle. The
 work being kept alive (mounts, sync cycles, hydration) belongs to
-[`nexia-nextcloud-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk); see
+[`nexia-nextcloud-sdk`](https://github.com/Luxuride/nexia-nextcloud-sdk); see
 [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ---

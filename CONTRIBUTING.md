@@ -8,7 +8,7 @@ This codebase is structured as a high-integrity Cargo workspace of small, focuse
 Both **human** and **LLM / AI-assisted contributions** are welcome!
 
 **Know where the code belongs before you write it.** This repository is a
-consumer of [`nexia-nextcloud-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk)
+consumer of [`nexia-nextcloud-sdk`](https://github.com/Luxuride/nexia-nextcloud-sdk)
 and the SDK does not depend on it in any way. Protocol handling, VFS state,
 hydration bookkeeping, journals, reconciliation and retries are SDK concerns; a
 PR that re-implements any of them here will be asked to move. Widgets, view

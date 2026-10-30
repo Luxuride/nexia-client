@@ -2,7 +2,7 @@
 
 An independent, unofficial desktop client for Nextcloud servers, written in Rust
 and GTK 4 on top of
-[`nexia-nextcloud-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk): virtual
+[`nexia-nextcloud-sdk`](https://github.com/Luxuride/nexia-nextcloud-sdk): virtual
 synchronisation with on-demand hydration, two-way folder sync, and a real file
 browser over the remote hierarchy.
 

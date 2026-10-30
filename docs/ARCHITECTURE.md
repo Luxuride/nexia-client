@@ -2,7 +2,7 @@
 
 `nexia-client` is an independent, unofficial desktop client for Nextcloud
 servers, built in Rust (Edition 2024) and GTK 4 on top of the Nextcloud Rust SDK
-([`nexia-nextcloud-sdk`](https://github.com/Luxuride/nextcloud-rust-sdk)).
+([`nexia-nextcloud-sdk`](https://github.com/Luxuride/nexia-nextcloud-sdk)).
 
 The relationship is one-directional and the SDK does not know this application
 exists. **This repository is downstream.** It contributes no protocol code: it
