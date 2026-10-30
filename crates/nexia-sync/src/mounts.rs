@@ -255,7 +255,16 @@ impl DesktopSyncCoordinator {
                 if let Some(node) = tree.get(p)
                     && node.is_hydrated()
                 {
-                    total_freed += node.size();
+                    // Only bytes backed by a cache file are actually freed from disk. Counting
+                    // `node.size()` here would add the server-side size of a node that has no
+                    // local file, so clearing the cache would report freeing far more than it did.
+                    if let nexia_nextcloud_sdk::HydrationState::Hydrated(
+                        nexia_nextcloud_sdk::HydratedContent::Path(cached),
+                    ) = &node.hydration
+                        && let Ok(meta) = std::fs::metadata(cached)
+                    {
+                        total_freed += meta.len();
+                    }
                     paths_to_dehydrate.push(p.to_string());
                 }
             }
