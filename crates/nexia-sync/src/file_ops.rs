@@ -1599,6 +1599,35 @@ impl DesktopSyncCoordinator {
             }
         }
 
+        // Last resort: the server exposes no preview and the file carries no embedded EXIF
+        // thumbnail. Without one here the file manager reads the whole original to make its own,
+        // because the FreeDesktop standard has no "do not read this file" answer for a missing
+        // thumbnail. Reading the original once, bounded by size, keeps that cost out of the folder
+        // view and the result is cached for every later listing.
+        if let Some(png_bytes) = self.thumbnail_from_original(remote_path, effective_size).await
+            && tokio::fs::write(&thumb_path, &png_bytes).await.is_ok()
+        {
+            self.install_freedesktop_previews_for_remote_path(remote_path, &png_bytes)
+                .await;
+            if let Ok(mut stats) = self.thumbnail_stats.write() {
+                stats.in_progress = stats.in_progress.saturating_sub(1);
+                stats.completed += 1;
+                stats.active_items.retain(|p| p != remote_path);
+                self.event_bus
+                    .emit(nexia_core::events::DesktopEvent::ThumbnailProgress {
+                        completed: stats.completed,
+                        total: stats.total,
+                        in_progress: stats.in_progress,
+                    });
+            }
+            self.event_bus
+                .emit(nexia_core::events::DesktopEvent::ThumbnailReady {
+                    path: remote_path.to_string(),
+                    cached_path: thumb_path.clone(),
+                });
+            return Ok(Some(thumb_path));
+        }
+
         if let Ok(mut stats) = self.thumbnail_stats.write() {
             stats.in_progress = stats.in_progress.saturating_sub(1);
             stats.failed += 1;
@@ -1617,6 +1646,39 @@ impl DesktopSyncCoordinator {
             });
 
         Ok(None)
+    }
+
+    /// Largest original the client downloads purely to build a thumbnail.
+    const LOCAL_THUMBNAIL_MAX_BYTES: u64 = 12 * 1024 * 1024;
+
+    /// Builds a thumbnail from the original when every server-side route has failed.
+    ///
+    /// This hydrates the file, which the orchestrator persists, so the download is paid once and
+    /// later listings install the cached result instead of repeating it.
+    async fn thumbnail_from_original(&self, remote_path: &str, size: u32) -> Option<Vec<u8>> {
+        let clean = remote_path.trim_matches('/');
+        let entry = self.active_vfs().await.entry(clean).await.ok().flatten()?;
+        if entry.is_directory || entry.size > Self::LOCAL_THUMBNAIL_MAX_BYTES {
+            return None;
+        }
+        if !entry
+            .mime_type
+            .as_deref()
+            .is_some_and(|mime| mime.starts_with("image/"))
+        {
+            return None;
+        }
+
+        tracing::debug!(
+            path = clean,
+            bytes = entry.size,
+            "server preview unavailable, building a thumbnail from the original"
+        );
+        // Boxed because `hydrate_file` fetches a thumbnail for the files it writes, which comes
+        // back here when the server has no preview: the indirection keeps the future finite.
+        let local_path = Box::pin(self.hydrate_file(clean)).await.ok()?;
+        let bytes = tokio::fs::read(&local_path).await.ok()?;
+        downscale_image_to_png(&bytes, size)
     }
 
     /// Batch prefetches thumbnails for multiple remote paths in the background.
@@ -1839,6 +1901,24 @@ async fn fetch_preview_bytes<
     None
 }
 
+/// Decodes an image and re-encodes it as a PNG no larger than `size` on either side.
+///
+/// Returns `None` for anything the enabled decoders cannot read, so an undecodable original is
+/// handled exactly like an absent one.
+fn downscale_image_to_png(bytes: &[u8], size: u32) -> Option<Vec<u8>> {
+    let decoded = image::load_from_memory(bytes).ok()?;
+    let side = size.max(64);
+    let thumbnail = decoded.thumbnail(side, side);
+    let mut png = Vec::new();
+    thumbnail
+        .write_to(
+            &mut std::io::Cursor::new(&mut png),
+            image::ImageFormat::Png,
+        )
+        .ok()?;
+    Some(crate::freedesktop_thumbs::ensure_png_bytes(&png))
+}
+
 fn decode_percent_str(input: &str) -> String {
     let mut bytes = Vec::with_capacity(input.len());
     let mut chars = input.bytes();
@@ -1966,5 +2046,32 @@ mod tests {
         assert!(enqueue_thumbnail_pass(queue, listing("late")).await);
         spawn_runner(queue, tx.clone());
         assert_eq!(rx.recv().await.as_deref(), Some("late"));
+    }
+
+    /// The last-resort thumbnail has to fit the size the caller asked for, otherwise the file
+    /// manager scales it down again every time the folder is opened.
+    #[test]
+    fn a_decoded_original_is_shrunk_to_the_requested_size() {
+        let source = image::RgbImage::new(200, 120);
+        let mut encoded = Vec::new();
+        image::DynamicImage::ImageRgb8(source)
+            .write_to(
+                &mut std::io::Cursor::new(&mut encoded),
+                image::ImageFormat::Png,
+            )
+            .expect("the fixture must encode as PNG");
+
+        let thumbnail = downscale_image_to_png(&encoded, 64).expect("a PNG must decode");
+
+        assert_eq!(&thumbnail[..8], b"\x89PNG\r\n\x1a\n");
+        let decoded = image::load_from_memory(&thumbnail).expect("the thumbnail must decode");
+        assert!(decoded.width() <= 64 && decoded.height() <= 64);
+    }
+
+    /// An original the enabled decoders cannot read must be reported as absent rather than
+    /// installed as a corrupt thumbnail, which the file manager would cache and never retry.
+ #[test]
+    fn an_undecodable_original_yields_no_thumbnail() {
+        assert!(downscale_image_to_png(b"not an image", 64).is_none());
     }
 }
