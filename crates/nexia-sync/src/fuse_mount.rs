@@ -374,7 +374,11 @@ fn is_mountpoint(path: &Path) -> bool {
     let Ok(info) = std::fs::read_to_string("/proc/self/mountinfo") else {
         return false;
     };
-    let wanted = mountinfo_escape(&path.to_string_lossy());
+    // Compare resolved paths: a mount created through a symlinked path (a home under /home that is
+    // really /var/home) is recorded under its target, so a literal comparison would answer `false`
+    // for the mount that was just created.
+    let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let wanted = mountinfo_escape(&resolved.to_string_lossy());
     info.lines()
         .any(|line| line.split_whitespace().nth(4) == Some(wanted.as_str()))
 }
@@ -404,5 +408,20 @@ mod tests {
         // be rejected, so the check has to discriminate rather than always answer one way.
         assert!(is_mountpoint(Path::new("/")));
         assert!(!is_mountpoint(Path::new("/this/path/is/not/a/mountpoint")));
+    }
+
+    #[test]
+    fn is_mountpoint_resolves_symlinked_paths() {
+        let link = std::env::temp_dir().join(format!("nexia-mountpoint-link-{}", std::process::id()));
+        let _ = std::fs::remove_file(&link);
+        if std::os::unix::fs::symlink("/", &link).is_err() {
+            return;
+        }
+
+        // The mount is recorded under `/`, so the check only answers `true` for the link once the
+        // path is resolved before comparing.
+        assert!(is_mountpoint(&link));
+
+        let _ = std::fs::remove_file(&link);
     }
 }
