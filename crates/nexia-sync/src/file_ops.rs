@@ -86,20 +86,12 @@ impl DesktopSyncCoordinator {
             }
         };
 
-        // Sync to running FUSE in-memory tree and persist tree.json
-        if let Ok(tree_snap) = vfs.snapshot().await {
-            if let Some(ref ft_lock) = *self.fuse_tree.read().await
-                && let Ok(mut guard) = ft_lock.write()
-            {
-                *guard = tree_snap.clone();
-            }
-            if let Some(acc) = self.active_account().await {
-                let tree_file = self.account_vfs_dir(&acc.id.0).join("tree.json");
-                if let Ok(json) = serde_json::to_string_pretty(&tree_snap) {
-                    let _ = std::fs::write(&tree_file, json);
-                }
-            }
-        }
+        self.sync_fuse_tree_from_snapshot(
+            vfs.snapshot().await.ok(),
+            summaries.as_slice(),
+            &dav_prefix,
+        )
+        .await;
 
         self.event_bus
             .emit(nexia_core::events::DesktopEvent::VfsTreeUpdated {
@@ -190,20 +182,12 @@ impl DesktopSyncCoordinator {
             .await
             .unwrap_or(0);
 
-        // Sync to running FUSE in-memory tree and persist tree.json
-        if let Ok(tree_snap) = vfs.snapshot().await {
-            if let Some(ref ft_lock) = *self.fuse_tree.read().await
-                && let Ok(mut guard) = ft_lock.write()
-            {
-                *guard = tree_snap.clone();
-            }
-            if let Some(acc) = self.active_account().await {
-                let tree_file = self.account_vfs_dir(&acc.id.0).join("tree.json");
-                if let Ok(json) = serde_json::to_string_pretty(&tree_snap) {
-                    let _ = std::fs::write(&tree_file, json);
-                }
-            }
-        }
+        self.sync_fuse_tree_from_snapshot(
+            vfs.snapshot().await.ok(),
+            summaries.as_slice(),
+            &dav_prefix,
+        )
+        .await;
 
         self.event_bus
             .emit(nexia_core::events::DesktopEvent::VfsTreeUpdated {
@@ -236,6 +220,47 @@ impl DesktopSyncCoordinator {
         }
 
         Ok(inserted)
+    }
+
+    /// Merges the actor's VFS snapshot into the shared in-memory tree a live FUSE mount reads
+    /// from, then persists it as `tree.json`.
+    ///
+    /// Assigning the snapshot wholesale (`*guard = snapshot`) used to drop every file the FUSE
+    /// driver had hydrated since the snapshot was taken, so images that had just been downloaded
+    /// reverted to placeholders and the next read failed. This now adopts the live hydration state
+    /// for unchanged files and only merges the new resources in.
+    async fn sync_fuse_tree_from_snapshot(
+        &self,
+        snapshot: Option<nexia_nextcloud_sdk::VirtualTree>,
+        summaries: &[nexia_nextcloud_sdk::DavResourceSummary],
+        dav_prefix: &str,
+    ) {
+        let Some(mut snapshot) = snapshot else {
+            return;
+        };
+
+        if let Some(ref ft_lock) = *self.fuse_tree.read().await
+            && let Ok(mut guard) = ft_lock.write()
+        {
+            // Keep hydrated payloads that only the running mount knows about.
+            snapshot.adopt_hydration_from(&guard);
+            guard.merge_from_resources(dav_prefix, summaries);
+        }
+
+        if let Some(acc) = self.active_account().await {
+            let tree_file = self.account_vfs_dir(&acc.id.0).join("tree.json");
+            if let Some(ref ft_lock) = *self.fuse_tree.read().await
+                && let Ok(guard) = ft_lock.read()
+            {
+                if let Ok(json) = serde_json::to_string_pretty(&*guard) {
+                    let _ = std::fs::write(&tree_file, json);
+                }
+                return;
+            }
+            if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
+                let _ = std::fs::write(&tree_file, json);
+            }
+        }
     }
 
     /// Queries remote Nextcloud via WebDAV to list child directories beneath `relative_path`.

@@ -2056,44 +2056,156 @@ dependencies = [
 ]
 
 [[package]]
+name = "nexia-nextcloud-activity"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-ocs",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-auth"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "base64",
+ "nexia-nextcloud-core",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-client-config"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-sdk-keyring",
+ "serde",
+ "tracing",
+]
+
+[[package]]
 name = "nexia-nextcloud-core"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+
+[[package]]
+name = "nexia-nextcloud-dav"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-deck"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-auth",
+ "nexia-nextcloud-core",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-goa"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-auth",
+ "nexia-nextcloud-core",
+ "serde",
+ "tracing",
+ "zbus",
+]
+
+[[package]]
+name = "nexia-nextcloud-kaccounts"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-sdk-keyring",
+ "rusqlite",
+ "serde",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-notifications"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-ocs",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-ocs"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-preview"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "image",
+ "nexia-nextcloud-auth",
+ "nexia-nextcloud-core",
+ "tracing",
+]
 
 [[package]]
 name = "nexia-nextcloud-sdk"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
 dependencies = [
+ "nexia-nextcloud-activity",
+ "nexia-nextcloud-auth",
+ "nexia-nextcloud-client-config",
  "nexia-nextcloud-core",
+ "nexia-nextcloud-dav",
+ "nexia-nextcloud-deck",
+ "nexia-nextcloud-goa",
+ "nexia-nextcloud-kaccounts",
+ "nexia-nextcloud-notifications",
+ "nexia-nextcloud-ocs",
+ "nexia-nextcloud-preview",
+ "nexia-nextcloud-sdk-fuse",
+ "nexia-nextcloud-sdk-keyring",
+ "nexia-nextcloud-sdk-orchestrator",
+ "nexia-nextcloud-sdk-ratelimit",
+ "nexia-nextcloud-sdk-request",
+ "nexia-nextcloud-sdk-session",
+ "nexia-nextcloud-sdk-storage",
+ "nexia-nextcloud-sdk-vfs",
  "nexia-nextcloud-search",
- "nextcloud-activity",
- "nextcloud-auth",
- "nextcloud-client-config",
- "nextcloud-dav",
- "nextcloud-deck",
- "nextcloud-goa",
- "nextcloud-kaccounts",
- "nextcloud-notifications",
- "nextcloud-ocs",
- "nextcloud-preview",
- "nextcloud-sdk-fuse",
- "nextcloud-sdk-keyring",
- "nextcloud-sdk-orchestrator",
- "nextcloud-sdk-ratelimit",
- "nextcloud-sdk-request",
- "nextcloud-sdk-session",
- "nextcloud-sdk-storage",
- "nextcloud-sdk-vfs",
- "nextcloud-shares",
- "nextcloud-sync",
- "nextcloud-talk",
- "nextcloud-theming",
- "nextcloud-transport",
- "nextcloud-trashbin",
- "nextcloud-uploads",
- "nextcloud-users",
- "nextcloud-versions",
+ "nexia-nextcloud-shares",
+ "nexia-nextcloud-sync",
+ "nexia-nextcloud-talk",
+ "nexia-nextcloud-theming",
+ "nexia-nextcloud-transport",
+ "nexia-nextcloud-trashbin",
+ "nexia-nextcloud-uploads",
+ "nexia-nextcloud-users",
+ "nexia-nextcloud-versions",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2102,14 +2214,211 @@ dependencies = [
 ]
 
 [[package]]
-name = "nexia-nextcloud-search"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
+name = "nexia-nextcloud-sdk-fuse"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "fuser",
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-sdk-vfs",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-sdk-keyring"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "keyring",
+ "oo7",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-sdk-orchestrator"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
 dependencies = [
  "nexia-nextcloud-core",
- "nextcloud-ocs",
+ "nexia-nextcloud-dav",
+ "nexia-nextcloud-preview",
+ "nexia-nextcloud-sdk-storage",
+ "nexia-nextcloud-sdk-vfs",
+ "nexia-nextcloud-shares",
+ "nexia-nextcloud-sync",
+ "nexia-nextcloud-theming",
+ "notify",
  "serde",
  "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-sdk-ratelimit"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-sdk-request"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-sdk-session"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-auth",
+ "nexia-nextcloud-core",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-sdk-storage"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "getrandom 0.3.4",
+ "nexia-nextcloud-sdk-keyring",
+ "rusqlite",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-sdk-vfs"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-search"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-ocs",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-shares"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-ocs",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-sync"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-talk"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-ocs",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-theming"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-ocs",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-transport"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "futures-util",
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-sdk-ratelimit",
+ "reqwest",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-trashbin"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-auth",
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-dav",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-uploads"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-auth",
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-dav",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-users"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-ocs",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "nexia-nextcloud-versions"
+version = "0.2.1"
+source = "git+https://github.com/Luxuride/nexia-nextcloud-sdk#0f77494a8be6883ef8a8c2a68f23a3995ba354a7"
+dependencies = [
+ "nexia-nextcloud-auth",
+ "nexia-nextcloud-core",
+ "nexia-nextcloud-dav",
  "tracing",
 ]
 
@@ -2147,315 +2456,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uniffi",
-]
-
-[[package]]
-name = "nextcloud-activity"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-ocs",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-auth"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "base64",
- "nexia-nextcloud-core",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-client-config"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-sdk-keyring",
- "serde",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-dav"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-deck"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-auth",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-goa"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-auth",
- "serde",
- "tracing",
- "zbus",
-]
-
-[[package]]
-name = "nextcloud-kaccounts"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-sdk-keyring",
- "rusqlite",
- "serde",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-notifications"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-ocs",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-ocs"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-preview"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "image",
- "nexia-nextcloud-core",
- "nextcloud-auth",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-sdk-fuse"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "fuser",
- "nexia-nextcloud-core",
- "nextcloud-sdk-vfs",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-sdk-keyring"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "keyring",
- "oo7",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-sdk-orchestrator"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-dav",
- "nextcloud-preview",
- "nextcloud-sdk-storage",
- "nextcloud-sdk-vfs",
- "nextcloud-shares",
- "nextcloud-sync",
- "nextcloud-theming",
- "notify",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-sdk-ratelimit"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-sdk-request"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-sdk-session"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-auth",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-sdk-storage"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "getrandom 0.3.4",
- "nextcloud-sdk-keyring",
- "rusqlite",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-sdk-vfs"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-shares"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-ocs",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-sync"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-talk"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-ocs",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-theming"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-ocs",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-transport"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "futures-util",
- "nexia-nextcloud-core",
- "nextcloud-sdk-ratelimit",
- "reqwest",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-trashbin"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-auth",
- "nextcloud-dav",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-uploads"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-auth",
- "nextcloud-dav",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-users"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-ocs",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "nextcloud-versions"
-version = "0.1.3"
-source = "git+https://github.com/Luxuride/nextcloud-rust-sdk#acc491a2d11374d6a7c2970fe0d72fba3f8c4037"
-dependencies = [
- "nexia-nextcloud-core",
- "nextcloud-auth",
- "nextcloud-dav",
- "tracing",
 ]
 
 [[package]]
