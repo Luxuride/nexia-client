@@ -17,6 +17,7 @@ pub mod watcher;
 
 pub use coordinator::{DesktopSyncCoordinator, PriorityPermit, ThumbnailQueueSnapshot};
 pub use error::SyncError;
+pub use file_ops::PreviewInstallSummary;
 pub use file_ops::make_dav_path;
 pub use folder_sync::FolderSyncEngine;
 pub use fuse_mount::DesktopHydrator;

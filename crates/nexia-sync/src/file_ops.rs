@@ -69,10 +69,8 @@ async fn enqueue_thumbnail_pass(
 /// Kept separate from the queue so the timing rules can be exercised without a coordinator: the
 /// caller supplies what running a pass means. `run` is awaited, so a slow pass makes later listings
 /// wait in the queue rather than pile up beside it.
-async fn drain_thumbnail_passes<F, Fut>(
-    queue: &tokio::sync::Mutex<ThumbnailPassQueue>,
-    run: F,
-) where
+async fn drain_thumbnail_passes<F, Fut>(queue: &tokio::sync::Mutex<ThumbnailPassQueue>, run: F)
+where
     F: Fn(ThumbnailPassJob) -> Fut,
     Fut: std::future::Future<Output = ()>,
 {
@@ -125,6 +123,19 @@ async fn drain_thumbnail_passes<F, Fut>(
 /// Constructs a normalized [`DavPath`] from user name and relative path.
 pub fn make_dav_path(user: &str, relative: &str) -> Result<DavPath, SyncError> {
     nexia_nextcloud_sdk::make_dav_path(user, relative).map_err(SyncError::Orchestrator)
+}
+
+/// What a thumbnail install pass did, so its cost can be observed instead of guessed.
+///
+/// A folder that has already been thumbnailed should report `installed == 0`: every file is
+/// skipped without decoding the source image. A non-zero `installed` on a folder that has been
+/// opened before is the signal that something is invalidating the cache entries.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PreviewInstallSummary {
+    /// Files that had at least one mount target rewritten.
+    pub installed: usize,
+    /// Files left untouched because every mount target was already current.
+    pub skipped: usize,
 }
 
 impl DesktopSyncCoordinator {
@@ -1343,7 +1354,8 @@ impl DesktopSyncCoordinator {
         remote_path: &str,
         png_bytes: &[u8],
     ) {
-        self.install_freedesktop_previews_batch(&[(remote_path.to_string(), png_bytes.to_vec())])
+        let _ = self
+            .install_freedesktop_previews_batch(&[(remote_path.to_string(), png_bytes.to_vec())])
             .await;
     }
 
@@ -1358,9 +1370,13 @@ impl DesktopSyncCoordinator {
     ///
     /// Two things keep it cheap: the roots are looked up once per batch, and a target whose
     /// thumbnails are already present is skipped before any decoding happens.
-    pub async fn install_freedesktop_previews_batch(&self, items: &[(String, Vec<u8>)]) {
+    pub async fn install_freedesktop_previews_batch(
+        &self,
+        items: &[(String, Vec<u8>)],
+    ) -> PreviewInstallSummary {
+        let mut summary = PreviewInstallSummary::default();
         if items.is_empty() {
-            return;
+            return summary;
         }
 
         let fuse_mp = self.fuse_mountpoint().await;
@@ -1414,14 +1430,18 @@ impl DesktopSyncCoordinator {
             // for a folder that has been opened before, and decoding every source image to throw
             // the result away is what made reopening such a folder expensive.
             let mut png: Option<Vec<u8>> = None;
+            let mut touched = false;
+            let mut examined = 0usize;
             for target in targets {
                 if !target.exists() {
                     continue;
                 }
+                examined += 1;
                 if crate::freedesktop_thumbs::freedesktop_thumbnail_is_current(&target) {
                     continue;
                 }
-                let png = png.get_or_insert_with(|| crate::freedesktop_thumbs::ensure_png_bytes(png_bytes));
+                let png = png
+                    .get_or_insert_with(|| crate::freedesktop_thumbs::ensure_png_bytes(png_bytes));
                 // The standard keys a thumbnail on the file's own modification time, so the value
                 // that makes it valid is the one on disk rather than the remote date.
                 let target_mtime = target
@@ -1437,8 +1457,17 @@ impl DesktopSyncCoordinator {
                     target_mtime,
                     crate::THUMBNAIL_SOFTWARE,
                 );
+                touched = true;
+            }
+
+            if touched {
+                summary.installed += 1;
+            } else if examined > 0 {
+                summary.skipped += 1;
             }
         }
+
+        summary
     }
 
     /// Fetches or retrieves a cached thumbnail for `remote_path`.
@@ -1653,8 +1682,20 @@ impl DesktopSyncCoordinator {
         // Install the already-cached thumbnails in one pass: the mount roots are resolved once and
         // up-to-date entries are skipped before any decoding, instead of paying both costs per file
         // while the file manager is still populating the folder.
-        self.install_freedesktop_previews_batch(&cached_installs)
+        let install_started = Instant::now();
+        let summary = self
+            .install_freedesktop_previews_batch(&cached_installs)
             .await;
+        if !cached_installs.is_empty() {
+            tracing::debug!(
+                cached = cached_installs.len(),
+                installed = summary.installed,
+                skipped = summary.skipped,
+                missing = missing_items.len(),
+                elapsed_ms = install_started.elapsed().as_millis() as u64,
+                "Thumbnail pass installed the cached previews"
+            );
+        }
 
         if missing_items.is_empty() {
             return;
