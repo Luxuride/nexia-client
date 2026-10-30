@@ -151,7 +151,7 @@ impl DesktopSyncCoordinator {
         let vfs_dir = self.account_vfs_dir(&account_id_str);
         let tree_file = vfs_dir.join("tree.json");
 
-        let tree = if tree_file.exists() {
+        let mut tree = if tree_file.exists() {
             std::fs::read_to_string(&tree_file)
                 .ok()
                 .and_then(|data| serde_json::from_str(&data).ok())
@@ -159,6 +159,17 @@ impl DesktopSyncCoordinator {
         } else {
             VirtualTree::new("Nextcloud")
         };
+
+        // Migrate a tree written by an older build: payloads were serialized inline as JSON number
+        // arrays and one account's file reached 483 MB, which made start-up parse half a gigabyte.
+        // Spilling the payloads into the cache and rewriting the file happens once.
+        if tree.has_in_memory_payloads() {
+            tracing::info!(
+                path = %tree_file.display(),
+                "compacting virtual tree saved by an older build"
+            );
+            let _ = self.persist_account_tree(&account_id_str, &mut tree);
+        }
 
         let shared_tree = Arc::new(RwLock::new(tree));
         *tree_guard = Some(shared_tree.clone());

@@ -275,15 +275,17 @@ impl DesktopSyncCoordinator {
         };
 
         if dehydrated_any {
-            // Persist dehydrated tree to disk
+            // Persist the dehydrated tree, then drop the payload files it used to reference.
+            // Without this the cache directory keeps growing: dehydrating a node clears the
+            // reference but leaves the spilled file behind.
             if let Some(account) = self.active_account().await {
-                let tree_file = self.account_vfs_dir(&account.id.0).join("tree.json");
-                let json_data = shared_tree
-                    .read()
-                    .ok()
-                    .and_then(|g| serde_json::to_string_pretty(&*g).ok());
-                if let Some(data) = json_data {
-                    let _ = tokio::fs::write(&tree_file, data).await;
+                let account_id = account.id.0.clone();
+                if let Ok(mut guard) = shared_tree.write() {
+                    let _ = self.persist_account_tree(&account_id, &mut guard);
+                }
+                let content_dir = self.account_content_dir(&account_id);
+                if content_dir.exists() {
+                    let _ = tokio::fs::remove_dir_all(&content_dir).await;
                 }
             }
         }

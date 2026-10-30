@@ -373,18 +373,15 @@ impl DesktopSyncCoordinator {
         }
 
         if let Some(acc) = self.active_account().await {
-            let tree_file = self.account_vfs_dir(&acc.id.0).join("tree.json");
+            // Persist the live tree, not the snapshot: the mount may have hydrated files while the
+            // refresh was running, and those payloads must be spilled into the account cache.
             if let Some(ref ft_lock) = *self.fuse_tree.read().await
-                && let Ok(guard) = ft_lock.read()
+                && let Ok(mut guard) = ft_lock.write()
             {
-                if let Ok(json) = serde_json::to_string_pretty(&*guard) {
-                    let _ = std::fs::write(&tree_file, json);
-                }
+                let _ = self.persist_account_tree(&acc.id.0, &mut guard);
                 return;
             }
-            if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
-                let _ = std::fs::write(&tree_file, json);
-            }
+            let _ = self.persist_account_tree(&acc.id.0, &mut snapshot);
         }
     }
 
@@ -1317,9 +1314,7 @@ impl DesktopSyncCoordinator {
         };
 
         let count = tree.populate_from_resources(&dav_prefix, &summaries);
-        if let Ok(json) = serde_json::to_string_pretty(&tree) {
-            let _ = std::fs::write(&tree_file, json);
-        }
+        let _ = self.persist_account_tree(&account.id.0, &mut tree);
 
         // 2. If this is the active account, also sync to orchestrator and FUSE in-memory tree:
         let is_active = self

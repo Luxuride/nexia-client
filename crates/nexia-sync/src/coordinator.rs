@@ -338,6 +338,37 @@ impl DesktopSyncCoordinator {
         self.account_dir(account_id).join("vfs")
     }
 
+    /// Returns the directory holding downloaded file payloads for a specific account.
+    pub fn account_content_dir(&self, account_id: &str) -> PathBuf {
+        self.account_dir(account_id).join("content")
+    }
+
+    /// Writes a virtual tree to `accounts/<id>/vfs/tree.json`.
+    ///
+    /// Payloads are spilled into the account content directory first: the tree then stores a cache
+    /// path instead of the file bytes, so `tree.json` stays metadata-sized (it previously reached
+    /// 483 MB for 1046 files) and the downloaded content survives a restart as plain files.
+    pub fn persist_account_tree(
+        &self,
+        account_id: &str,
+        tree: &mut nexia_nextcloud_sdk::VirtualTree,
+    ) -> std::io::Result<()> {
+        let vfs_dir = self.account_vfs_dir(account_id);
+        std::fs::create_dir_all(&vfs_dir)?;
+
+        if let Err(err) = tree.spill_hydrated_bytes(&self.account_content_dir(account_id)) {
+            // Persisting metadata is still worthwhile: an unspilled payload only means that file is
+            // fetched again after a restart.
+            tracing::debug!(error = %err, "could not spill hydrated payloads before persisting tree");
+        }
+
+        let json = serde_json::to_string_pretty(&*tree).map_err(std::io::Error::other)?;
+        // Write then rename, so an interrupted save cannot leave a half-written tree behind.
+        let temp_file = vfs_dir.join("tree.json.tmp");
+        std::fs::write(&temp_file, json)?;
+        std::fs::rename(&temp_file, vfs_dir.join("tree.json"))
+    }
+
     /// Returns the mount cache directory for a specific account.
     pub fn account_mounts_dir(&self, account_id: &str) -> PathBuf {
         self.account_dir(account_id).join("mounts")
@@ -370,10 +401,6 @@ impl DesktopSyncCoordinator {
             .as_ref()
             .map(|a| a.id.0.clone())
             .unwrap_or_else(|| "default".to_string());
-        let active_user = active_account
-            .as_ref()
-            .map(|a| a.credentials.username.clone())
-            .unwrap_or_else(|| "default".to_string());
 
         let handle = self
             .orchestrator_handle
@@ -397,17 +424,20 @@ impl DesktopSyncCoordinator {
                     .join("app-default-vfs")
                     .join("vfs")
                     .join("tree.json");
-                if legacy_tree.exists() {
-                    let _ = std::fs::copy(&legacy_tree, &tree_file);
-                } else {
-                    let tree = VirtualTree::new("Nexia");
-                    if let Ok(json) = serde_json::to_string_pretty(&tree) {
-                        let _ = std::fs::write(&tree_file, json);
-                    }
-                }
+                // Adopt a tree written by an older build, migrating its inline payloads into the
+                // account cache. Copying the file instead would carry hundreds of megabytes of
+                // embedded content forward.
+                let mut tree = legacy_tree
+                    .exists()
+                    .then(|| std::fs::read_to_string(&legacy_tree).ok())
+                    .flatten()
+                    .and_then(|data| serde_json::from_str::<VirtualTree>(&data).ok())
+                    .unwrap_or_else(|| VirtualTree::new("Nexia"));
+                let _ = self.persist_account_tree(&account_id_str, &mut tree);
             }
 
-            let mut desc = MountDescriptor::new(&active_user, "/", vfs_dir, MountMode::VirtualVfs);
+            let mut desc =
+                MountDescriptor::new(&account_id_str, "/", vfs_dir, MountMode::VirtualVfs);
             desc.id = initial_id.clone();
             desc.display_name = Some("Application Virtual Drive".to_string());
             let registered = handle
