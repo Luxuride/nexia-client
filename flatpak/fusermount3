@@ -1,0 +1,37 @@
+#!/bin/sh
+# Flatpak FUSE shim: delegate mounting to the host's setuid-root fusermount3.
+#
+# Inside the sandbox there is no fusermount3 and there cannot be one: the mount
+# helper must be setuid root, and Flatpak never ships setuid binaries in /app.
+# `fuser` opens /dev/fuse itself and asks the kernel to mount; the kernel answers
+# EPERM for an unprivileged process, so `fuser` falls back to spawning
+# `fusermount3` from PATH. This script is that fallback target: it re-executes the
+# host's real helper through `flatpak-spawn --host`, forwarding the communication
+# socket `fuser` created (`_FUSE_COMMFD`) so the helper can hand the /dev/fuse file
+# descriptor back into the sandbox.
+#
+# Requirements on the app: `--device=all` (so /dev/fuse exists and opens) and
+# `--talk-name=org.freedesktop.Flatpak` (so flatpak-spawn may reach the host).
+
+if [ -z "$_FUSE_COMMFD" ]; then
+    FD_ARGS=
+else
+    FD_ARGS="--env=_FUSE_COMMFD=${_FUSE_COMMFD} --forward-fd=${_FUSE_COMMFD}"
+fi
+
+# Older libfuse hands the socket over as fd 3 instead of naming it in the
+# environment; forward that too when it exists and is not already covered above.
+if [ -e /proc/self/fd/3 ] && [ 3 != "$_FUSE_COMMFD" ]; then
+    FD_ARGS="$FD_ARGS --forward-fd=3"
+fi
+
+if flatpak-spawn --host sh -c 'command -v fusermount3' > /dev/null 2>&1; then
+    exec flatpak-spawn --host --forward-fd=1 --forward-fd=2 $FD_ARGS fusermount3 "$@"
+fi
+
+if flatpak-spawn --host sh -c 'command -v fusermount' > /dev/null 2>&1; then
+    exec flatpak-spawn --host --forward-fd=1 --forward-fd=2 $FD_ARGS fusermount "$@"
+fi
+
+echo "fusermount3 shim: neither fusermount3 nor fusermount is available on the host" >&2
+exit 1

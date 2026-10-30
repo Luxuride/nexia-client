@@ -160,7 +160,7 @@ before your code is even compiled.
 ### Flatpak bundle
 
 `flatpak/eu.luxuride.nexia.yml` builds the release bundle on
-`org.gnome.Platform//49`. Two things about that manifest are load-bearing:
+`org.gnome.Platform//49`. Four things about that manifest are load-bearing:
 
 - **`flatpak/cargo-sources.json` is generated, never committed.** It vendors
 every crate in `Cargo.lock`, including the `nexia-nextcloud-sdk` git dependency,
@@ -179,6 +179,33 @@ on a plain Ubuntu runner, so the job runs in
 `ghcr.io/flathub-infra/flatpak-github-actions:gnome-49` with `--privileged`
 (bwrap needs it). The GNOME minor version in the image tag must match
 `runtime-version` in the manifest.
+
+- **System-account discovery and FUSE need bus names and devices that Flatpak
+does not grant by default.** `finish-args` therefore carries three entries that
+are not cosmetic:
+
+  | Entry | Why |
+  | --- | --- |
+  | `--talk-name=org.gnome.OnlineAccounts` | `DesktopSso` queries GOA over the session bus. Without it the call fails with `ServiceUnknown` and discovery silently returns no accounts — the app looks signed out even though GNOME Settings lists an account. |
+  | `--device=all` | FUSE needs `/dev/fuse` to exist and be openable. Flatpak has no `--device=fuse`, and `--filesystem=/dev/fuse` is rejected (`has unsupported type`), so `all` is the only way to expose it. |
+  | `--talk-name=org.freedesktop.Flatpak` | Permits `flatpak-spawn --host`, which the `fusermount3` shim below uses. |
+
+- **`flatpak/fusermount3` is a shim, and the app ships it as `fusermount3` on
+`PATH`.** The real helper must be setuid root, and Flatpak never ships setuid
+binaries in `/app`, so the sandbox has no usable `fusermount3`. `fuser` opens
+`/dev/fuse` and asks the kernel to mount directly; the kernel answers `EPERM` for
+an unprivileged process, and `fuser` then falls back to spawning `fusermount3`
+from `PATH`. The shim is that fallback target: it re-executes the *host's*
+helper through `flatpak-spawn --host`, forwarding `_FUSE_COMMFD` and the extra fd
+so the helper can pass the `/dev/fuse` descriptor back into the sandbox. It is
+installed **first** on `PATH` so `fuser`'s probe finds it before giving up.
+
+  Two consequences worth knowing when debugging. `--mount-vfs` needs a
+  mountpoint the app can see, which `--filesystem=host` already provides; a path
+  outside the sandbox fails with `No such file or directory (os error 2)` from
+  `mount_fuse_folder`, which reads like a missing directory rather than a sandbox
+  denial. And the shim needs `fusermount3` (or `fusermount`) on the *host*: a
+  host without `fuse3` installed fails the same way.
 
 Build and bundle locally:
 
@@ -215,3 +242,6 @@ eu.luxuride.nexia master`.
 | Config edits appear to do nothing | `sync_folders`, `sync_interval_secs`, `global.autostart` and `global.start_minimized` are persisted but not read — see [`CONFIGURATION.md`](CONFIGURATION.md) §3. |
 | `--set-mount-mode` does nothing and prints no error | It takes exactly **two** values (`--set-mount-mode <MOUNT_ID> Fuse`; `num_args = 2`). An **unknown mount id is a silent no-op** — `update_sync_mount_mode` only emits `SyncMountUpdated` inside `if let Some(target) = ... find(|m| m.id == id)`, and returns `Ok(())` otherwise. An unknown mode string is also accepted: it is stored verbatim, and anything that is not `"BidirectionalSync"` is mapped to `MountMode::VirtualVfs`. |
 | `--mount-vfs` leaves a stale mountpoint behind | An interrupted run can leave the FUSE mount attached. Unmount with `fusermount3 -u -z <MOUNTPOINT>`; the coordinator also tries this itself before mounting. |
+| GNOME Online Accounts are configured but the app shows no account | The sandbox is missing `--talk-name=org.gnome.OnlineAccounts`; GOA answers `ServiceUnknown` and `DesktopSso::discover_accounts()` returns nothing. Verify from inside the sandbox with `gdbus call --session --dest org.gnome.OnlineAccounts --object-path /org/gnome/OnlineAccounts --method org.freedesktop.DBus.ObjectManager.GetManagedObjects`. |
+| `--mount-vfs` in the Flatpak fails with `No such file or directory (os error 2)` | Two distinct causes, same message. Either the mountpoint is outside the sandbox's view (use a path under `$HOME`, which `--filesystem=host` shares), or the sandbox has no `fusermount3` because `flatpak/fusermount3` was not installed on `PATH`/`--talk-name=org.freedesktop.Flatpak` is missing. Check `flatpak run --command=sh eu.luxuride.nexia -c 'command -v fusermount3'`. |
+| `--mount-vfs` in the Flatpak fails even with the shim installed | `fuser` only reaches the shim after the kernel refuses a direct mount, so `/dev/fuse` must be openable first: check that `finish-args` still has `--device=all` and that the host has `fuse3` installed. |

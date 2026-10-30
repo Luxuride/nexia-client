@@ -14,9 +14,15 @@ finish-args:
   - --filesystem=host
   - --filesystem=xdg-run/keyring
   - --filesystem=xdg-config/autostart:create
+  # /dev/fuse must exist and be openable for the virtual filesystem (VFS) mount.
+  - --device=all
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.secrets
   - --talk-name=org.kde.ksecretservice
+  # System-account discovery reads GNOME Online Accounts over the session bus.
+  - --talk-name=org.gnome.OnlineAccounts
+  # The FUSE shim re-executes the host fusermount3 through flatpak-spawn.
+  - --talk-name=org.freedesktop.Flatpak
   - --own-name=eu.luxuride.nexia
 
 build-options:
@@ -34,6 +40,11 @@ modules:
       - |
         install -Dm755 target/release/nexia-client \
           ${FLATPAK_DEST}/bin/nexia-client
+      # Put the FUSE shim first on PATH so `fuser`'s fusermount auto-detection
+      # finds it before it gives up on the sandbox.
+      - |
+        install -Dm755 flatpak/fusermount3 \
+          ${FLATPAK_DEST}/bin/fusermount3
       - |
         install -Dm644 data/${FLATPAK_ID}.desktop \
           ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
