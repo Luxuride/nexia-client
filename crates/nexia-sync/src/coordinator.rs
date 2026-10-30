@@ -60,6 +60,9 @@ pub struct DesktopSyncCoordinator {
     pub(crate) fuse_tree:
         Arc<tokio::sync::RwLock<Option<Arc<std::sync::RwLock<nexia_nextcloud_sdk::VirtualTree>>>>>,
     pub(crate) fuse_mountpoint: Arc<tokio::sync::RwLock<Option<PathBuf>>>,
+    /// Mountpoints with a mount attempt in flight. Mounting tears down the live session first, so
+    /// two overlapping callers would otherwise stack a second session on a mounted path.
+    pub(crate) fuse_mounting: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     pub(crate) last_root_etags: Arc<tokio::sync::RwLock<std::collections::HashMap<String, String>>>,
     pub(crate) priority_ops_counter: Arc<std::sync::atomic::AtomicUsize>,
     pub(crate) priority_ops_notify: Arc<tokio::sync::Notify>,
@@ -175,6 +178,7 @@ impl DesktopSyncCoordinator {
             fuse_sessions: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
             fuse_tree: Arc::new(tokio::sync::RwLock::new(None)),
             fuse_mountpoint: Arc::new(tokio::sync::RwLock::new(None)),
+            fuse_mounting: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             last_root_etags: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             priority_ops_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             priority_ops_notify: Arc::new(tokio::sync::Notify::new()),

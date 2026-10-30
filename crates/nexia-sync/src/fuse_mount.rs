@@ -192,6 +192,53 @@ impl DesktopSyncCoordinator {
             })?;
         }
 
+        // A live session at this path is already serving reads; remounting it would drop every
+        // cached block and start the kernel over on a directory that is in use.
+        if self.fuse_sessions.lock().await.contains_key(mount_id) && is_mountpoint(&mp) {
+            debug!(
+                mount_id,
+                mountpoint = %mp.display(),
+                "FUSE mount already active, skipping remount"
+            );
+            return Ok(());
+        }
+
+        // Mounting tears down whatever is live before mounting again, so two overlapping callers
+        // (the start-up refresh and the account bootstrap both mount the same mount_id) would
+        // unmount and mount twice and leave a second session stacked on a mounted path. The claim
+        // is taken and released without holding the lock across an await.
+        let claim = mp.to_string_lossy().to_string();
+        {
+            let mut claiming = self
+                .fuse_mounting
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !claiming.insert(claim.clone()) {
+                debug!(
+                    mount_id,
+                    mountpoint = %mp.display(),
+                    "FUSE mount already in progress, skipping duplicate request"
+                );
+                return Ok(());
+            }
+        }
+
+        let result = self.mount_claimed_fuse_folder(mount_id, remote_path, &mp).await;
+
+        self.fuse_mounting
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&claim);
+        result
+    }
+
+    /// Mounts `mp` for `mount_id`. The caller has already claimed `mp` in `fuse_mounting`.
+    async fn mount_claimed_fuse_folder(
+        &self,
+        mount_id: &str,
+        remote_path: &str,
+        mp: &Path,
+    ) -> Result<(), SyncError> {
         // Unmount any existing session for this mount_id first
         self.unmount_fuse_folder(mount_id).await;
         let _ = std::process::Command::new("fusermount3")
@@ -205,7 +252,7 @@ impl DesktopSyncCoordinator {
             driver = driver.with_runtime(rt);
         }
 
-        match mount_virtual_fs(driver, &mp) {
+        match mount_virtual_fs(driver, mp) {
             Ok(session) => {
                 info!(
                     mount_id,
@@ -232,7 +279,7 @@ impl DesktopSyncCoordinator {
                     "Failed to mount FUSE virtual folder"
                 );
                 Err(SyncError::LocalIo {
-                    path: mp,
+                    path: mp.to_path_buf(),
                     context: "mounting FUSE filesystem".to_string(),
                     source: e,
                 })
@@ -319,5 +366,43 @@ impl DesktopSyncCoordinator {
                 .map(|h| h.join("Nexia"))
                 .unwrap_or_else(|| self.cache_dir().join("mount"))
         }
+    }
+}
+
+/// Returns `true` if `path` is currently a mountpoint according to `/proc/self/mountinfo`.
+fn is_mountpoint(path: &Path) -> bool {
+    let Ok(info) = std::fs::read_to_string("/proc/self/mountinfo") else {
+        return false;
+    };
+    let wanted = mountinfo_escape(&path.to_string_lossy());
+    info.lines()
+        .any(|line| line.split_whitespace().nth(4) == Some(wanted.as_str()))
+}
+
+/// Escapes a path the way `/proc/self/mountinfo` does, so it can be compared against its fields.
+fn mountinfo_escape(path: &str) -> String {
+    path.replace('\\', "\\134")
+        .replace(' ', "\\040")
+        .replace('\t', "\\011")
+        .replace('\n', "\\012")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mountinfo_escape_matches_kernel_notation() {
+        assert_eq!(mountinfo_escape("/home/lux/Pictures/Nextcloud"), "/home/lux/Pictures/Nextcloud");
+        assert_eq!(mountinfo_escape("/media/My Disk"), "/media/My\\040Disk");
+        assert_eq!(mountinfo_escape("/a\\b"), "/a\\134b");
+    }
+
+    #[test]
+    fn is_mountpoint_accepts_the_root_filesystem() {
+        // `/` is a mountpoint on any Linux system, and a path that is definitely not mounted must
+        // be rejected, so the check has to discriminate rather than always answer one way.
+        assert!(is_mountpoint(Path::new("/")));
+        assert!(!is_mountpoint(Path::new("/this/path/is/not/a/mountpoint")));
     }
 }
