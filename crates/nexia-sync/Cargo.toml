@@ -19,7 +19,9 @@ chrono.workspace = true
 uuid.workspace = true
 dirs = "7.0"
 notify = "8.0.0"
-image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+# The last-resort thumbnail path decodes the original itself, so every format the server may
+# refuse to preview has to be decodable here as well.
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 
 [dev-dependencies]
 # `test-util` provides the paused clock the thumbnail pass scheduler is tested against.

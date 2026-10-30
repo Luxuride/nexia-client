@@ -1604,7 +1604,9 @@ impl DesktopSyncCoordinator {
         // because the FreeDesktop standard has no "do not read this file" answer for a missing
         // thumbnail. Reading the original once, bounded by size, keeps that cost out of the folder
         // view and the result is cached for every later listing.
-        if let Some(png_bytes) = self.thumbnail_from_original(remote_path, effective_size).await
+        if let Some(png_bytes) = self
+            .thumbnail_from_original(remote_path, effective_size)
+            .await
             && tokio::fs::write(&thumb_path, &png_bytes).await.is_ok()
         {
             self.install_freedesktop_previews_for_remote_path(remote_path, &png_bytes)
@@ -1911,10 +1913,7 @@ fn downscale_image_to_png(bytes: &[u8], size: u32) -> Option<Vec<u8>> {
     let thumbnail = decoded.thumbnail(side, side);
     let mut png = Vec::new();
     thumbnail
-        .write_to(
-            &mut std::io::Cursor::new(&mut png),
-            image::ImageFormat::Png,
-        )
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
         .ok()?;
     Some(crate::freedesktop_thumbs::ensure_png_bytes(&png))
 }
@@ -2070,8 +2069,21 @@ mod tests {
 
     /// An original the enabled decoders cannot read must be reported as absent rather than
     /// installed as a corrupt thumbnail, which the file manager would cache and never retry.
- #[test]
+    #[test]
     fn an_undecodable_original_yields_no_thumbnail() {
         assert!(downscale_image_to_png(b"not an image", 64).is_none());
+    }
+
+    /// GIF and WebP are the formats a server most often declines to preview, so a decoder has to be
+    /// compiled in here too; without one the fallback silently fails and the file manager renders
+    /// the whole original instead.
+    #[test]
+    fn a_gif_original_is_also_thumbnailed() {
+        // The smallest valid GIF: 1x1 pixel, single frame.
+        const GIF: &[u8] = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;";
+
+        let thumbnail = downscale_image_to_png(GIF, 64).expect("a GIF must decode");
+
+        assert_eq!(&thumbnail[..8], b"\x89PNG\r\n\x1a\n");
     }
 }
