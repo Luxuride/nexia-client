@@ -73,6 +73,10 @@ pub struct DesktopSyncCoordinator {
     /// Active account id as of the last successful look at the configuration, used by the
     /// synchronous cache-path helpers when the configuration lock is momentarily held.
     last_active_account: Arc<std::sync::RwLock<Option<String>>>,
+    /// Per-mount locks serialising journal load-modify-save, so concurrent hydrations cannot
+    /// overwrite each other's entries.
+    journal_locks:
+        Arc<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<()>>>>>,
 }
 
 /// RAII guard representing an active high-priority operation (hydration, sync, directory listing).
@@ -231,6 +235,7 @@ impl DesktopSyncCoordinator {
             cancelled_mounts: Arc::new(std::sync::RwLock::new(std::collections::HashSet::new())),
             sync_claims: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             last_active_account: Arc::new(std::sync::RwLock::new(None)),
+            journal_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         };
 
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
@@ -473,6 +478,19 @@ impl DesktopSyncCoordinator {
     /// Returns the mount cache directory for a specific account.
     pub fn account_mounts_dir(&self, account_id: &str) -> PathBuf {
         self.account_dir(account_id).join("mounts")
+    }
+
+    /// Returns the lock that serialises journal load-modify-save for one mount.
+    ///
+    /// Several hydrations can run at once for the same mount, and the journal is a whole-file
+    /// read-modify-write: without a per-mount lock two of them would save over each other and drop
+    /// an entry, which the next cycle reads as "unknown file on the server".
+    pub(crate) fn journal_lock(&self, mount_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = match self.journal_locks.lock() {
+            Ok(locks) => locks,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        locks.entry(mount_id.to_string()).or_default().clone()
     }
 
     /// Returns the canonical sync journal path for a specific mount.

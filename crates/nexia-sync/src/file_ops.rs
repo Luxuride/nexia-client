@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::time::Instant;
 
-use crate::coordinator::DesktopSyncCoordinator;
+use crate::coordinator::{DesktopSyncCoordinator, ThumbnailQueueSnapshot};
 use crate::error::SyncError;
 use nexia_core::config::SyncMode;
 use nexia_core::events::DesktopEvent;
@@ -453,6 +453,124 @@ impl DesktopSyncCoordinator {
         });
     }
 
+    /// Writes a hydration payload beside its destination and renames it into place.
+    ///
+    /// Writing in place leaves a truncated file behind if the process dies mid-write, and a symlink
+    /// at the destination sends the payload wherever it points — a link planted in a shared sync
+    /// folder would redirect it outside the folder. The temporary file is created in the same
+    /// directory so the rename cannot cross a filesystem boundary.
+    fn write_payload_atomic(target: &std::path::Path, bytes: &[u8]) -> Result<(), SyncError> {
+        use std::io::Write as _;
+
+        match std::fs::symlink_metadata(target) {
+            Ok(meta) if !meta.is_file() => {
+                return Err(SyncError::InvalidPath(format!(
+                    "refusing to hydrate {}: the destination is not a regular file",
+                    target.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(SyncError::LocalIo {
+                    path: target.to_path_buf(),
+                    context: "inspecting the hydration destination".to_string(),
+                    source,
+                });
+            }
+        }
+
+        let partial = Self::partial_path(target);
+        let result = (|| -> std::io::Result<()> {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&partial)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&partial, target)
+        })();
+        if result.is_err() {
+            let _ = std::fs::remove_file(&partial);
+        }
+        result.map_err(|source| SyncError::LocalIo {
+            path: target.to_path_buf(),
+            context: "writing the hydration payload".to_string(),
+            source,
+        })
+    }
+
+    /// Path of the temporary file a payload is written to before the rename.
+    fn partial_path(target: &std::path::Path) -> PathBuf {
+        let name = target
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "payload".to_string());
+        target.with_file_name(format!(".{name}.nexia-part"))
+    }
+
+    /// Reads the current remote ETag of a file, if the server reports one.
+    ///
+    /// A hydration records the ETag it wrote so the reconciler can distinguish "unchanged since we
+    /// hydrated it" from "changed on the server"; without one every hydrated file is downloaded
+    /// again on the next cycle. A DAV `GET` carries no ETag, so this costs one small `PROPFIND`.
+    async fn remote_etag<T, A>(
+        dav_client: &nexia_nextcloud_sdk::DavClient<'_, T, A>,
+        dav_path: &DavPath,
+    ) -> Option<String>
+    where
+        T: nexia_nextcloud_sdk::Transport,
+        A: nexia_nextcloud_sdk::AuthProvider,
+    {
+        let body = PropfindBody::new([DavProperty::Etag]);
+        let resources = dav_client
+            .propfind(dav_path, Depth::Zero, &body)
+            .await
+            .ok()?;
+        resources.first().and_then(|resource| resource.etag.clone())
+    }
+
+    /// Records one hydration in a mount's journal.
+    ///
+    /// The journal is the sync engine's baseline: it is loaded, mutated and written under a
+    /// per-mount lock so two concurrent hydrations cannot drop each other's entry, and a load
+    /// failure is reported instead of being overwritten by an empty journal on the next save.
+    async fn record_journal_hydration(
+        &self,
+        mount: &nexia_nextcloud_sdk::StoredSyncMount,
+        relative_path: &str,
+        target: &std::path::Path,
+        size: u64,
+        etag: Option<String>,
+    ) -> Result<(), SyncError> {
+        let mtime = std::fs::metadata(target)
+            .and_then(|meta| meta.modified())
+            .unwrap_or_else(|_| std::time::SystemTime::now());
+        let journal_path = self.mount_journal_path(&mount.account_id, &mount.id);
+        let lock = self.journal_lock(&mount.id);
+        let _guard = lock.lock().await;
+        let mut journal =
+            nexia_nextcloud_sdk::SyncJournal::load_from_file(&journal_path).map_err(|source| {
+                SyncError::Journal(format!(
+                    "load the sync journal at {} before recording a hydration: {source}",
+                    journal_path.display()
+                ))
+            })?;
+        let mut entry = nexia_nextcloud_sdk::JournalEntry::new(relative_path, size, mtime, false);
+        if let Some(etag) = etag {
+            entry = entry.with_remote_etag(etag);
+        }
+        journal.record(entry);
+        journal.save_to_file(&journal_path).map_err(|source| {
+            SyncError::Journal(format!(
+                "save the sync journal at {} after recording a hydration: {source}",
+                journal_path.display()
+            ))
+        })
+    }
+
     /// Performs on-demand hydration for a virtual file, downloading via SDK or using local cache.
     pub async fn hydrate_file(&self, remote_path: &str) -> Result<PathBuf, SyncError> {
         let _priority = self.priority_permit();
@@ -489,46 +607,53 @@ impl DesktopSyncCoordinator {
             }
         };
 
-        // If this file matches a local folder sync mount, hydrate the local file directly
+        // If this file matches a local folder sync mount, hydrate the local file directly. A FUSE
+        // mount is skipped: its files are served by the driver, and writing through the mountpoint
+        // here would re-enter the driver from outside it.
         for mount in self.sync_mounts().await {
-            if Self::is_internal_vfs(&mount.id) || !mount.enabled {
+            if Self::is_internal_vfs(&mount.id) || !mount.enabled || mount.mode == "Fuse" {
                 continue;
             }
-            if let Some(rel_path) = mount_relative_path(clean_sub, &mount.remote_path) {
-                let rel_clean = rel_path.trim_start_matches('/');
-                let target_file = PathBuf::from(&mount.local_target).join(rel_clean);
-                if let Some(parent) = target_file.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                if mount.mode != "Fuse" && std::fs::write(&target_file, &bytes).is_ok() {
-                    let journal_path = self.mount_journal_path(&mount.account_id, &mount.id);
-                    let mut journal =
-                        nexia_nextcloud_sdk::SyncJournal::load_from_file(&journal_path)
-                            .unwrap_or_else(|_| nexia_nextcloud_sdk::SyncJournal::new());
-                    let mtime = std::fs::metadata(&target_file)
-                        .and_then(|m| m.modified())
-                        .unwrap_or_else(|_| std::time::SystemTime::now());
-                    let canonical_rel = format!("/{}", rel_clean.trim_matches('/'));
-                    journal.record(nexia_nextcloud_sdk::JournalEntry::new(
-                        &canonical_rel,
-                        byte_len,
-                        mtime,
-                        false,
-                    ));
-                    let _ = journal.save_to_file(&journal_path);
-                    nexia_nextcloud_sdk::remove_freedesktop_fail_marker(&target_file);
-                    self.spawn_thumbnail_fetch(clean.clone());
-                    self.event_bus.emit(DesktopEvent::FileTransferCompleted {
-                        relative_path: canonical_rel,
-                        kind: nexia_core::events::TransferKind::Hydration,
-                    });
-                    self.event_bus.emit(DesktopEvent::NodeHydrated {
-                        path: clean,
-                        size: byte_len,
-                    });
-                    return Ok(target_file);
-                }
+            let Some(rel_path) = mount_relative_path(clean_sub, &mount.remote_path) else {
+                continue;
+            };
+            let rel_clean = rel_path.trim_start_matches('/');
+            let target_file = PathBuf::from(&mount.local_target).join(rel_clean);
+            if let Some(parent) = target_file.parent() {
+                let _ = std::fs::create_dir_all(parent);
             }
+            if let Err(err) = Self::write_payload_atomic(&target_file, &bytes) {
+                tracing::warn!(
+                    path = %target_file.display(),
+                    error = %err,
+                    "could not write the hydrated payload into the sync folder"
+                );
+                continue;
+            }
+            let canonical_rel = format!("/{}", rel_clean.trim_matches('/'));
+            let etag = Self::remote_etag(&dav_client, &dav_path).await;
+            if let Err(err) = self
+                .record_journal_hydration(&mount, &canonical_rel, &target_file, byte_len, etag)
+                .await
+            {
+                tracing::warn!(
+                    mount = %mount.id,
+                    path = %canonical_rel,
+                    error = %err,
+                    "could not record the hydration in the sync journal"
+                );
+            }
+            nexia_nextcloud_sdk::remove_freedesktop_fail_marker(&target_file);
+            self.spawn_thumbnail_fetch(clean.clone());
+            self.event_bus.emit(DesktopEvent::FileTransferCompleted {
+                relative_path: canonical_rel,
+                kind: nexia_core::events::TransferKind::Hydration,
+            });
+            self.event_bus.emit(DesktopEvent::NodeHydrated {
+                path: clean,
+                size: byte_len,
+            });
+            return Ok(target_file);
         }
 
         self.event_bus.emit(DesktopEvent::NodeHydrated {
@@ -574,30 +699,39 @@ impl DesktopSyncCoordinator {
                 if let Some((user, client, auth)) = self.active_dav_context().await {
                     let dav = client.dav(&auth);
                     let dav_path = make_dav_path(&user, &full_remote)?;
-                    let bytes = dav
-                        .get(&dav_path)
-                        .await
-                        .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+                    let bytes = match dav.get(&dav_path).await {
+                        Ok(bytes) => bytes,
+                        Err(err) => {
+                            self.emit_hydration_failed(&full_remote, &err.to_string());
+                            return Err(SyncError::WebDav(err));
+                        }
+                    };
                     let byte_len = bytes.len() as u64;
 
-                    std::fs::write(&canonical, &bytes)
-                        .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+                    if let Err(err) = Self::write_payload_atomic(&canonical, &bytes) {
+                        self.emit_hydration_failed(&full_remote, &err.to_string());
+                        return Err(err);
+                    }
 
-                    let journal_path = self.mount_journal_path(&mount.account_id, &mount.id);
-                    let mut journal =
-                        nexia_nextcloud_sdk::SyncJournal::load_from_file(&journal_path)
-                            .unwrap_or_else(|_| nexia_nextcloud_sdk::SyncJournal::new());
-                    let mtime = std::fs::metadata(&canonical)
-                        .and_then(|m| m.modified())
-                        .unwrap_or_else(|_| std::time::SystemTime::now());
                     let canonical_rel = format!("/{}", rel_str.trim_matches('/'));
-                    journal.record(nexia_nextcloud_sdk::JournalEntry::new(
-                        &canonical_rel,
-                        byte_len,
-                        mtime,
-                        false,
-                    ));
-                    let _ = journal.save_to_file(&journal_path);
+                    let etag = Self::remote_etag(&dav, &dav_path).await;
+                    if let Err(err) = self
+                        .record_journal_hydration(
+                            &mount,
+                            &canonical_rel,
+                            &canonical,
+                            byte_len,
+                            etag,
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            mount = %mount.id,
+                            path = %canonical_rel,
+                            error = %err,
+                            "could not record the hydration in the sync journal"
+                        );
+                    }
                     nexia_nextcloud_sdk::remove_freedesktop_fail_marker(&canonical);
                     self.spawn_thumbnail_fetch(full_remote.clone());
 
@@ -625,21 +759,72 @@ impl DesktopSyncCoordinator {
     pub async fn hydrate_directory(&self, remote_dir: &str) -> Result<usize, SyncError> {
         let vfs = self.active_vfs().await?;
         let mut queue = vec![remote_dir.to_string()];
-        let mut count = 0;
+        let mut pending: Vec<tokio::task::JoinHandle<bool>> = Vec::new();
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(4));
+        let mut failures = 0usize;
 
         while let Some(current) = queue.pop() {
-            if let Ok(children) = vfs.list_children(&current).await {
-                for child in children {
-                    if child.is_directory {
-                        queue.push(child.path);
-                    } else if self.hydrate_file(&child.path).await.is_ok() {
-                        count += 1;
-                    }
+            let children = match vfs.list_children(&current).await {
+                Ok(children) => children,
+                Err(err) => {
+                    tracing::warn!(dir = %current, error = %err, "cannot list a directory while hydrating it");
+                    failures += 1;
+                    continue;
+                }
+            };
+            for child in children {
+                if child.is_directory {
+                    queue.push(child.path);
+                    continue;
+                }
+                // Hydrating an already hydrated file downloads and rewrites bytes the user already
+                // has; the tree knows, so only placeholders are fetched.
+                if child.is_hydrated {
+                    continue;
+                }
+                let this = self.clone();
+                let permit_source = semaphore.clone();
+                let path = child.path;
+                pending.push(tokio::spawn(async move {
+                    let Ok(_permit) = permit_source.acquire().await else {
+                        return false;
+                    };
+                    this.hydrate_file(&path).await.is_ok()
+                }));
+            }
+            // Drain instead of collecting: a huge directory would otherwise hold one task per file
+            // while only four of them can make progress.
+            while pending.len() >= 32 {
+                let Some(task) = pending.pop() else {
+                    break;
+                };
+                if !matches!(task.await, Ok(true)) {
+                    failures += 1;
                 }
             }
         }
 
-        Ok(count)
+        let mut hydrated = 0usize;
+        for task in pending {
+            match task.await {
+                Ok(true) => hydrated += 1,
+                _ => failures += 1,
+            }
+        }
+
+        if failures > 0 {
+            // The count alone would look like a complete run: the view needs to know that part of
+            // the directory stayed a placeholder.
+            self.event_bus.emit(DesktopEvent::Notification {
+                level: nexia_core::events::NotificationLevel::Error,
+                message: format!(
+                    "{} file(s) below {} could not be hydrated",
+                    failures, remote_dir
+                ),
+            });
+        }
+
+        Ok(hydrated)
     }
 
     /// Dehydrates a file node, freeing local cache space.
@@ -667,9 +852,13 @@ impl DesktopSyncCoordinator {
 
         if let Some((user, client, auth)) = self.active_dav_context().await {
             let dav_client = client.dav(&auth);
-            if let Ok(dav_path) = make_dav_path(&user, remote_path) {
-                let _ = dav_client.mkcol(&dav_path).await;
-            }
+            let dav_path = make_dav_path(&user, remote_path)?;
+            // The local tree changes only once the server accepted the change: discarding the
+            // result used to leave the tree claiming a directory the server never created.
+            dav_client
+                .mkcol(&dav_path)
+                .await
+                .map_err(SyncError::WebDav)?;
         }
 
         let vfs = self.active_vfs().await?;
@@ -694,9 +883,11 @@ impl DesktopSyncCoordinator {
 
         if let Some((user, client, auth)) = self.active_dav_context().await {
             let dav_client = client.dav(&auth);
-            if let Ok(dav_path) = make_dav_path(&user, &clean_path) {
-                let _ = dav_client.put(&dav_path, content.to_vec(), None).await;
-            }
+            let dav_path = make_dav_path(&user, &clean_path)?;
+            dav_client
+                .put(&dav_path, content.to_vec(), None)
+                .await
+                .map_err(SyncError::WebDav)?;
         }
 
         let vfs = self.active_vfs().await?;
@@ -724,12 +915,12 @@ impl DesktopSyncCoordinator {
 
         if let Some((user, client, auth)) = self.active_dav_context().await {
             let dav_client = client.dav(&auth);
-            if let (Ok(src_dav), Ok(dst_dav)) = (
-                make_dav_path(&user, &clean_old),
-                make_dav_path(&user, &clean_new),
-            ) {
-                let _ = dav_client.move_(&src_dav, &dst_dav, false).await;
-            }
+            let src_dav = make_dav_path(&user, &clean_old)?;
+            let dst_dav = make_dav_path(&user, &clean_new)?;
+            dav_client
+                .move_(&src_dav, &dst_dav, false)
+                .await
+                .map_err(SyncError::WebDav)?;
         }
 
         let vfs = self.active_vfs().await?;
@@ -757,18 +948,21 @@ impl DesktopSyncCoordinator {
 
         if let Some((user, client, auth)) = self.active_dav_context().await {
             let dav_client = client.dav(&auth);
-            if let (Ok(src_dav), Ok(dst_dav)) = (
-                make_dav_path(&user, &clean_src),
-                make_dav_path(&user, &clean_new),
-            ) {
-                let _ = dav_client.move_(&src_dav, &dst_dav, false).await;
-            }
+            let src_dav = make_dav_path(&user, &clean_src)?;
+            let dst_dav = make_dav_path(&user, &clean_new)?;
+            dav_client
+                .move_(&src_dav, &dst_dav, false)
+                .await
+                .map_err(SyncError::WebDav)?;
         }
 
-        let vfs = self.active_vfs().await?;
-        vfs.rename(&clean_src, file_name)
-            .await
-            .map_err(SyncError::Orchestrator)?;
+        // The facade exposes `rename` (a new name inside the same parent) but no subtree move, so
+        // the two affected directories are re-read from the server rather than guessed at: the old
+        // code renamed the node in place, leaving the tree showing it in its previous folder.
+        let source_dir =
+            nexia_nextcloud_sdk::parent_path(&clean_src).unwrap_or_else(|| "/".to_string());
+        self.refresh_path(&source_dir).await?;
+        self.refresh_path(&clean_dest_dir).await?;
         Ok(clean_new)
     }
 
@@ -778,9 +972,11 @@ impl DesktopSyncCoordinator {
 
         if let Some((user, client, auth)) = self.active_dav_context().await {
             let dav_client = client.dav(&auth);
-            if let Ok(dav_path) = make_dav_path(&user, &clean_path) {
-                let _ = dav_client.delete(&dav_path).await;
-            }
+            let dav_path = make_dav_path(&user, &clean_path)?;
+            dav_client
+                .delete(&dav_path)
+                .await
+                .map_err(SyncError::WebDav)?;
         }
 
         let vfs = self.active_vfs().await?;
@@ -997,23 +1193,49 @@ impl DesktopSyncCoordinator {
 
     /// Returns the maximum allowed thumbnail dimension configured by the user.
     pub async fn max_thumbnail_size(&self) -> u32 {
+        // The display preferences are the user-facing setting; a value stored by an older build in
+        // the client settings is still honoured, and 256 is the default.
+        let configured = {
+            let config = self.config.read().await;
+            let account = config
+                .active_account_id
+                .as_ref()
+                .and_then(|id| config.account_preferences.get(&id.0))
+                .map(|prefs| prefs.display.max_thumbnail_size)
+                .filter(|size| *size > 0);
+            account.unwrap_or(config.global.default_display.max_thumbnail_size)
+        };
+        if configured > 0 {
+            return configured;
+        }
         if let Some(client) = self.active_client().await
             && let Ok(Some(val)) = client.get_setting("max_thumbnail_size").await
+            && let Ok(size) = val.parse::<u32>()
         {
-            val.parse::<u32>().unwrap_or(256)
-        } else {
-            256
+            return size;
         }
+        256
     }
 
     /// Sets the maximum allowed thumbnail dimension configured by the user.
     pub async fn set_max_thumbnail_size(&self, size: u32) -> Result<(), SyncError> {
-        if let Some(client) = self.active_client().await {
-            let _ = client
-                .set_setting("max_thumbnail_size", size.to_string())
-                .await;
+        let clamped = size.clamp(64, 1024);
+        {
+            let mut config = self.config.write().await;
+            let account_id = config.active_account_id.clone();
+            match account_id {
+                Some(id) => {
+                    let prefs = config.account_preferences.entry(id.0).or_default();
+                    prefs.display.max_thumbnail_size = clamped;
+                }
+                None => config.global.default_display.max_thumbnail_size = clamped,
+            }
         }
-        Ok(())
+        // A failed save would silently forget the choice on the next start, which is what the
+        // discarded result did before.
+        self.persist_config().await.map_err(|source| {
+            SyncError::Journal(format!("save the maximum thumbnail size: {source}"))
+        })
     }
 
     /// Runs synchronization on all enabled two-way sync folder pairs via SDK `FolderSyncRunner`.
@@ -1211,18 +1433,15 @@ impl DesktopSyncCoordinator {
                 continue;
             };
 
-            let changed = {
-                let mut etags = self.last_root_etags.write().await;
-                match etags.get(&account.id.0) {
-                    Some(prev) if prev == etag => false,
-                    _ => {
-                        etags.insert(account.id.0.clone(), etag.clone());
-                        true
-                    }
-                }
+            let previous = {
+                let etags = self.last_root_etags.read().await;
+                etags.get(&account.id.0).cloned()
             };
+            if previous.as_deref() == Some(etag.as_str()) {
+                continue;
+            }
 
-            if changed {
+            {
                 tracing::info!(
                     account = %account.id.0,
                     user = %user,
@@ -1230,11 +1449,26 @@ impl DesktopSyncCoordinator {
                     "Remote server changes detected via root ETag poll; refreshing VFS tree"
                 );
 
-                // Refresh this account's virtual tree, pruning moved/deleted nodes
-                let _ = self.refresh_account_virtual_tree(&account).await;
-
-                // Synchronize any two-way folder sync pairings belonging to this account
-                self.sync_account_mounts(&account.id.0).await;
+                // Refresh this account's virtual tree, pruning moved/deleted nodes. The etag is
+                // recorded only once the refresh succeeded: recording it first made a failed
+                // refresh look like a handled change, so it was never retried.
+                match self.refresh_account_virtual_tree(&account).await {
+                    Ok(_) => {
+                        self.last_root_etags
+                            .write()
+                            .await
+                            .insert(account.id.0.clone(), etag.clone());
+                        // Synchronize any two-way folder sync pairings belonging to this account
+                        self.sync_account_mounts(&account.id.0).await;
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            account = %account.id.0,
+                            error = %err,
+                            "refresh after a remote change failed; retrying on the next poll"
+                        );
+                    }
+                }
             }
         }
     }
@@ -1261,7 +1495,7 @@ impl DesktopSyncCoordinator {
                     error = %err,
                     "Failed to query WebDAV root during remote change refresh"
                 );
-                return Ok(0);
+                return Err(SyncError::WebDav(err));
             }
         };
 
@@ -1486,6 +1720,12 @@ impl DesktopSyncCoordinator {
                 });
         }
 
+        let slot = ThumbnailSlot::new(
+            self.thumbnail_stats.clone(),
+            self.event_bus.clone(),
+            remote_path.to_string(),
+        );
+
         self.event_bus
             .emit(nexia_core::events::DesktopEvent::ThumbnailDownloadStarted {
                 path: remote_path.to_string(),
@@ -1499,11 +1739,7 @@ impl DesktopSyncCoordinator {
                 self.install_freedesktop_previews_for_remote_path(remote_path, &bytes)
                     .await;
             }
-            if let Ok(mut stats) = self.thumbnail_stats.write() {
-                stats.in_progress = stats.in_progress.saturating_sub(1);
-                stats.completed += 1;
-                stats.active_items.retain(|p| p != remote_path);
-            }
+            slot.finish(ThumbnailOutcome::Ready);
             self.event_bus
                 .emit(nexia_core::events::DesktopEvent::ThumbnailReady {
                     path: remote_path.to_string(),
@@ -1541,17 +1777,7 @@ impl DesktopSyncCoordinator {
                     self.install_freedesktop_previews_for_remote_path(remote_path, &png_bytes)
                         .await;
                 }
-                if let Ok(mut stats) = self.thumbnail_stats.write() {
-                    stats.in_progress = stats.in_progress.saturating_sub(1);
-                    stats.completed += 1;
-                    stats.active_items.retain(|p| p != remote_path);
-                    self.event_bus
-                        .emit(nexia_core::events::DesktopEvent::ThumbnailProgress {
-                            completed: stats.completed,
-                            total: stats.total,
-                            in_progress: stats.in_progress,
-                        });
-                }
+                slot.finish(ThumbnailOutcome::Ready);
                 self.event_bus
                     .emit(nexia_core::events::DesktopEvent::ThumbnailReady {
                         path: remote_path.to_string(),
@@ -1573,17 +1799,7 @@ impl DesktopSyncCoordinator {
         {
             self.install_freedesktop_previews_for_remote_path(remote_path, &png_bytes)
                 .await;
-            if let Ok(mut stats) = self.thumbnail_stats.write() {
-                stats.in_progress = stats.in_progress.saturating_sub(1);
-                stats.completed += 1;
-                stats.active_items.retain(|p| p != remote_path);
-                self.event_bus
-                    .emit(nexia_core::events::DesktopEvent::ThumbnailProgress {
-                        completed: stats.completed,
-                        total: stats.total,
-                        in_progress: stats.in_progress,
-                    });
-            }
+            slot.finish(ThumbnailOutcome::Ready);
             self.event_bus
                 .emit(nexia_core::events::DesktopEvent::ThumbnailReady {
                     path: remote_path.to_string(),
@@ -1592,22 +1808,7 @@ impl DesktopSyncCoordinator {
             return Ok(Some(thumb_path));
         }
 
-        if let Ok(mut stats) = self.thumbnail_stats.write() {
-            stats.in_progress = stats.in_progress.saturating_sub(1);
-            stats.failed += 1;
-            stats.active_items.retain(|p| p != remote_path);
-            self.event_bus
-                .emit(nexia_core::events::DesktopEvent::ThumbnailProgress {
-                    completed: stats.completed,
-                    total: stats.total,
-                    in_progress: stats.in_progress,
-                });
-        }
-
-        self.event_bus
-            .emit(nexia_core::events::DesktopEvent::ThumbnailFailed {
-                path: remote_path.to_string(),
-            });
+        slot.finish(ThumbnailOutcome::Failed);
 
         Ok(None)
     }
@@ -1802,7 +2003,7 @@ impl DesktopSyncCoordinator {
             if unpopulated.is_empty() {
                 break;
             }
-            let mut any_fetched = false;
+            let mut populated = 0usize;
             for dir in unpopulated {
                 if let Ok(true) = vfs.is_directory_populated(&dir).await {
                     continue;
@@ -1811,13 +2012,100 @@ impl DesktopSyncCoordinator {
                     return;
                 }
                 tracing::debug!(path = %dir, "Background preloading virtual directory");
-                let _ = self.refresh_path(&dir).await;
-                any_fetched = true;
+                // Only a directory that was really populated counts: a failing one stays in
+                // `unpopulated_directories`, so counting the attempt spun this loop forever while
+                // holding the preload gate that every later trigger returns on.
+                match self.refresh_path(&dir).await {
+                    Ok(_) => populated += 1,
+                    Err(err) => tracing::debug!(
+                        path = %dir,
+                        error = %err,
+                        "background preload could not populate a directory"
+                    ),
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
-            if !any_fetched {
+            if populated == 0 {
                 break;
             }
+        }
+    }
+}
+
+/// Outcome a thumbnail request reports when its registration is released.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ThumbnailOutcome {
+    /// A cached thumbnail file is available.
+    Ready,
+    /// No route produced a thumbnail.
+    Failed,
+}
+
+/// Releases a thumbnail request's in-flight registration on every exit path.
+///
+/// The request registers its path before its first fallible step, so an early return used to leave
+/// the path registered for the rest of the session — silently suppressing every later request for
+/// that file — and left the in-progress counter counted up. The guard makes the release
+/// unconditional: it runs on `finish` and on the drop an early return triggers.
+struct ThumbnailSlot {
+    stats: std::sync::Arc<std::sync::RwLock<ThumbnailQueueSnapshot>>,
+    bus: nexia_core::events::EventBus,
+    path: String,
+    finished: bool,
+}
+
+impl ThumbnailSlot {
+    /// Registers a finished-request guard for one path.
+    fn new(
+        stats: std::sync::Arc<std::sync::RwLock<ThumbnailQueueSnapshot>>,
+        bus: nexia_core::events::EventBus,
+        path: String,
+    ) -> Self {
+        Self {
+            stats,
+            bus,
+            path,
+            finished: false,
+        }
+    }
+
+    /// Reports the request as finished and releases its registration.
+    fn finish(mut self, outcome: ThumbnailOutcome) {
+        self.record(outcome);
+        self.finished = true;
+    }
+
+    /// Applies the outcome to the queue counters and announces it.
+    fn record(&self, outcome: ThumbnailOutcome) {
+        let Ok(mut stats) = self.stats.write() else {
+            return;
+        };
+        stats.in_progress = stats.in_progress.saturating_sub(1);
+        match outcome {
+            ThumbnailOutcome::Ready => stats.completed += 1,
+            ThumbnailOutcome::Failed => stats.failed += 1,
+        }
+        stats
+            .active_items
+            .retain(|registered| registered != &self.path);
+        self.bus.emit(DesktopEvent::ThumbnailProgress {
+            completed: stats.completed,
+            total: stats.total,
+            in_progress: stats.in_progress,
+        });
+        if outcome == ThumbnailOutcome::Failed {
+            self.bus.emit(DesktopEvent::ThumbnailFailed {
+                path: self.path.clone(),
+            });
+        }
+    }
+}
+
+impl Drop for ThumbnailSlot {
+    fn drop(&mut self) {
+        // Reached only by an early return, which ends the request without a thumbnail.
+        if !self.finished {
+            self.record(ThumbnailOutcome::Failed);
         }
     }
 }
@@ -1903,6 +2191,73 @@ mod tests {
         // A sibling folder sharing the mount name as a prefix is not inside the mount.
         assert_eq!(mount_relative_path("photos2/a.jpg", "/photos"), None);
         assert_eq!(mount_relative_path("other/a.jpg", "/photos"), None);
+    }
+
+    #[test]
+    fn a_payload_is_written_through_a_temporary_file() {
+        let dir = std::env::temp_dir().join(format!("nexia-payload-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let target = dir.join("report.pdf");
+
+        DesktopSyncCoordinator::write_payload_atomic(&target, b"first").expect("write");
+        DesktopSyncCoordinator::write_payload_atomic(&target, b"second").expect("rewrite");
+
+        assert_eq!(std::fs::read(&target).expect("read"), b"second");
+        // The temporary file is renamed away, not left beside the payload.
+        assert!(!DesktopSyncCoordinator::partial_path(&target).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_destination_is_refused() {
+        let dir = std::env::temp_dir().join(format!("nexia-symlink-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let outside = dir.join("outside.txt");
+        std::fs::write(&outside, b"untouched").expect("seed");
+        let target = dir.join("innocent.txt");
+        std::os::unix::fs::symlink(&outside, &target).expect("symlink");
+
+        let result = DesktopSyncCoordinator::write_payload_atomic(&target, b"payload");
+
+        assert!(result.is_err(), "a symlink must not be hydrated through");
+        assert_eq!(std::fs::read(&outside).expect("read"), b"untouched");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_abandoned_thumbnail_request_releases_its_registration() {
+        let stats = std::sync::Arc::new(std::sync::RwLock::new(ThumbnailQueueSnapshot {
+            total: 1,
+            in_progress: 1,
+            active_items: vec!["photo.jpg".to_string()],
+            ..Default::default()
+        }));
+        let bus = nexia_core::events::EventBus::new(8);
+        let mut events = bus.subscribe();
+
+        // No `finish`: this is the early-return path the guard exists for.
+        drop(ThumbnailSlot::new(
+            stats.clone(),
+            bus,
+            "photo.jpg".to_string(),
+        ));
+
+        let snapshot = stats.read().expect("stats lock");
+        assert_eq!(snapshot.in_progress, 0);
+        assert_eq!(snapshot.failed, 1);
+        assert!(snapshot.active_items.is_empty());
+        drop(snapshot);
+        let mut announced_failure = false;
+        while let Ok(event) = events.try_recv() {
+            if matches!(event, DesktopEvent::ThumbnailFailed { .. }) {
+                announced_failure = true;
+            }
+        }
+        assert!(
+            announced_failure,
+            "an abandoned request still reports a failure"
+        );
     }
 
     /// Builds a one-file listing, which is all the scheduler looks at.

@@ -141,11 +141,26 @@ here; local writes elsewhere go to the folder sync engine instead. If no mount
 contains the path it returns
 `SyncError::NotFound("No active sync mount found for <path>")`.
 
+Both hydrators write the payload into a sync folder through a temporary file in
+the destination directory followed by a rename, and refuse a destination that is
+not a regular file: writing in place leaves a truncated file if the process dies
+mid-write, and a symlink at the destination would send the payload wherever it
+points. The journal entry recorded for the file carries the remote ETag read back
+with one small `PROPFIND`, so the next cycle can tell "unchanged since we wrote
+it" from "changed on the server"; the load-modify-save runs under a per-mount
+lock so two concurrent hydrations cannot drop each other's entry. A journal that
+cannot be loaded or saved is logged and the hydration still succeeds — the file
+is on disk either way.
+
 `hydrate_directory(remote_dir)` is a breadth-first sweep over the VFS tree: it
-pops each directory, pushes child directories and calls `hydrate_file` on each
-child file, counting only the successes. Failures — including a missing session,
-which makes every `hydrate_file` fail immediately — are discarded, so an offline
-sweep returns `Ok(0)` rather than an error.
+pops each directory, pushes child directories and hydrates each child file that
+the tree reports as a placeholder — an already hydrated file is skipped instead
+of downloaded again. Files are hydrated four at a time, and the tasks are drained
+as the sweep goes so a huge directory does not hold one task per file. The
+return value counts the successes; failures (including a missing session, which
+makes every `hydrate_file` fail immediately) are counted and raised as one
+`DesktopEvent::Notification` at `NotificationLevel::Error`, so an offline sweep
+is visible instead of looking like an empty directory.
 
 ---
 
