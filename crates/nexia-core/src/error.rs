@@ -54,6 +54,16 @@ pub enum CoreError {
         source: nexia_nextcloud_sdk::StorageError,
     },
 
+    /// An existing encrypted database cannot be opened with any available key.
+    ///
+    /// Minting a replacement key would orphan every credential stored in the database, so
+    /// the loss is reported instead.
+    #[error("no available key opens the configuration database at {path}")]
+    StorageKeyUnusable {
+        /// Path of the database that could not be opened.
+        path: PathBuf,
+    },
+
     /// Account with the requested ID was not found.
     #[error("account '{0}' was not found")]
     AccountNotFound(String),

@@ -433,6 +433,26 @@ impl DesktopSyncCoordinator {
         Ok(folders)
     }
 
+    /// Starts a thumbnail fetch without waiting for it.
+    ///
+    /// `fetch_thumbnail` waits for every priority permit to drain before it downloads, and the
+    /// caller here still holds its own permit: awaiting it inline parks the task forever, leaking
+    /// that permit and with it the gate for the whole session.
+    fn spawn_thumbnail_fetch(&self, remote_path: String) {
+        let this = self.clone();
+        tokio::spawn(async move {
+            let _ = this.fetch_thumbnail(&remote_path, 256).await;
+        });
+    }
+
+    /// Reports a hydration that ended without content, so the view clears its in-flight mark.
+    fn emit_hydration_failed(&self, path: &str, reason: &str) {
+        self.event_bus.emit(DesktopEvent::NodeHydrationFailed {
+            path: path.to_string(),
+            reason: reason.to_string(),
+        });
+    }
+
     /// Performs on-demand hydration for a virtual file, downloading via SDK or using local cache.
     pub async fn hydrate_file(&self, remote_path: &str) -> Result<PathBuf, SyncError> {
         let _priority = self.priority_permit();
@@ -453,12 +473,21 @@ impl DesktopSyncCoordinator {
         self.event_bus.emit(DesktopEvent::NodeHydrationStarted {
             path: clean.clone(),
         });
-        let bytes = dav_client.get(&dav_path).await.map_err(SyncError::WebDav)?;
+        let bytes = match dav_client.get(&dav_path).await {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                self.emit_hydration_failed(&clean, &err.to_string());
+                return Err(SyncError::WebDav(err));
+            }
+        };
         let byte_len = bytes.len() as u64;
-        let local_path = vfs
-            .hydrate_local(remote_path, bytes.clone())
-            .await
-            .map_err(SyncError::Orchestrator)?;
+        let local_path = match vfs.hydrate_local(remote_path, bytes.clone()).await {
+            Ok(path) => path,
+            Err(err) => {
+                self.emit_hydration_failed(&clean, &err.to_string());
+                return Err(SyncError::Orchestrator(err));
+            }
+        };
 
         // If this file matches a local folder sync mount, hydrate the local file directly
         for mount in self.sync_mounts().await {
@@ -488,7 +517,7 @@ impl DesktopSyncCoordinator {
                     ));
                     let _ = journal.save_to_file(&journal_path);
                     nexia_nextcloud_sdk::remove_freedesktop_fail_marker(&target_file);
-                    let _ = self.fetch_thumbnail(&clean, 256).await;
+                    self.spawn_thumbnail_fetch(clean.clone());
                     self.event_bus.emit(DesktopEvent::FileTransferCompleted {
                         relative_path: canonical_rel,
                         kind: nexia_core::events::TransferKind::Hydration,
@@ -570,7 +599,7 @@ impl DesktopSyncCoordinator {
                     ));
                     let _ = journal.save_to_file(&journal_path);
                     nexia_nextcloud_sdk::remove_freedesktop_fail_marker(&canonical);
-                    let _ = self.fetch_thumbnail(&full_remote, 256).await;
+                    self.spawn_thumbnail_fetch(full_remote.clone());
 
                     self.event_bus.emit(DesktopEvent::FileTransferCompleted {
                         relative_path: canonical_rel,
@@ -1118,10 +1147,9 @@ impl DesktopSyncCoordinator {
             let (mut matches, remote_entries) = tokio::join!(local_future, remote_future);
 
             for remote_entry in remote_entries {
-                if !matches
-                    .iter()
-                    .any(|m| m.path == remote_entry.path || m.name == remote_entry.name)
-                {
+                // Only the path identifies a node: a remote hit named like some other local
+                // file is a different file and dropping it hides real search results.
+                if !matches.iter().any(|m| m.path == remote_entry.path) {
                     matches.push(remote_entry);
                 }
             }

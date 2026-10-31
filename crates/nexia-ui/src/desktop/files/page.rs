@@ -26,6 +26,10 @@ pub struct CloudFilesPage<B: FileExplorerBackend> {
     empty_page: adw::StatusPage,
     search_query: Rc<RefCell<Option<String>>>,
     search_generation: Rc<std::cell::Cell<u64>>,
+    /// Bumped by every refresh. A listing is slow exactly when the directory is large or needs a
+    /// PROPFIND, so an older refresh can finish after a newer one and paint another directory's
+    /// children over the current view.
+    refresh_generation: Rc<std::cell::Cell<u64>>,
     backend: B,
 }
 
@@ -38,6 +42,7 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
 
         let search_query = Rc::new(RefCell::new(None));
         let search_generation = Rc::new(std::cell::Cell::new(0));
+        let refresh_generation = Rc::new(std::cell::Cell::new(0));
 
         let sq_clone = search_query.clone();
         let gen_clone = search_generation.clone();
@@ -88,7 +93,7 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
         let g_view = grid_view.clone();
         let l_view = list_view.clone();
         glib::MainContext::default().spawn_local(async move {
-            while let Ok(event) = rx.recv().await {
+            while let Some(event) = nexia_core::events::next_event(&mut rx).await {
                 if let nexia_core::events::DesktopEvent::ThumbnailReady {
                     ref path,
                     ref cached_path,
@@ -139,7 +144,7 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
         let search_entry_ev = toolbar.search_entry().clone();
         let mut disp_rx = backend.subscribe_events();
         glib::MainContext::default().spawn_local(async move {
-            while let Ok(event) = disp_rx.recv().await {
+            while let Some(event) = nexia_core::events::next_event(&mut disp_rx).await {
                 match event {
                     nexia_core::events::DesktopEvent::DisplaySettingsChanged => {
                         on_refresh_disp();
@@ -171,6 +176,7 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
             empty_page,
             search_query,
             search_generation,
+            refresh_generation,
             backend: backend.clone(),
         }
     }
@@ -183,6 +189,8 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
 
         let active_search = self.search_query.borrow().clone();
         let current_gen = self.search_generation.get();
+        let refresh_gen = self.refresh_generation.get() + 1;
+        self.refresh_generation.set(refresh_gen);
 
         let items = if let Some(ref q) = active_search {
             let trimmed = q.trim();
@@ -200,7 +208,10 @@ impl<B: FileExplorerBackend> CloudFilesPage<B> {
             self.backend.list_current_items().await.unwrap_or_default()
         };
 
-        if self.search_generation.get() != current_gen {
+        if self.search_generation.get() != current_gen
+            || self.refresh_generation.get() != refresh_gen
+        {
+            tracing::debug!("Discarding outdated directory listing");
             return;
         }
 

@@ -516,4 +516,21 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(temp_dir);
     }
+
+    #[tokio::test]
+    async fn sync_claim_is_exclusive_per_mount() {
+        let config_lock = Arc::new(tokio::sync::RwLock::new(AppConfig::default()));
+        let coordinator = DesktopSyncCoordinator::new(config_lock, EventBus::new(10));
+
+        assert!(coordinator.try_claim_sync("mount-a"));
+        // A second cycle for the same mount must not start.
+        assert!(!coordinator.try_claim_sync("mount-a"));
+        // Other mounts are unaffected.
+        assert!(coordinator.try_claim_sync("mount-b"));
+
+        coordinator.release_sync("mount-a");
+        assert!(coordinator.try_claim_sync("mount-a"));
+        // Releasing a mount nobody holds is not an error.
+        coordinator.release_sync("mount-unknown");
+    }
 }

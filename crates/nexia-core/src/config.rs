@@ -236,11 +236,17 @@ impl AppConfig {
                 Some(existing) => {
                     // A discovery pass only refreshes what it knows. Credentials it could not
                     // resolve arrive empty, and must not wipe a working stored secret.
-                    let keep_secret = sys.credentials.password.is_empty();
-                    let previous = existing.credentials.clone();
+                    let kept_password = sys
+                        .credentials
+                        .password
+                        .is_empty()
+                        .then(|| existing.credentials.password.clone());
                     *existing = sys;
-                    if keep_secret {
-                        existing.credentials = previous;
+                    if let Some(password) = kept_password {
+                        // Only the secret is carried over. Restoring the whole credentials
+                        // struct would also revert a username the OS-level account renamed,
+                        // and every DAV request interpolates that name into its URL.
+                        existing.credentials.password = password;
                     }
                 }
                 None => self.accounts.push(sys),
@@ -337,7 +343,12 @@ fn write_private_atomic(path: &Path, data: &str) -> Result<(), CoreError> {
         source,
     })?;
 
-    let tmp = path.with_extension("json.tmp");
+    // The temporary name is per-process: two writers sharing one `config.json.tmp` would
+    // interleave their bytes and publish the result atomically, which turns a locking
+    // accident into a durably corrupt configuration.
+    let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
+    tmp_name.push(format!(".{}.tmp", std::process::id()));
+    let tmp = path.with_file_name(tmp_name);
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
@@ -349,19 +360,38 @@ fn write_private_atomic(path: &Path, data: &str) -> Result<(), CoreError> {
         path: tmp.clone(),
         source,
     })?;
-    file.write_all(data.as_bytes())
+    if let Err(source) = file
+        .write_all(data.as_bytes())
         .and_then(|()| file.sync_all())
-        .map_err(|source| CoreError::ConfigSave {
+    {
+        drop(file);
+        let _ = fs::remove_file(&tmp);
+        return Err(CoreError::ConfigSave {
             path: tmp.clone(),
             source,
-        })?;
+        });
+    }
     drop(file);
 
-    fs::rename(&tmp, path).map_err(|source| CoreError::ConfigSave {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    if let Err(source) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(CoreError::ConfigSave {
+            path: path.to_path_buf(),
+            source,
+        });
+    }
+    sync_dir(parent);
     Ok(())
+}
+
+/// Flushes a directory entry so a rename into it survives a power loss.
+fn sync_dir(dir: &Path) {
+    #[cfg(unix)]
+    if let Ok(handle) = fs::File::open(dir) {
+        let _ = handle.sync_all();
+    }
+    #[cfg(not(unix))]
+    let _ = dir;
 }
 
 #[cfg(test)]

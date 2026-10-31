@@ -113,7 +113,7 @@ impl NavigationSidebar {
         let mut event_rx = backend.subscribe_events();
         glib::MainContext::default().spawn_local(async move {
             refresh_brand_banner(&b, &title_c, &slogan_c, &icon_box_c).await;
-            while let Ok(event) = event_rx.recv().await {
+            while let Some(event) = nexia_core::events::next_event(&mut event_rx).await {
                 match event {
                     DesktopEvent::AccountSwitched { .. } => {
                         set_status(&dot_rx, &lbl_rx, StatusKind::Connected);

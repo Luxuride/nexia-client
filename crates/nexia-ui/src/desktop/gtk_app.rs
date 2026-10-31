@@ -441,10 +441,14 @@ fn build_ui(
     let direct_refresh = refresh_cb.clone();
     let ctrl_for_events = controller.clone();
     glib::MainContext::default().spawn_local(async move {
-        while let Ok(event) = event_rx.recv().await {
+        while let Some(event) = nexia_core::events::next_event(&mut event_rx).await {
             match event {
                 nexia_core::events::DesktopEvent::NodeHydrationStarted { ref path } => {
                     ctrl_for_events.mark_hydration_started(path).await;
+                    refresh_for_events();
+                }
+                nexia_core::events::DesktopEvent::NodeHydrationFailed { ref path, .. } => {
+                    ctrl_for_events.mark_hydration_finished(path).await;
                     refresh_for_events();
                 }
                 nexia_core::events::DesktopEvent::NodeHydrated { ref path, .. } => {

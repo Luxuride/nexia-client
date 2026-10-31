@@ -38,6 +38,26 @@ pub enum SyncError {
         source: std::io::Error,
     },
 
+    /// The per-account store key could not be derived.
+    #[error("deriving the store key for account {account}: {source}")]
+    StoreKey {
+        /// Account whose key was being derived.
+        account: String,
+        /// Underlying storage error.
+        #[source]
+        source: nexia_nextcloud_sdk::StorageError,
+    },
+
+    /// An isolated SDK client could not be built for an account.
+    #[error("building the client for account {account}: {source}")]
+    ClientBuild {
+        /// Account the client was being built for.
+        account: String,
+        /// Underlying client error.
+        #[source]
+        source: nexia_nextcloud_sdk::ClientError,
+    },
+
     /// Failed to read or parse synchronization journal.
     #[error("journal error: {0}")]
     Journal(String),

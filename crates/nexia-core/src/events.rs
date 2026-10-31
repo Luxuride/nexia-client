@@ -26,19 +26,6 @@ pub enum TransferKind {
     Hydration,
 }
 
-/// Progress metrics for a file transfer operation.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TransferProgress {
-    /// Remote relative path of the file being transferred.
-    pub relative_path: String,
-    /// Bytes transferred so far.
-    pub bytes_transferred: u64,
-    /// Total expected file size in bytes.
-    pub total_bytes: u64,
-    /// Kind of transfer.
-    pub kind: TransferKind,
-}
-
 /// High-level events emitted by the desktop engines.
 #[derive(Clone, Debug)]
 pub enum DesktopEvent {
@@ -47,8 +34,6 @@ pub enum DesktopEvent {
         /// Associated sync folder pairing ID.
         pairing_id: String,
     },
-    /// Ongoing transfer progress update.
-    TransferProgress(TransferProgress),
     /// File completed transfer.
     FileTransferCompleted {
         /// Remote path of the transferred file.
@@ -60,6 +45,17 @@ pub enum DesktopEvent {
     NodeHydrationStarted {
         /// Remote path of the node being hydrated.
         path: String,
+    },
+    /// A hydration attempt ended without content.
+    ///
+    /// Every path that announced [`DesktopEvent::NodeHydrationStarted`] ends with either this or
+    /// [`DesktopEvent::NodeHydrated`]: the view keeps the path in its in-flight set until a
+    /// terminal event arrives, so a failure without one leaves a spinner that never stops.
+    NodeHydrationFailed {
+        /// Remote path of the node whose hydration failed.
+        path: String,
+        /// Reason the content was not fetched, for the activity log.
+        reason: String,
     },
     /// A virtual file node was hydrated with content.
     NodeHydrated {
@@ -151,6 +147,28 @@ pub enum DesktopEvent {
         /// Severity level.
         level: NotificationLevel,
     },
+}
+
+/// Returns the next event from `rx`, skipping the gap a lagging subscriber left behind.
+///
+/// `Err(Lagged)` is not the end of the stream: the receiver stays usable and the events after
+/// the gap still arrive. Treating it as the end is what silently stops a UI subscriber for the
+/// rest of the session, so `None` here means exactly one thing — the bus is gone.
+pub async fn next_event(
+    rx: &mut tokio::sync::broadcast::Receiver<DesktopEvent>,
+) -> Option<DesktopEvent> {
+    loop {
+        match rx.recv().await {
+            Ok(event) => return Some(event),
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                tracing::warn!(
+                    skipped,
+                    "Event subscriber lagged behind; resuming subscription"
+                );
+            }
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+        }
+    }
 }
 
 /// Broadcast event bus for distributing events across workers and UI.

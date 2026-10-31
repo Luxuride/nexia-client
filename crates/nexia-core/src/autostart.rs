@@ -1,6 +1,6 @@
 //! Cross-platform automatic launch on system boot.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Application identifier used for autostart entries.
 pub const AUTOSTART_APP_NAME: &str = "eu.luxuride.nexia";
@@ -35,7 +35,60 @@ fn autostart_exec_line() -> String {
         return format!("flatpak run {app_id} {AUTOSTART_BACKGROUND_ARG}");
     }
     let exe = current_exe_path().unwrap_or_else(|| PathBuf::from("nexia-client"));
-    format!("{} {AUTOSTART_BACKGROUND_ARG}", exe.to_string_lossy())
+    format!(
+        "{} {AUTOSTART_BACKGROUND_ARG}",
+        escape_exec_argument(&exe.to_string_lossy())
+    )
+}
+
+/// Quotes one argument of a desktop-entry `Exec=` value.
+///
+/// The value is parsed as an argv, not by a shell: a space splits arguments, `"` starts a
+/// quoted argument and `%` introduces a field code. An unquoted path containing any of
+/// those either truncates the command or is replaced by the session.
+#[cfg(target_os = "linux")]
+fn escape_exec_argument(argument: &str) -> String {
+    let mut escaped = String::with_capacity(argument.len() + 2);
+    escaped.push('"');
+    for character in argument.chars() {
+        match character {
+            '"' | '`' | '$' | '\\' => {
+                escaped.push('\\');
+                escaped.push(character);
+            }
+            '%' => escaped.push_str("%%"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
+/// Reports whether a session would actually honour an autostart entry.
+///
+/// Desktop environments disable an entry by setting `Hidden=true` or
+/// `X-GNOME-Autostart-enabled=false` and leaving the file in place, so the file's
+/// existence alone does not mean the application starts at login.
+#[cfg(target_os = "linux")]
+fn autostart_entry_is_enabled(desktop_path: &Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(desktop_path) else {
+        return false;
+    };
+    for line in content.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = value.trim();
+        let disabled = match key.trim() {
+            "Hidden" => value.eq_ignore_ascii_case("true"),
+            "X-GNOME-Autostart-enabled" => value.eq_ignore_ascii_case("false"),
+            _ => false,
+        };
+        if disabled {
+            return false;
+        }
+    }
+    true
 }
 
 /// Checks whether autostart on system boot is currently configured.
@@ -46,7 +99,7 @@ pub fn is_autostart_enabled() -> bool {
             let desktop_path = config_dir
                 .join("autostart")
                 .join(format!("{AUTOSTART_APP_NAME}.desktop"));
-            return desktop_path.exists();
+            return autostart_entry_is_enabled(&desktop_path);
         }
         false
     }
@@ -75,9 +128,9 @@ pub fn is_autostart_enabled() -> bool {
 
 /// Registers the application to automatically launch on system boot.
 pub fn register_autostart() -> Result<(), std::io::Error> {
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     let exe = current_exe_path().unwrap_or_else(|| PathBuf::from("nexia-client"));
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
     let exe_str = exe.to_string_lossy();
 
     #[cfg(target_os = "linux")]

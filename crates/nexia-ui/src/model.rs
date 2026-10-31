@@ -260,6 +260,26 @@ pub struct FileViewItem {
 }
 
 impl FileViewItem {
+    /// Reports whether two projections of the same entry render identically.
+    ///
+    /// The grid and list views rebuild only when at least one item differs, so every field their
+    /// builders read has to be compared here: a field left out pins the rendered output to its
+    /// first value, which is how zoom and display-setting changes used to be discarded.
+    pub fn renders_like(&self, other: &Self) -> bool {
+        self.path == other.path
+            && self.name == other.name
+            && self.is_directory == other.is_directory
+            && self.size_formatted == other.size_formatted
+            && self.size_bytes == other.size_bytes
+            && self.status == other.status
+            && self.mime_type == other.mime_type
+            && self.file_id == other.file_id
+            && self.icon_category == other.icon_category
+            && self.modified_at == other.modified_at
+            && self.permissions == other.permissions
+            && self.directory_summary == other.directory_summary
+    }
+
     /// Formats a raw byte count into human-readable units via `nexia-nextcloud-sdk`.
     pub fn format_bytes(bytes: u64) -> String {
         format_bytes(bytes)
@@ -491,5 +511,25 @@ mod tests {
         assert_eq!(nested[1].full_path, "/Documents");
         assert_eq!(nested[2].name, "Projects");
         assert_eq!(nested[2].full_path, "/Documents/Projects");
+    }
+
+    #[test]
+    fn renders_like_detects_display_only_changes() {
+        let item = item("a.txt", false, 10);
+        let mut same = item.clone();
+        assert!(item.renders_like(&same));
+
+        // The views skip their rebuild when every item matches, so a field that only
+        // appears in a rendered label has to count as a change.
+        same.size_formatted = "2 MB".to_string();
+        assert!(!item.renders_like(&same));
+
+        let mut renamed = item.clone();
+        renamed.name = "b.txt".to_string();
+        assert!(!item.renders_like(&renamed));
+
+        let mut hydrated = item.clone();
+        hydrated.status = FileSyncStatus::HydratedOffline;
+        assert!(!item.renders_like(&hydrated));
     }
 }

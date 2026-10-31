@@ -13,6 +13,18 @@ use nexia_nextcloud_sdk::{
     MountProgressSnapshot, MountStatus, Transport,
 };
 
+/// Releases the mount's synchronization claim when the cycle ends, on every path.
+struct SyncClaim<'a> {
+    coordinator: &'a DesktopSyncCoordinator,
+    mount_id: String,
+}
+
+impl Drop for SyncClaim<'_> {
+    fn drop(&mut self) {
+        self.coordinator.release_sync(&self.mount_id);
+    }
+}
+
 /// High-level engine executing synchronization cycles for local and remote folder pairings.
 #[derive(Clone)]
 pub struct FolderSyncEngine {
@@ -43,12 +55,34 @@ impl FolderSyncEngine {
             .map_err(SyncError::Orchestrator)
     }
 
+    /// Publishes the terminal state of a cycle: the mount is idle again, on success, failure,
+    /// cancellation and refusal alike.
+    fn finish_cycle(&self, mount_id: &MountId) {
+        let idle = MountProgressSnapshot::new(mount_id.clone(), MountStatus::Idle);
+        self.coordinator.set_mount_progress(idle.clone());
+        self.coordinator
+            .event_bus
+            .emit(DesktopEvent::MountProgress(idle));
+    }
+
     /// Synchronizes a single sync mount by ID.
     pub async fn sync_mount(&self, mount_id: &str) -> Result<usize, SyncError> {
         let _priority = self.coordinator.priority_permit();
         if mount_id.starts_with("app-") {
             return Ok(0);
         }
+
+        if !self.coordinator.try_claim_sync(mount_id) {
+            info!(
+                mount_id,
+                "Folder synchronization skipped: a cycle is already running for this mount"
+            );
+            return Ok(0);
+        }
+        let _claim = SyncClaim {
+            coordinator: &self.coordinator,
+            mount_id: mount_id.to_string(),
+        };
 
         let m_id_typed = MountId::from(mount_id.to_string());
         if self
@@ -87,7 +121,7 @@ impl FolderSyncEngine {
             })?;
         }
 
-        let mut progress = MountProgressSnapshot::new(m_id_typed.clone(), MountStatus::Syncing);
+        let progress = MountProgressSnapshot::new(m_id_typed.clone(), MountStatus::Syncing);
         self.coordinator
             .event_bus
             .emit(DesktopEvent::MountProgress(progress.clone()));
@@ -125,24 +159,36 @@ impl FolderSyncEngine {
             prog.completed_items = completed;
             coord_prog.set_mount_progress(prog.clone());
             coord_prog.event_bus.emit(DesktopEvent::MountProgress(prog));
-            coord_prog
-                .event_bus
-                .emit(DesktopEvent::FileTransferCompleted {
-                    relative_path: rel_path.to_string(),
-                    kind: nexia_core::events::TransferKind::Hydration,
-                });
+            // No `FileTransferCompleted` here: the SDK progress callback reports a path and a
+            // count, not the action it performed, so labelling every item a hydration would
+            // report uploads as downloads. The cycle totals arrive with `SyncCompleted`.
+            let _ = rel_path;
         };
 
-        let outcome: FolderSyncOutcome = runner
+        let outcome: FolderSyncOutcome = match runner
             .execute_sync_cycle(&dav_client, &user, is_vfs, is_cancelled, on_progress)
             .await
-            .map_err(SyncError::Orchestrator)?;
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                // Every path that leaves the cycle must also leave the mount idle: a
+                // snapshot stuck on `Syncing` also wedges the watcher, which refuses to
+                // start another cycle for a mount that looks busy.
+                self.finish_cycle(&m_id_typed);
+                self.coordinator.event_bus.emit(DesktopEvent::Notification {
+                    level: nexia_core::events::NotificationLevel::Error,
+                    message: format!("Synchronization of mount {mount_id} failed: {error}"),
+                });
+                return Err(SyncError::Orchestrator(error));
+            }
+        };
 
         if self.coordinator.is_mount_cancelled(mount_id).await {
             info!(
                 mount_id,
                 "Sync mount was cancelled; skipping thumbnail prefetching and progress"
             );
+            self.finish_cycle(&m_id_typed);
             // Reported in the same unit as the completion path below, so a cancelled cycle
             // does not look like it transferred fewer files than it did.
             return Ok(outcome.downloaded + outcome.uploaded);
@@ -174,12 +220,7 @@ impl FolderSyncEngine {
             }
         }
 
-        progress.status = MountStatus::Idle;
-        progress.completed_items = progress.total_items;
-        self.coordinator.set_mount_progress(progress.clone());
-        self.coordinator
-            .event_bus
-            .emit(DesktopEvent::MountProgress(progress));
+        self.finish_cycle(&m_id_typed);
         self.coordinator
             .event_bus
             .emit(DesktopEvent::SyncCompleted {

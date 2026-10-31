@@ -18,6 +18,6 @@ pub use config::{
     GlobalPreferences, SyncFolderConfig, SyncMode,
 };
 pub use error::CoreError;
-pub use events::{DesktopEvent, EventBus, NotificationLevel, TransferKind, TransferProgress};
+pub use events::{DesktopEvent, EventBus, NotificationLevel, TransferKind};
 pub use sandbox::{flatpak_app_id, is_flatpak};
 pub use storage::DesktopStorage;

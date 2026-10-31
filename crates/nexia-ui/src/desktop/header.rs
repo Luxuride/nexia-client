@@ -38,7 +38,7 @@ impl MainHeaderBar {
         let mut event_rx = backend.subscribe_events();
         glib::MainContext::default().spawn_local(async move {
             refresh_server_title(&b, &wt).await;
-            while let Ok(event) = event_rx.recv().await {
+            while let Some(event) = nexia_core::events::next_event(&mut event_rx).await {
                 if matches!(
                     event,
                     nexia_core::events::DesktopEvent::AccountSwitched { .. }

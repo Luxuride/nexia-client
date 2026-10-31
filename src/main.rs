@@ -83,9 +83,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let args = CliArgs::parse();
 
-    let config_path = args.config.unwrap_or_else(|| {
-        AppConfig::default_config_path().unwrap_or_else(|_| PathBuf::from("config.json"))
-    });
+    // Never substitute a relative `config.json`: it would be read from (and written to)
+    // whatever working directory the process happens to start in.
+    let config_path = match args.config {
+        Some(path) => path,
+        None => AppConfig::default_config_path()?,
+    };
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -106,9 +109,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ),
             // A configuration that exists but cannot be read must not be replaced by
             // defaults, because the defaults would be written straight back over the
-            // user's accounts, mounts and preferences.
+            // user's accounts, mounts and preferences. The JSON mirror is the only other
+            // copy of that state, so it is imported once and used to repair the row; with
+            // no readable mirror either, starting at all would lose the accounts.
             Err(e) => {
-                return Err(format!("cannot read the configuration database: {e}").into());
+                tracing::error!(
+                    error = %e,
+                    "Configuration database row is unreadable, importing the JSON configuration"
+                );
+                match AppConfig::load_from_path(&config_path) {
+                    Ok(cfg) => (Some(Arc::new(s)), cfg, true),
+                    Err(json_error) => {
+                        return Err(format!(
+                            "cannot read the configuration database: {e}; the JSON \
+                             configuration at {} is unusable too: {json_error}",
+                            config_path.display()
+                        )
+                        .into());
+                    }
+                }
             }
         },
         Err(e) => {
@@ -134,14 +153,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let controller = DesktopUiController::new(coordinator.clone());
 
-    // Refresh an autostart entry that already exists so it points at this binary, but never
-    // create one: the settings page owns the on/off decision.
-    if nexia_core::is_autostart_enabled()
-        && let Err(e) = nexia_core::register_autostart()
-    {
-        tracing::warn!(error = %e, "Failed to refresh the autostart entry");
-    }
-
     rt.block_on(async {
         controller.ensure_discovered_accounts().await;
     });
@@ -155,6 +166,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         || args.list_mounts
         || args.mount_vfs.is_some()
         || args.set_mount_mode.is_some();
+
+    // Refresh an autostart entry that already exists so it points at this binary, but never
+    // create one: the settings page owns the on/off decision. A one-shot CLI run must not
+    // rewrite it, or `cargo run -- --list-mounts` would point the login item at a debug
+    // binary (or at an AppImage mount that disappears on exit).
+    if !has_one_shot_action
+        && nexia_core::is_autostart_enabled()
+        && let Err(e) = nexia_core::register_autostart()
+    {
+        tracing::warn!(error = %e, "Failed to refresh the autostart entry");
+    }
 
     if args.headless || has_one_shot_action {
         // Every failing command records itself here so the process can exit non-zero and

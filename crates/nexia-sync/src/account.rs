@@ -21,7 +21,7 @@ impl DesktopSyncCoordinator {
         secret: SecretString,
         account_id: &str,
     ) -> Result<Client, SyncError> {
-        let account_dir = self.cache_dir().join("accounts").join(account_id);
+        let account_dir = self.account_dir(account_id);
         let paths = StoragePaths::in_directory(&account_dir);
         let _ = paths.ensure_directories();
 
@@ -36,8 +36,9 @@ impl DesktopSyncCoordinator {
         // KDF; it is documented in docs/ARCHITECTURE.md. What matters here is that a length
         // violation is reported instead of falling back to a random key, which would silently
         // make the existing account database undecryptable.
-        let store_key = StoreKey::from_bytes(key_bytes).map_err(|e| {
-            SyncError::Journal(format!("invalid store key for account {account_id}: {e}"))
+        let store_key = StoreKey::from_bytes(key_bytes).map_err(|source| SyncError::StoreKey {
+            account: account_id.to_string(),
+            source,
         })?;
 
         let client = Client::builder()
@@ -47,7 +48,10 @@ impl DesktopSyncCoordinator {
             .initial_credentials(username, secret)
             .build()
             .await
-            .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+            .map_err(|source| SyncError::ClientBuild {
+                account: account_id.to_string(),
+                source,
+            })?;
 
         let mut client_events = client.subscribe_events();
         let bus = self.event_bus.clone();
@@ -251,7 +255,7 @@ impl DesktopSyncCoordinator {
         let Some(account) = self.active_account().await else {
             return 0;
         };
-        let account_dir = self.cache_dir().join("accounts").join(&account.id.0);
+        let account_dir = self.account_dir(&account.id.0);
         let db_path = account_dir.join("cache.db");
         std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0)
     }
@@ -428,10 +432,7 @@ impl DesktopSyncCoordinator {
             updated_at: 0,
         };
 
-        client
-            .store_sync_mount(stored)
-            .await
-            .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+        client.store_sync_mount(stored).await?;
 
         let mount_mode = match mode {
             "BidirectionalSync" => MountMode::BidirectionalSync,
@@ -541,8 +542,11 @@ impl DesktopSyncCoordinator {
             return Err(SyncError::NotFound("No active account".to_string()));
         };
 
-        let mounts = client.list_sync_mounts().await.unwrap_or_default();
-        if let Some(target) = mounts.into_iter().find(|m| m.id == id) {
+        let mounts = client.list_sync_mounts().await?;
+        let Some(target) = mounts.into_iter().find(|m| m.id == id) else {
+            return Err(SyncError::NotFound(format!("sync mount {id}")));
+        };
+        {
             let old_mode = target.mode.clone();
             let mut updated = target.clone();
             updated.mode = new_mode.to_string();
@@ -855,6 +859,9 @@ impl DesktopSyncCoordinator {
             }
         };
 
+        // A live FUSE session resolves its credentials through the *active* account, so it
+        // would otherwise start serving the new account's files under the old mountpoint.
+        self.unmount_all_fuse().await;
         self.switch_client(idx).await?;
 
         // Branding metadata belongs to the previous account; drop it before the switch
@@ -875,25 +882,23 @@ impl DesktopSyncCoordinator {
         // The OAuth flow registers a live client before calling here, so reuse it rather than
         // registering a second client for the same profile.
         let idx = match self.client_index_for(&account).await {
-            Some(i) => Some(i),
-            None => match ServerUrl::parse(&account.server.server_url) {
-                Ok(server_url) => {
-                    let secret = SecretString::new(account.credentials.secret());
-                    match self
-                        .build_account_client(
-                            server_url,
-                            &account.credentials.username,
-                            secret,
-                            &account.id.0,
-                        )
-                        .await
-                    {
-                        Ok(client) => Some(self.add_client(client).await),
-                        Err(_) => None,
-                    }
-                }
-                Err(_) => None,
-            },
+            Some(index) => Some(index),
+            None => {
+                // A client that cannot be built leaves the account unusable, so the failure is
+                // reported *before* the account becomes active: the alternative is an active
+                // account whose operations silently run on another account's client.
+                let server_url = ServerUrl::parse(&account.server.server_url)
+                    .map_err(|e| SyncError::InvalidPath(e.to_string()))?;
+                let client = self
+                    .build_account_client(
+                        server_url,
+                        &account.credentials.username,
+                        SecretString::new(account.credentials.secret()),
+                        &account.id.0,
+                    )
+                    .await?;
+                Some(self.add_client(client).await)
+            }
         };
 
         let account_id = account.id.clone();
@@ -987,6 +992,10 @@ impl DesktopSyncCoordinator {
             ));
         }
 
+        // A FUSE session keeps serving reads through whichever client is active, so it has to
+        // go before the account's client disappears, not after.
+        self.unmount_all_fuse().await;
+
         // 1. Process all sync mounts for this account
         let mounts = self.sync_mounts().await;
         for m in mounts {
@@ -1005,13 +1014,8 @@ impl DesktopSyncCoordinator {
             }
         }
 
-        // 2. Remove account cache directory
-        let account_cache = self.cache_dir().join("accounts").join(&acc.id.0);
-        if account_cache.exists() {
-            let _ = std::fs::remove_dir_all(&account_cache);
-        }
-
-        // 3. Remove client from self.clients, keeping the active index in range
+        // 2. Remove client from self.clients, keeping the active index in range. The client
+        // holds the account's encrypted databases open, so it goes before their directory.
         {
             let mut clients = self.clients.write().await;
             clients.retain(|c| {
@@ -1022,13 +1026,24 @@ impl DesktopSyncCoordinator {
             *active_idx = (*active_idx).min(clients.len().saturating_sub(1));
         }
 
+        // 3. Remove the account cache directory, now that nothing is writing into it.
+        let account_cache = self.account_dir(&acc.id.0);
+        if account_cache.exists()
+            && let Err(e) = std::fs::remove_dir_all(&account_cache)
+        {
+            tracing::warn!(account = %acc.id.0, error = %e, "Failed to remove the account cache");
+        }
+
         // 4. Remove account from self.config and determine new active account
         let next_account_id = {
             let mut conf = self.config.write().await;
             conf.remove_account(account_id);
             conf.active_account_id.clone()
         };
-        let _ = self.persist_config().await;
+        // The account is already gone from memory, so the failure is reported rather than
+        // repaired, but the caller must not be told the sign-out reached the disk when it did
+        // not: the next start would resurrect the account with its credentials.
+        let persist_result = self.persist_config().await;
 
         // 5. Switch to the remaining account if there is one, otherwise drop the account-scoped
         // runtime state so nothing is left pointing at the account that just went away.
@@ -1048,6 +1063,11 @@ impl DesktopSyncCoordinator {
             account_id: account_id.0.clone(),
         });
 
+        persist_result.map_err(|e| {
+            SyncError::Reconciliation(format!(
+                "the account was removed in memory but the configuration could not be saved: {e}"
+            ))
+        })?;
         Ok(())
     }
 }

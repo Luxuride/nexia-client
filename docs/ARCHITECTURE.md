@@ -174,8 +174,9 @@ stale providers.
 
 ### `DesktopEvent` variants
 
-`SyncStarted`, `TransferProgress`, `FileTransferCompleted`, `NodeHydrationStarted`,
-`NodeHydrated`, `NodeDehydrated`, `ThumbnailDownloadStarted`, `ThumbnailReady`,
+`SyncStarted`, `FileTransferCompleted`, `NodeHydrationStarted`,
+`NodeHydrated`, `NodeHydrationFailed`, `NodeDehydrated`, `ThumbnailDownloadStarted`,
+`ThumbnailReady`,
 `ThumbnailFailed`, `ThumbnailProgress`, `DisplaySettingsChanged`, `VfsTreeUpdated`,
 `SyncCompleted`, `MountProgress`, `AccountSwitched`, `AccountSignedOut`,
 `SyncMountAdded`, `SyncMountUpdated`, `SyncMountRemoved`, `Notification`.
@@ -213,7 +214,9 @@ dispatches on.
 **Who drives a cycle.** The SDK ships no timer — `OrchestratorConfig`
 `sync_interval_seconds` is stored but unread, and `MountsHandle::sync_mount()`
 only reconciles the local directory against the journal. The real two-way cycle
-is therefore this app's job: `FolderSyncEngine::sync_mount(mount_id)` takes a
+is therefore this app's job: `FolderSyncEngine::sync_mount(mount_id)` claims the
+mount (`try_claim_sync`, one cycle per mount id, released on every exit path by a
+RAII guard), takes a
 priority permit, resolves the active DAV context, creates the local target if
 missing, then awaits `FolderSyncRunner::execute_sync_cycle(&dav_client, &user,
 is_vfs, is_cancelled, on_progress)`. It brackets the cycle with
@@ -225,17 +228,20 @@ rules are worth knowing exactly:
 | id starts with `app-` | `Ok(0)` — internal VFS mount |
 | mount paused, or global `is_sync_paused()` | `Err(SyncError::OperationDisabled("Synchronization is currently paused"))` |
 | mount missing, `!enabled`, or `mode == "Fuse"` | `Ok(0)` |
+| a cycle is already running for this mount | `Ok(0)` |
 
 So a paused mount is the one case that surfaces an error; every other skip is a
-silent zero.
+silent zero. A cycle that returns an error leaves the mount idle again and raises
+`DesktopEvent::Notification` (level `Error`), so a failed cycle is visible instead
+of looking like a mount that never finished.
 
 On success it returns `outcome.downloaded + outcome.uploaded`, and after the
 cycle it re-runs `discover_remote` to `batch_prefetch_thumbnails_with_ids` (batch
 256) for every non-directory entry matching `is_thumbnail_candidate` — a suffix
 list covering `jpg/jpeg/png/gif/webp/svg/bmp/tiff/mp4/mkv/webm/mov/avi/pdf`.
-A cancellation observed after the cycle returns early, skipping both the
-thumbnail pass and the closing `MountProgress`/`SyncCompleted` events. It is
-reached from
+A cancellation observed after the cycle finishes the mount (`finish_cycle`) and
+returns `outcome.downloaded + outcome.uploaded`, skipping the thumbnail pass.
+It is reached from
 
 | Trigger | Call path |
 | --- | --- |

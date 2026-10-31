@@ -29,6 +29,9 @@ pub struct FileGridView {
     icon_widgets: Rc<RefCell<HashMap<String, (GtkBox, i32)>>>,
     selection_tracker: SelectionTracker,
     generation: Rc<Cell<u64>>,
+    /// Zoom level the current children were built for. Part of the rebuild decision because the
+    /// zoom is not a property of the entries.
+    rendered_zoom: Rc<Cell<Option<ZoomLevel>>>,
 }
 
 impl FileGridView {
@@ -166,6 +169,7 @@ impl FileGridView {
             icon_widgets,
             selection_tracker,
             generation,
+            rendered_zoom: Rc::new(Cell::new(None)),
         }
     }
 
@@ -230,19 +234,19 @@ impl<B: FileExplorerBackend> ItemCollectionView<B> for FileGridView {
         // If the items in the directory are already identical, do not clear the flowbox or reset scroll!
         let is_identical = {
             let existing = self.items.borrow();
-            existing.len() == items.len()
-                && existing.iter().zip(items.iter()).all(|(a, b)| {
-                    a.path == b.path
-                        && a.status == b.status
-                        && a.name == b.name
-                        && a.size_bytes == b.size_bytes
-                })
+            self.rendered_zoom.get() == Some(zoom)
+                && existing.len() == items.len()
+                && existing
+                    .iter()
+                    .zip(items.iter())
+                    .all(|(a, b)| a.renders_like(b))
         };
         if is_identical {
             return;
         }
 
         self.clear();
+        self.rendered_zoom.set(Some(zoom));
         let current_gen = self.generation.get();
         let all_items = Rc::new(items.to_vec());
         *self.items.borrow_mut() = items.to_vec();

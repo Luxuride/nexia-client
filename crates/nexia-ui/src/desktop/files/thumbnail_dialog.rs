@@ -164,7 +164,7 @@ impl ThumbnailDownloadsDialog {
 
         let mut rx = backend.subscribe_events();
         glib::MainContext::default().spawn_local(async move {
-            while let Ok(event) = rx.recv().await {
+            while let Some(event) = nexia_core::events::next_event(&mut rx).await {
                 match event {
                     DesktopEvent::ThumbnailDownloadStarted { path } => {
                         *total_started_events.borrow_mut() += 1;

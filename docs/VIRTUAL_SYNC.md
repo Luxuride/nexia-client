@@ -97,21 +97,25 @@ keep the payload in the app cache only.
 1. Takes a `PriorityPermit` (background thumbnail work yields) and a
    `download_semaphore` permit.
 2. Normalises the path with `format!("/{}", remote_path.trim_matches('/'))`.
-3. Emits `DesktopEvent::NodeHydrationStarted`.
-4. Requires an active account session and resolves the DAV client; without one it
+3. Requires an active account session and resolves the DAV client; without one it
    returns `SyncError::NotFound("No active account session")`.
-5. `GET`s the file and passes the bytes to `vfs.hydrate_local(remote_path, bytes)`
+4. Emits `DesktopEvent::NodeHydrationStarted`, then `GET`s the file and passes the
+   bytes to `vfs.hydrate_local(remote_path, bytes)`
    — note it is handed the **raw** argument, while the DAV path was built from
    the trimmed form (`clean_sub`), so the VFS sees the key the caller passed.
+5. A `GET` or `hydrate_local` failure emits `DesktopEvent::NodeHydrationFailed`
+   before returning the error. Every path that announced `NodeHydrationStarted`
+   therefore ends with `NodeHydrated` or `NodeHydrationFailed`, which is what the
+   view relies on to drop its in-flight mark.
 6. **If the path falls under any enabled, non-internal, non-`"Fuse"` mount and
    the write succeeds** (`is_internal_vfs(&mount.id) || !mount.enabled` are skipped
    first), writes the bytes to
    that mount's local target *as well*, records a `JournalEntry` in the mount's
-   journal, clears any FreeDesktop failure marker, prefetches a thumbnail and
+   journal, clears any FreeDesktop failure marker, starts a thumbnail prefetch and
    emits `FileTransferCompleted` + `NodeHydrated`, returning the local-target path.
    The check is `mount.mode != "Fuse"`, not "is two-way": a `"VirtualVfs"` mount
    with a local target gets the copy too. The VFS-side `hydrate_local` call in
-   step 5 has already run either way, so the payload exists in both places. This
+   step 4 has already run either way, so the payload exists in both places. This
    branch returns early, so `NodeHydrated` fires exactly once on either path.
 7. Otherwise (no matching mount, or the local write failed) emits `NodeHydrated`
    and returns the path `hydrate_local` produced.
@@ -119,11 +123,11 @@ keep the payload in the app cache only.
 The mount loop runs in the order `sync_mounts()` returns, so the **first**
 matching mount wins; nested mounts are not merged.
 
-Ordering detail worth knowing when reading logs: `NodeHydrationStarted` is emitted
-at step 3, **before** the session check and before the GET. A hydrate that fails on
-a missing session or a network error therefore still produces a `Started` with no
-matching `NodeHydrated` — the UI clears that badge on the returned `Err`, not on an
-event.
+The thumbnail prefetch of step 6 is a detached task on purpose. `fetch_thumbnail`
+waits for all `PriorityPermit`s to drain before it downloads, and `hydrate_file`
+holds one: awaiting it inline parks the hydration forever and leaks both that
+permit and the download slot, after which the gate never opens again.
+
 
 There is a second entry point, `hydrate_local_file(local_path)`, for the
 FUSE/desktop case: the user opens a 0-byte placeholder **file in a local folder**,

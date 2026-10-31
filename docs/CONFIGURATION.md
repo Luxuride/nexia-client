@@ -43,17 +43,23 @@ There is no per-account config file: an account's preferences live inside
 to a second location would create a dump that nothing reads back.
 
 The database key is loaded from the keychain
-(`KeychainKeyStore::new("eu.luxuride.nexia", "desktop-storage-key")`).
-If the keychain is unavailable, `DesktopStorage::resolve_key` reads or creates
-`.storage_key` next to the database (mode `0600`, created once with `O_EXCL`).
-The database therefore survives a missing keyring, but a key file is not a
-substitute for one.
+(`KeychainKeyStore::new("eu.luxuride.nexia", "desktop-storage-key")`), with
+`.storage_key` next to the database (mode `0600`, created once with `O_EXCL`) as
+the fallback when no keyring is available. A key file is not a substitute for a
+keyring, only a way to survive its absence.
+
+`DesktopStorage::open_default()` mints a key only when no database exists. For an
+existing `desktop_config.db` both candidates — keychain and key file — are
+*offered to the database first*: a key is accepted only once it has actually
+opened it, so a rotated or stale key is rejected instead of being written back as
+the new truth. When neither opens the database, `open_default()` fails with
+`CoreError::StorageKeyUnusable` naming the path; the app then falls back to
+`config.json` for reads instead of starting over with an empty configuration.
 
 A key file that exists but cannot be read or decoded is an **error**, not a
 reason to mint a new key: a fresh key would make the existing
-`desktop_config.db` undecryptable, so `DesktopStorage::resolve_key` returns
-`CoreError::ConfigLoad` / `CoreError::StorageKey` naming the path and the app
-falls back to `config.json` instead of silently replacing the key. The same
+`desktop_config.db` undecryptable, so `read_key_file` returns
+`CoreError::ConfigLoad` / `CoreError::StorageKey` naming the path. The same
 applies to a missing user data directory: `open_default()` fails with
 `CoreError::MissingDataDir` rather than opening a database in the working
 directory.
@@ -286,8 +292,11 @@ directory.
 
 - Startup: `DesktopStorage::open_default()` → `load_app_config()`; on any failure
   the JSON file is loaded; on failure of that, `AppConfig::default()`.
-- The keychain always wins over `.storage_key`; a fresh key is minted and written
-  if neither is usable.
+- The keychain always wins over `.storage_key`, but only among the keys that open
+  the existing database; a fresh key is minted only when no database exists.
+- A database row that cannot be decoded is repaired from the JSON mirror once and
+  logged; the start fails only when the mirror is unusable too, because starting
+  empty would persist defaults over the user's accounts.
 - `persist_config()` writes both stores and returns the first error, but callers
   in the coordinator log it and continue rather than failing the operation that
   triggered it — the in-memory config is the source of truth for the running

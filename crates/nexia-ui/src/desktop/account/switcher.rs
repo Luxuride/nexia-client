@@ -107,7 +107,7 @@ impl AccountSwitcher {
             let mut event_rx = backend.subscribe_events();
             glib::MainContext::default().spawn_local(async move {
                 refresh_active_account(&b, &button_init, &label_init, &avatar_bin_init).await;
-                while let Ok(event) = event_rx.recv().await {
+                while let Some(event) = nexia_core::events::next_event(&mut event_rx).await {
                     if matches!(
                         event,
                         DesktopEvent::AccountSwitched { .. }

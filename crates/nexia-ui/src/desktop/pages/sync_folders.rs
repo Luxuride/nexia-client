@@ -335,7 +335,7 @@ impl SyncFoldersPage {
         let ref_for_events = refresh_list.clone();
         let pause_for_events = pause_state.clone();
         glib::MainContext::default().spawn_local(async move {
-            while let Ok(event) = event_rx.recv().await {
+            while let Some(event) = nexia_core::events::next_event(&mut event_rx).await {
                 match event {
                     nexia_core::events::DesktopEvent::AccountSwitched { .. }
                     | nexia_core::events::DesktopEvent::AccountSignedOut { .. } => {

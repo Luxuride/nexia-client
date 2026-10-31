@@ -105,9 +105,10 @@ On start the binary:
 5. Builds the `DesktopSyncCoordinator` over an `EventBus` (capacity 256),
    attaches storage, sets the config path and persists config once.
 6. Creates the `DesktopUiController`.
-7. Refreshes the autostart desktop entry only when `is_autostart_enabled()`
-   finds one already present, so the launcher never creates or removes the entry
-   itself; the `global.autostart` preference is persisted but unread.
+7. For an interactive launch only (no one-shot CLI action was requested),
+   refreshes the autostart desktop entry when `is_autostart_enabled()` finds one
+   already present, so the launcher never creates or removes the entry itself; the
+   `global.autostart` preference is persisted but unread.
 8. Calls `controller.ensure_discovered_accounts()` — existing local accounts
    (`nextcloud.cfg`, GNOME Online Accounts, KAccounts) are adopted through the
    SDK's `DesktopSso` discovery here.

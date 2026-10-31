@@ -13,6 +13,9 @@ use nexia_nextcloud_sdk::{MountStatus, format_bytes};
 use super::MountActivityDialog;
 use crate::widget::{FileExplorerBackend, ViewComponent};
 
+/// Upper bound on rendered activity rows; the oldest are dropped first.
+const MAX_ACTIVITY_ROWS: usize = 200;
+
 /// Preferences page displaying per-mount sync activities, background thumbnails, and file transfers.
 #[derive(Clone)]
 pub struct ActivityPage {
@@ -317,7 +320,13 @@ impl ActivityPage {
         let activity_rows: Rc<RefCell<Vec<adw::ActionRow>>> = Rc::new(RefCell::new(Vec::new()));
 
         glib::MainContext::default().spawn_local(async move {
-            while let Ok(event) = rx.recv().await {
+            while let Some(event) = nexia_core::events::next_event(&mut rx).await {
+                // A background session runs for days: without a cap the group grows until the
+                // process ends. The oldest rows are the least useful, so they go first.
+                while activity_rows.borrow().len() > MAX_ACTIVITY_ROWS {
+                    let oldest = activity_rows.borrow_mut().remove(0);
+                    act_grp_clone.remove(&oldest);
+                }
                 match event {
                     DesktopEvent::SyncMountAdded { ref mount_id } => {
                         ref_mounts_for_events();
@@ -445,6 +454,12 @@ impl ActivityPage {
                         act_grp_clone.add(&row);
                         activity_rows.borrow_mut().push(row);
                     }
+                    // A hydration also emits `NodeHydrated`, which is the arm above: rendering
+                    // both reports one download twice.
+                    DesktopEvent::FileTransferCompleted {
+                        kind: nexia_core::events::TransferKind::Hydration,
+                        ..
+                    } => {}
                     DesktopEvent::FileTransferCompleted {
                         relative_path,
                         kind,

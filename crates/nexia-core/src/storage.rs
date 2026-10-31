@@ -9,6 +9,12 @@ use crate::account::AccountId;
 use crate::config::{AccountPreferences, AppConfig, GlobalPreferences};
 use crate::error::CoreError;
 
+/// Keychain application identifier owning the desktop storage key.
+const KEYCHAIN_APPLICATION: &str = "eu.luxuride.nexia";
+
+/// Keychain account label of the desktop storage key.
+const KEYCHAIN_ACCOUNT: &str = "desktop-storage-key";
+
 /// Encrypted storage engine for desktop settings, preferences, and state.
 #[derive(Clone)]
 pub struct DesktopStorage {
@@ -27,45 +33,71 @@ impl DesktopStorage {
         })
     }
 
-    /// Resolves the storage key using the platform keychain, falling back to a local key file.
-    ///
-    /// The key file is created with mode `0600` because it decrypts the database that
-    /// holds the configured credentials. An existing but unreadable key is an error:
-    /// generating a replacement would orphan the database it was protecting.
-    pub async fn resolve_key(key_file: &Path) -> Result<StoreKey, CoreError> {
-        let keystore = KeychainKeyStore::new("eu.luxuride.nexia", "desktop-storage-key");
-        if let Ok(key) = keystore.load_or_create().await {
-            return Ok(key);
-        }
-
-        if key_file.exists() {
-            let content =
-                std::fs::read_to_string(key_file).map_err(|source| CoreError::ConfigLoad {
-                    path: key_file.to_path_buf(),
-                    source,
-                })?;
-            return StoreKey::from_hex(content.trim(), "desktop-storage-key").map_err(|source| {
-                CoreError::StorageKey {
-                    path: key_file.to_path_buf(),
-                    source,
-                }
-            });
-        }
-
-        let key = StoreKey::generate()?;
-        write_key_file(key_file, &key.to_hex())?;
-        Ok(key)
-    }
-
     /// Opens the default encrypted database in the user data directory.
+    ///
+    /// Key resolution never invents a key for a database that already exists. A key is only
+    /// accepted once it has actually opened the database, because a wrong one would leave
+    /// every stored credential unreachable while the application happily starts over.
     pub async fn open_default() -> Result<Self, CoreError> {
         let data_dir = dirs::data_dir().ok_or(CoreError::MissingDataDir)?;
         let db_dir = data_dir.join("nexia");
         let db_path = db_dir.join("desktop_config.db");
         let key_file = db_dir.join(".storage_key");
 
-        let key = Self::resolve_key(&key_file).await?;
+        let keystore = KeychainKeyStore::new(KEYCHAIN_APPLICATION, KEYCHAIN_ACCOUNT);
+
+        if db_path.exists() {
+            return Self::open_existing(db_path, &key_file, &keystore).await;
+        }
+
+        // No database yet, so a freshly minted key can orphan nothing: prefer the keychain,
+        // and fall back to the key file when no keychain is available (headless launches).
+        match keystore.load_or_create().await {
+            Ok(key) => return Self::open(db_path, &key),
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "Platform keychain unavailable, using a local storage key file"
+                );
+            }
+        }
+        let key = match read_key_file(&key_file)? {
+            Some(key) => key,
+            None => store_key_file(&key_file, &StoreKey::generate()?)?,
+        };
         Self::open(db_path, &key)
+    }
+
+    /// Opens an existing database with whichever known key actually unlocks it.
+    async fn open_existing(
+        db_path: PathBuf,
+        key_file: &Path,
+        keystore: &KeychainKeyStore,
+    ) -> Result<Self, CoreError> {
+        let keychain_key = match keystore.load().await {
+            Ok(key) => key,
+            Err(error) => {
+                tracing::warn!(error = %error, "Could not read the storage key from the keychain");
+                None
+            }
+        };
+        let file_key = read_key_file(key_file)?;
+
+        for (origin, key) in [("keychain", keychain_key), ("key file", file_key)]
+            .into_iter()
+            .filter_map(|(origin, key)| key.map(|key| (origin, key)))
+        {
+            match Self::open(&db_path, &key) {
+                Ok(storage) => return Ok(storage),
+                Err(error) => tracing::warn!(
+                    origin,
+                    error = %error,
+                    "Storage key does not unlock the configuration database"
+                ),
+            }
+        }
+
+        Err(CoreError::StorageKeyUnusable { path: db_path })
     }
 
     /// Returns the filesystem path to this encrypted database.
@@ -167,8 +199,39 @@ fn decode<T: serde::de::DeserializeOwned>(json: &str, db_path: &Path) -> Result<
     })
 }
 
-/// Writes the storage key to `path` with owner-only permissions, never overwriting.
-fn write_key_file(path: &Path, hex: &str) -> Result<(), CoreError> {
+/// Reads the storage key file, if it holds a complete key.
+///
+/// A zero-length file is what a crash between creating and writing the key leaves behind.
+/// It cannot decrypt anything, so it is reported as absent rather than as a permanent,
+/// unrecoverable error on every later start.
+fn read_key_file(path: &Path) -> Result<Option<StoreKey>, CoreError> {
+    let content = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(CoreError::ConfigLoad {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    let hex = content.trim();
+    if hex.is_empty() {
+        return Ok(None);
+    }
+    StoreKey::from_hex(hex, KEYCHAIN_ACCOUNT)
+        .map(Some)
+        .map_err(|source| CoreError::StorageKey {
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
+/// Writes a freshly minted storage key to `path` with owner-only permissions.
+///
+/// The file is created exclusively, so a concurrent start cannot overwrite a key another
+/// process is about to protect its database with; the loser adopts the winner's key.
+fn store_key_file(path: &Path, key: &StoreKey) -> Result<StoreKey, CoreError> {
     use std::io::Write as _;
 
     if let Some(parent) = path.parent() {
@@ -185,16 +248,32 @@ fn write_key_file(path: &Path, hex: &str) -> Result<(), CoreError> {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    let mut file = options.open(path).map_err(|source| CoreError::ConfigSave {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    file.write_all(hex.as_bytes())
+    let mut file = match options.open(path) {
+        Ok(file) => file,
+        Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+            return read_key_file(path)?.ok_or(CoreError::ConfigSave {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+        Err(source) => {
+            return Err(CoreError::ConfigSave {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+
+    file.write_all(key.to_hex().as_bytes())
         .and_then(|()| file.sync_all())
-        .map_err(|source| CoreError::ConfigSave {
-            path: path.to_path_buf(),
-            source,
-        })
+        .map_err(|source| {
+            let _ = std::fs::remove_file(path);
+            CoreError::ConfigSave {
+                path: path.to_path_buf(),
+                source,
+            }
+        })?;
+    Ok(key.clone())
 }
 
 #[cfg(test)]

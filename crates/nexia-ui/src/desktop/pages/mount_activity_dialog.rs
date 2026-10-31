@@ -200,7 +200,7 @@ impl MountActivityDialog {
         let apply_event = apply_snapshot.clone();
         let target_mount_id = mount.id.clone();
         glib::MainContext::default().spawn_local(async move {
-            while let Ok(event) = rx.recv().await {
+            while let Some(event) = nexia_core::events::next_event(&mut rx).await {
                 if let DesktopEvent::MountProgress(snap) = event
                     && snap.mount_id.as_str() == target_mount_id
                 {

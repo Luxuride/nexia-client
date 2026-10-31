@@ -67,6 +67,12 @@ pub struct DesktopSyncCoordinator {
     pub(crate) priority_ops_counter: Arc<std::sync::atomic::AtomicUsize>,
     pub(crate) priority_ops_notify: Arc<tokio::sync::Notify>,
     pub(crate) cancelled_mounts: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
+    /// Mounts with a synchronization cycle currently running. Held for the whole cycle so two
+    /// cycles cannot interleave their journal load/modify/save and their writes to one tree.
+    sync_claims: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// Active account id as of the last successful look at the configuration, used by the
+    /// synchronous cache-path helpers when the configuration lock is momentarily held.
+    last_active_account: Arc<std::sync::RwLock<Option<String>>>,
 }
 
 /// RAII guard representing an active high-priority operation (hydration, sync, directory listing).
@@ -129,6 +135,25 @@ impl DesktopSyncCoordinator {
             .read()
             .map(|cancelled| cancelled.contains(mount_id))
             .unwrap_or(false)
+    }
+
+    /// Claims the right to run a synchronization cycle for `mount_id`.
+    ///
+    /// Returns `false` when a cycle is already running for that mount. Deriving "is running"
+    /// from the progress cache does not work: it only turns `Syncing` once the first item has
+    /// been transferred, which leaves the whole discovery and planning phase unguarded.
+    pub fn try_claim_sync(&self, mount_id: &str) -> bool {
+        self.sync_claims
+            .lock()
+            .map(|mut claims| claims.insert(mount_id.to_string()))
+            .unwrap_or(false)
+    }
+
+    /// Releases a claim taken by [`Self::try_claim_sync`].
+    pub fn release_sync(&self, mount_id: &str) {
+        if let Ok(mut claims) = self.sync_claims.lock() {
+            claims.remove(mount_id);
+        }
     }
 
     /// Clears the cancellation status for a mount point (e.g. when added or resumed).
@@ -204,6 +229,8 @@ impl DesktopSyncCoordinator {
             priority_ops_counter: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             priority_ops_notify: Arc::new(tokio::sync::Notify::new()),
             cancelled_mounts: Arc::new(std::sync::RwLock::new(std::collections::HashSet::new())),
+            sync_claims: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            last_active_account: Arc::new(std::sync::RwLock::new(None)),
         };
 
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
@@ -378,13 +405,24 @@ impl DesktopSyncCoordinator {
 
     /// Returns the active account's thumbnails directory synchronously, or global fallback.
     pub fn active_thumbnails_dir_sync(&self) -> PathBuf {
-        if let Ok(conf) = self.config.try_read()
-            && let Some(ref acc_id) = conf.active_account_id
-        {
-            self.account_thumbnails_dir(&acc_id.0)
-        } else {
-            self.cache_dir().join("thumbnails")
+        if let Ok(conf) = self.config.try_read() {
+            if let Ok(mut cached) = self.last_active_account.write() {
+                *cached = conf.active_account_id.as_ref().map(|id| id.0.clone());
+            }
+            if let Some(ref acc_id) = conf.active_account_id {
+                return self.account_thumbnails_dir(&acc_id.0);
+            }
+            return self.cache_dir().join("thumbnails");
         }
+        // The lock is only ever contended for the duration of a persist, and falling back to the
+        // global directory during that window can serve another account's thumbnail for the same
+        // path hash. The last account seen is the correct answer in that case.
+        if let Ok(cached) = self.last_active_account.read()
+            && let Some(ref account_id) = *cached
+        {
+            return self.account_thumbnails_dir(account_id);
+        }
+        self.cache_dir().join("thumbnails")
     }
 
     /// Returns the active account's thumbnails directory, or global fallback if no active account.
@@ -594,10 +632,10 @@ impl DesktopSyncCoordinator {
         }
         let clients = self.clients.read().await;
         let idx = *self.active_client_idx.read().await;
-        clients
-            .get(idx)
-            .cloned()
-            .or_else(|| clients.first().cloned())
+        // Deliberately no `clients.first()` fallback: when the active account has no client
+        // (its build failed, or its storage is unavailable) any other client would perform
+        // uploads, deletes and mount bookkeeping inside a different account.
+        clients.get(idx).cloned()
     }
 
     /// Appends a new [`Client`] to the list of managed clients, returning its index.

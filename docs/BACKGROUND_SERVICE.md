@@ -196,8 +196,11 @@ And `flatpak run …` is used rather than `/app/bin/nexia-client`, which
 does not exist outside the sandbox. The entry carries `X-Flatpak=<app id>` so
 portals and desktop shells recognise it as a Flatpak app.
 
-`register_autostart()` runs on every start, so the file is rewritten each launch
-and manual edits to it do not survive.
+`register_autostart()` runs on every interactive start, so the file is rewritten
+each launch and manual edits to it do not survive. One-shot CLI operations
+(`--sync`, `--hydrate`, `--list-mounts`, the pause/resume switches, …) refresh
+nothing: they must not rewrite the login behaviour of the desktop session they
+were launched from.
 
 ---
 
