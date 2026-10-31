@@ -139,11 +139,6 @@ pub struct PreviewInstallSummary {
     pub skipped: usize,
 }
 
-/// Resolves `remote_path` relative to a mount's remote root, on path-segment boundaries.
-///
-/// A plain prefix test would let a mount rooted at `/photos` claim `/photos2/x`, writing a file
-/// that belongs to a sibling folder into the wrong local tree. The result is empty for the mount
-/// root itself and `None` when the path is outside the mount.
 impl DesktopSyncCoordinator {
     /// Snaps a requested thumbnail size onto the squares Nextcloud actually generates.
     ///
@@ -157,10 +152,15 @@ impl DesktopSyncCoordinator {
             s if s <= 512 => 512,
             _ => 1024,
         };
-        standard.min(max_size).max(64)
+        standard.min(max_size.max(64))
     }
 }
 
+/// Resolves `remote_path` relative to a mount's remote root, on path-segment boundaries.
+///
+/// A plain prefix test would let a mount rooted at `/photos` claim `/photos2/x`, writing a file
+/// that belongs to a sibling folder into the wrong local tree. The result is empty for the mount
+/// root itself and `None` when the path is outside the mount.
 fn mount_relative_path(remote_path: &str, mount_remote: &str) -> Option<String> {
     let mount_remote = mount_remote.trim_matches('/');
     let remote_path = remote_path.trim_matches('/');
@@ -298,7 +298,29 @@ impl DesktopSyncCoordinator {
     }
 
     /// Refreshes the virtual file entries for a specific relative directory path.
+    ///
+    /// Best effort: a failed listing is logged and reported as zero inserted entries, which is what
+    /// the background sweeps and FUSE directory reads want — they retry on the next pass and must
+    /// not turn a transient server error into a user-visible failure.
     pub async fn refresh_path(&self, relative_path: &str) -> Result<usize, SyncError> {
+        match self.refresh_path_strict(relative_path).await {
+            Ok(inserted) => Ok(inserted),
+            Err(err) => {
+                tracing::warn!(
+                    path = %relative_path,
+                    error = %err,
+                    "Remote WebDAV PROPFIND for path failed; keeping the cached entries"
+                );
+                Ok(0)
+            }
+        }
+    }
+
+    /// Refreshes one directory and reports a failed listing to the caller.
+    ///
+    /// `refresh_path` logs and swallows that failure; a caller that reports success to the user
+    /// (a move, for instance) has to know that the tree it refreshed is stale.
+    async fn refresh_path_strict(&self, relative_path: &str) -> Result<usize, SyncError> {
         let _priority = self.priority_permit();
         let vfs = self.active_vfs().await?;
 
@@ -310,13 +332,10 @@ impl DesktopSyncCoordinator {
         let dav_path = make_dav_path(&user, relative_path)?;
 
         let body = PropfindBody::all();
-        let resources = match dav_client.propfind(&dav_path, Depth::One, &body).await {
-            Ok(r) => r,
-            Err(err) => {
-                tracing::warn!(path = %relative_path, error = %err, "Remote WebDAV PROPFIND for path failed");
-                return Ok(0);
-            }
-        };
+        let resources = dav_client
+            .propfind(&dav_path, Depth::One, &body)
+            .await
+            .map_err(SyncError::WebDav)?;
 
         let dav_prefix = format!("/remote.php/dav/files/{user}");
         let summaries = dav_summaries(&resources);
@@ -525,12 +544,16 @@ impl DesktopSyncCoordinator {
     }
 
     /// Path of the temporary file a payload is written to before the rename.
+    ///
+    /// The name ends in `.part` on purpose: that suffix is on the sync engine's ignore list, so a
+    /// temporary file left behind by a crash is not scanned, not uploaded, and not mistaken for a
+    /// server-side deletion. The leading dot keeps it out of the file listing as well.
     fn partial_path(target: &std::path::Path) -> PathBuf {
         let name = target
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| "payload".to_string());
-        target.with_file_name(format!(".{name}.nexia-part"))
+        target.with_file_name(format!(".{name}.part"))
     }
 
     /// Reads the current remote ETag of a file, if the server reports one.
@@ -575,22 +598,24 @@ impl DesktopSyncCoordinator {
         let _guard = lock.lock().await;
         let mut journal =
             nexia_nextcloud_sdk::SyncJournal::load_from_file(&journal_path).map_err(|source| {
-                SyncError::Journal(format!(
-                    "load the sync journal at {} before recording a hydration: {source}",
-                    journal_path.display()
-                ))
+                SyncError::JournalSync {
+                    path: journal_path.display().to_string(),
+                    operation: "load the journal before recording a hydration",
+                    source,
+                }
             })?;
         let mut entry = nexia_nextcloud_sdk::JournalEntry::new(relative_path, size, mtime, false);
         if let Some(etag) = etag {
             entry = entry.with_remote_etag(etag);
         }
         journal.record(entry);
-        journal.save_to_file(&journal_path).map_err(|source| {
-            SyncError::Journal(format!(
-                "save the sync journal at {} after recording a hydration: {source}",
-                journal_path.display()
-            ))
-        })
+        journal
+            .save_to_file(&journal_path)
+            .map_err(|source| SyncError::JournalSync {
+                path: journal_path.display().to_string(),
+                operation: "save the journal after recording a hydration",
+                source,
+            })
     }
 
     /// Performs on-demand hydration for a virtual file, downloading via SDK or using local cache.
@@ -816,15 +841,15 @@ impl DesktopSyncCoordinator {
                     };
                     this.hydrate_file(&path).await.is_ok()
                 }));
-            }
-            // Drain instead of collecting: a huge directory would otherwise hold one task per file
-            // while only four of them can make progress.
-            while pending.len() >= 32 {
-                let Some(task) = pending.pop() else {
-                    break;
-                };
-                if !matches!(task.await, Ok(true)) {
-                    failures += 1;
+                // Drain while spawning: a huge directory would otherwise hold one task per file
+                // while only four of them can make progress.
+                while pending.len() >= 32 {
+                    let Some(task) = pending.pop() else {
+                        break;
+                    };
+                    if !matches!(task.await, Ok(true)) {
+                        failures += 1;
+                    }
                 }
             }
         }
@@ -971,6 +996,12 @@ impl DesktopSyncCoordinator {
             format!("{}/{}", clean_dest_dir.trim_end_matches('/'), file_name)
         };
 
+        if clean_new == clean_src {
+            // Dropped into the folder it already lives in: issuing the MOVE would only earn a
+            // "source and destination are the same file" rejection from the server.
+            return Ok(clean_new);
+        }
+
         if let Some((user, client, auth)) = self.active_dav_context().await {
             let dav_client = client.dav(&auth);
             let src_dav = make_dav_path(&user, &clean_src)?;
@@ -986,8 +1017,8 @@ impl DesktopSyncCoordinator {
         // code renamed the node in place, leaving the tree showing it in its previous folder.
         let source_dir =
             nexia_nextcloud_sdk::parent_path(&clean_src).unwrap_or_else(|| "/".to_string());
-        self.refresh_path(&source_dir).await?;
-        self.refresh_path(&clean_dest_dir).await?;
+        self.refresh_path_strict(&source_dir).await?;
+        self.refresh_path_strict(&clean_dest_dir).await?;
         Ok(clean_new)
     }
 
@@ -1258,12 +1289,14 @@ impl DesktopSyncCoordinator {
         }
         // A failed save would silently forget the choice on the next start, which is what the
         // discarded result did before.
-        self.persist_config().await.map_err(|source| {
-            SyncError::Journal(format!("save the maximum thumbnail size: {source}"))
-        })
+        self.persist_config()
+            .await
+            .map_err(|source| SyncError::Config {
+                context: "save the maximum thumbnail size",
+                source,
+            })
     }
 
-    /// Runs synchronization on all enabled two-way sync folder pairs via SDK `FolderSyncRunner`.
     /// Recursively searches the virtual tree and server unified search for matching files/directories.
     pub async fn search(
         &self,
@@ -1582,11 +1615,15 @@ impl DesktopSyncCoordinator {
         }
 
         let fuse_mp = self.fuse_mountpoint().await;
-        // A node that was restored from disk has its payload in the account content directory, not
-        // under `vfs/`: guessing the latter made every restored node look like a missing target.
-        let content_dir = match self.active_account().await {
-            Some(account) => Some(self.account_content_dir(&account.id.0)),
-            None => None,
+        // Both roots are needed: a node restored from disk keeps its payload in the account content
+        // directory, while one hydrated through the internal mount writes it under `vfs/`. Listing
+        // only the former left every freshly hydrated file without a system thumbnail.
+        let (content_dir, vfs_dir) = match self.active_account().await {
+            Some(account) => (
+                Some(self.account_content_dir(&account.id.0)),
+                Some(self.account_vfs_dir(&account.id.0)),
+            ),
+            None => (None, None),
         };
         let folder_mounts: Vec<(String, PathBuf)> = self
             .sync_mounts()
@@ -1609,7 +1646,13 @@ impl DesktopSyncCoordinator {
         // other task on this worker for the length of a folder's worth of previews.
         let owned_items = items.to_vec();
         summary = match tokio::task::spawn_blocking(move || {
-            install_previews(&fuse_mp, &content_dir, &folder_mounts, &owned_items)
+            let roots = PreviewRoots {
+                fuse_mp: &fuse_mp,
+                content_dir: &content_dir,
+                vfs_dir: &vfs_dir,
+                folder_mounts: &folder_mounts,
+            };
+            install_previews(roots, &owned_items)
         })
         .await
         {
@@ -1988,12 +2031,25 @@ impl DesktopSyncCoordinator {
 ///
 /// Runs on the blocking pool: decoding a cached preview and resizing it are synchronous, and a
 /// folder's worth of them would otherwise stall the async worker that called the batch.
-fn install_previews(
-    fuse_mp: &Option<PathBuf>,
-    content_dir: &Option<PathBuf>,
-    folder_mounts: &[(String, PathBuf)],
-    items: &[(String, Vec<u8>)],
-) -> PreviewInstallSummary {
+/// The locations a file's payload can live in while it is on this machine.
+struct PreviewRoots<'a> {
+    /// Mountpoint of the FUSE mount, when one is mounted.
+    fuse_mp: &'a Option<PathBuf>,
+    /// Account directory holding restored payloads.
+    content_dir: &'a Option<PathBuf>,
+    /// Account directory holding payloads hydrated through the internal mount.
+    vfs_dir: &'a Option<PathBuf>,
+    /// Enabled sync folders, as (remote root, local target).
+    folder_mounts: &'a [(String, PathBuf)],
+}
+
+fn install_previews(roots: PreviewRoots<'_>, items: &[(String, Vec<u8>)]) -> PreviewInstallSummary {
+    let PreviewRoots {
+        fuse_mp,
+        content_dir,
+        vfs_dir,
+        folder_mounts,
+    } = roots;
     let mut summary = PreviewInstallSummary::default();
     let now_sec = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2007,6 +2063,9 @@ fn install_previews(
             targets.push(fuse_mp.join(clean_path));
         }
         if let Some(dir) = content_dir {
+            targets.push(dir.join(clean_path));
+        }
+        if let Some(dir) = vfs_dir {
             targets.push(dir.join(clean_path));
         }
         for (mount_remote, mount_local) in folder_mounts {
@@ -2218,6 +2277,29 @@ mod tests {
         // A sibling folder sharing the mount name as a prefix is not inside the mount.
         assert_eq!(mount_relative_path("photos2/a.jpg", "/photos"), None);
         assert_eq!(mount_relative_path("other/a.jpg", "/photos"), None);
+    }
+
+    #[test]
+    fn a_partial_payload_is_named_so_the_sync_engine_ignores_it() {
+        let partial = DesktopSyncCoordinator::partial_path(std::path::Path::new("/tmp/report.pdf"));
+        assert!(
+            partial.to_string_lossy().ends_with(".part"),
+            "the sync engine only ignores `.part`, so a leftover would be uploaded: {}",
+            partial.display()
+        );
+    }
+
+    #[test]
+    fn a_thumbnail_is_never_larger_than_the_configured_cap() {
+        assert_eq!(DesktopSyncCoordinator::standard_thumbnail_size(100, 32), 64);
+        assert_eq!(
+            DesktopSyncCoordinator::standard_thumbnail_size(100, 128),
+            128
+        );
+        assert_eq!(
+            DesktopSyncCoordinator::standard_thumbnail_size(300, 512),
+            512
+        );
     }
 
     #[test]

@@ -10,6 +10,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::error::SyncError;
+
+/// Distinguishes concurrent `tree.json` temporary files within this process.
+static TREE_WRITE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 use crate::mount_mode::StoredMountMode;
 use nexia_core::account::{Account, AccountCredentials, ServerConfig};
 use nexia_core::config::AppConfig;
@@ -470,10 +473,26 @@ impl DesktopSyncCoordinator {
         }
 
         let json = serde_json::to_string_pretty(&*tree).map_err(std::io::Error::other)?;
-        // Write then rename, so an interrupted save cannot leave a half-written tree behind.
-        let temp_file = vfs_dir.join("tree.json.tmp");
-        std::fs::write(&temp_file, json)?;
-        std::fs::rename(&temp_file, vfs_dir.join("tree.json"))
+        // Write to a private temporary file, then rename, so an interrupted save cannot leave a
+        // half-written tree behind. The name carries the process id and a counter because
+        // concurrent persists of the same account (an async one and a blocking-pool one) would
+        // otherwise share one temporary file: the second writer truncates the first one's bytes,
+        // the first renames that torn document into `tree.json`, and every later load silently
+        // starts from an empty tree.
+        let temp_file = vfs_dir.join(format!(
+            "tree.json.{}.{}.tmp",
+            std::process::id(),
+            TREE_WRITE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        if let Err(err) = std::fs::write(&temp_file, json) {
+            let _ = std::fs::remove_file(&temp_file);
+            return Err(err);
+        }
+        if let Err(err) = std::fs::rename(&temp_file, vfs_dir.join("tree.json")) {
+            let _ = std::fs::remove_file(&temp_file);
+            return Err(err);
+        }
+        Ok(())
     }
 
     /// Persists a virtual tree without running the write on the async worker.

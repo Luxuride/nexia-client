@@ -145,27 +145,42 @@ Both hydrators write the payload into a sync folder through a temporary file in
 the destination directory followed by a rename, and refuse a destination that is
 not a regular file: writing in place leaves a truncated file if the process dies
 mid-write, and a symlink at the destination would send the payload wherever it
-points. The journal entry recorded for the file carries the remote ETag read back
-with one small `PROPFIND`, so the next cycle can tell "unchanged since we wrote
-it" from "changed on the server"; the load-modify-save runs under a per-mount
-lock so two concurrent hydrations cannot drop each other's entry. A journal that
-cannot be loaded or saved is logged and the hydration still succeeds — the file
-is on disk either way.
+points. The temporary file is named `.<file>.part`: that suffix is on the sync
+engine's ignore list, so a leftover from a crash is never scanned, uploaded or
+mistaken for a server-side deletion.
+
+The journal entry recorded for the file carries the remote ETag read back with
+one small `PROPFIND`, so the next cycle can tell "unchanged since we wrote it"
+from "changed on the server". The load-modify-save then runs under a per-mount
+lock so two concurrent hydrations cannot drop each other's entry. That lock
+covers hydrations only: a running `FolderSyncEngine` cycle loads the journal once
+and saves the whole document, and it takes no such lock, so an entry recorded
+while a cycle is in flight can be overwritten. Journal-level serialisation has to
+come from the SDK; `journal_lock` is the seam it will use. A journal that cannot
+be loaded or saved is logged and the hydration still succeeds — the file is on
+disk either way.
 
 A freedesktop preview is installed for every visible location of the file — the FUSE mountpoint,
-the account content directory (where a restored node's payload actually lives) and each sync
-folder that contains it — with the resizing done on the blocking pool, so a folder's worth of
-previews does not stall the worker that requested them.
+the account content directory (where a restored node's payload lives) and the account `vfs`
+directory (where one hydrated through the internal mount lands), plus each sync folder that
+contains it — with the resizing done on the blocking pool, so a folder's worth of previews does
+not stall the worker that requested them.
 
-`hydrate_directory(remote_dir)` is a breadth-first sweep over the VFS tree: it
-pops each directory, pushes child directories and hydrates each child file that
-the tree reports as a placeholder — an already hydrated file is skipped instead
-of downloaded again. Files are hydrated four at a time, and the tasks are drained
-as the sweep goes so a huge directory does not hold one task per file. The
-return value counts the successes; failures (including a missing session, which
-makes every `hydrate_file` fail immediately) are counted and raised as one
+`hydrate_directory(remote_dir)` is a depth-first sweep over the VFS tree: it pops
+each directory, pushes child directories and hydrates each child file that the
+tree reports as a placeholder — an already hydrated file is skipped instead of
+downloaded again. Files are hydrated four at a time, and the spawned tasks are
+drained while the sweep goes so a huge directory does not hold one task per file.
+The return value counts the successes; failures (including a missing session,
+which makes every `hydrate_file` fail immediately) are counted and raised as one
 `DesktopEvent::Notification` at `NotificationLevel::Error`, so an offline sweep
 is visible instead of looking like an empty directory.
+
+`refresh_path` is best effort: a failed listing is logged and reported as zero
+inserted entries, because the background sweeps and the FUSE directory reads
+retry on their next pass. A caller that reports success to the user uses the
+internal strict variant instead — `move_resource` does, so a move whose
+follow-up listing fails is not silently left with a stale tree.
 
 ---
 

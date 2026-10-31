@@ -255,7 +255,7 @@ is guaranteed to produce:
 | `show_mime_type` | `true` | MIME type |
 | `show_size_breakdown` | `true` | Direct vs total breakdown |
 | `show_disk_usage` | `true` | Local size vs remote size |
-| `max_thumbnail_size` | `256` | Thumbnail cap in pixels, read from the active account's preferences with `global.default_display` as the fallback; requested sizes are snapped onto the 64/128/256/512/1024 squares Nextcloud generates, then capped by this value |
+| `max_thumbnail_size` | `256` | Thumbnail cap in pixels, read from the active account's preferences with `global.default_display` as the fallback; requested sizes are snapped onto the 64/128/256/512/1024 squares Nextcloud generates, then capped by this value (a value below 64 still yields 64, the smallest square) |
 | `autodownload_thumbnails` | `true` | Fetch thumbnails while browsing |
 
 ---

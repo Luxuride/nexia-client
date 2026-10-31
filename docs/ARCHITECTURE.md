@@ -301,7 +301,7 @@ internal VFS mounts and are skipped by the sync loop.
 | `~/.local/share/nexia/desktop_config.db` | Encrypted settings database (SDK `ConfigStore`; key from the platform keychain, `.storage_key` fallback). |
 | `~/.local/share/nexia/.storage_key` | Hex `StoreKey` written only when the keychain is unavailable (`DesktopStorage::resolve_key`); mode `0600`, created with `O_EXCL`, and read back in preference to minting a new key. |
 | `<cache_dir>/accounts/<account_id>/` | SDK `StoragePaths` (per-account auth/cache/config databases). |
-| `<cache_dir>/accounts/<account_id>/vfs/tree.json` | Persisted virtual tree snapshot. Written through a temporary file and a rename, on the blocking pool when a live FUSE tree is involved (`persist_account_tree_async`), because the serialisation and payload spilling are synchronous work that must not run while the caller holds a `std` lock a FUSE read needs. |
+| `<cache_dir>/accounts/<account_id>/vfs/tree.json` | Persisted virtual tree snapshot. Written through a temporary file (`tree.json.<pid>.<n>.tmp`, unique per write so concurrent persists cannot tear each other's bytes) and a rename, on the blocking pool when a live FUSE tree is involved (`persist_account_tree_async`), because the serialisation and payload spilling are synchronous work that must not run while the caller holds a `std` lock a FUSE read needs. |
 | `<cache_dir>/accounts/<account_id>/mounts/<mount_id>/journal.json` | Per-mount sync journal. |
 | `<cache_dir>/accounts/<account_id>/thumbnails/` | Cached thumbnails. |
 | `$XDG_CACHE_HOME/thumbnails/{normal,large,x-large,xx-large}/` | Shared system thumbnail cache. Entries this app installed are identified by the `THUMBNAIL_SOFTWARE` program name in their PNG `Software` chunk. |

@@ -62,6 +62,28 @@ pub enum SyncError {
     #[error("journal error: {0}")]
     Journal(String),
 
+    /// The synchronization journal could not be read or written.
+    #[error("sync journal at {path}: {operation}")]
+    JournalSync {
+        /// Journal file that could not be used.
+        path: String,
+        /// Operation that failed, in the infinitive.
+        operation: &'static str,
+        /// Underlying journal error.
+        #[source]
+        source: nexia_nextcloud_sdk::SyncError,
+    },
+
+    /// The persisted configuration could not be updated.
+    #[error("configuration: {context}")]
+    Config {
+        /// What the caller was trying to change.
+        context: &'static str,
+        /// Underlying configuration error.
+        #[source]
+        source: nexia_core::CoreError,
+    },
+
     /// Error encountered during synchronization reconciliation.
     #[error("reconciliation error: {0}")]
     Reconciliation(String),
