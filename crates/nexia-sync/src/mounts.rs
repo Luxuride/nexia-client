@@ -259,12 +259,9 @@ impl DesktopSyncCoordinator {
             // reference but leaves the spilled file behind.
             if let Some(account) = self.active_account().await {
                 let account_id = account.id.0.clone();
-                let snapshot = shared_tree.read().map(|guard| guard.clone()).ok();
-                if let Some(snapshot) = snapshot {
-                    let _ = self
-                        .persist_account_tree_async(&account_id, &snapshot)
-                        .await;
-                }
+                let _ = self
+                    .persist_account_tree_async(&account_id, shared_tree.clone())
+                    .await;
                 let content_dir = self.account_content_dir(&account_id);
                 if content_dir.exists() {
                     let _ = tokio::fs::remove_dir_all(&content_dir).await;

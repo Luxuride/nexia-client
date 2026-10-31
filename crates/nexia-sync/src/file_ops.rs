@@ -416,11 +416,8 @@ impl DesktopSyncCoordinator {
             // The guard is dropped before the await: a `std` read guard is not `Send`, so holding
             // it across the persist made the surrounding future unspawnable.
             let fuse_tree = self.fuse_tree.read().await.clone();
-            let live = fuse_tree
-                .as_ref()
-                .and_then(|ft_lock| ft_lock.read().map(|guard| guard.clone()).ok());
-            if let Some(live) = live {
-                let _ = self.persist_account_tree_async(&acc.id.0, &live).await;
+            if let Some(live) = fuse_tree {
+                let _ = self.persist_account_tree_async(&acc.id.0, live).await;
                 return;
             }
             let _ = self.persist_account_tree(&acc.id.0, &mut snapshot);
@@ -595,7 +592,20 @@ impl DesktopSyncCoordinator {
             .unwrap_or_else(|_| std::time::SystemTime::now());
         let journal_path = self.mount_journal_path(&mount.account_id, &mount.id);
         let lock = self.journal_lock(&mount.id);
-        let _guard = lock.lock().await;
+        // A running sync cycle holds this lock for the length of the cycle, because it loads the
+        // journal once and saves the whole document it built (see `FolderSyncEngine::sync_mount`).
+        // Waiting for that would park a user-initiated hydration for minutes, so the record is
+        // skipped instead: the payload is already on disk, and the next cycle re-downloads it.
+        let _guard =
+            match tokio::time::timeout(std::time::Duration::from_millis(250), lock.lock()).await {
+                Ok(guard) => guard,
+                Err(_) => {
+                    return Err(SyncError::Journal(format!(
+                        "the journal for mount {} is held by a running sync cycle",
+                        mount.id
+                    )));
+                }
+            };
         let mut journal =
             nexia_nextcloud_sdk::SyncJournal::load_from_file(&journal_path).map_err(|source| {
                 SyncError::JournalSync {

@@ -152,13 +152,15 @@ mistaken for a server-side deletion.
 The journal entry recorded for the file carries the remote ETag read back with
 one small `PROPFIND`, so the next cycle can tell "unchanged since we wrote it"
 from "changed on the server". The load-modify-save then runs under a per-mount
-lock so two concurrent hydrations cannot drop each other's entry. That lock
-covers hydrations only: a running `FolderSyncEngine` cycle loads the journal once
-and saves the whole document, and it takes no such lock, so an entry recorded
-while a cycle is in flight can be overwritten. Journal-level serialisation has to
-come from the SDK; `journal_lock` is the seam it will use. A journal that cannot
-be loaded or saved is logged and the hydration still succeeds — the file is on
-disk either way.
+lock so two concurrent hydrations cannot drop each other's entry, and a
+`FolderSyncEngine` cycle holds the same lock for its whole duration because it
+loads the journal once and saves the whole document it built. The two writers are
+therefore kept apart. A hydration does not wait for a cycle to finish: it gives
+the lock 250 ms and then skips recording, since the payload is already on disk and
+the alternative is parking a user-initiated hydration for minutes. Journal-level
+serialisation that does not need the app's lock still has to come from the SDK.
+A journal that cannot be loaded or saved is logged and the hydration still
+succeeds — the file is on disk either way.
 
 A freedesktop preview is installed for every visible location of the file — the FUSE mountpoint,
 the account content directory (where a restored node's payload lives) and the account `vfs`

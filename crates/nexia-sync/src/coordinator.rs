@@ -495,23 +495,29 @@ impl DesktopSyncCoordinator {
         Ok(())
     }
 
-    /// Persists a virtual tree without running the write on the async worker.
+    /// Persists a shared virtual tree without running the work on the async worker.
     ///
     /// `persist_account_tree` spills payloads and serialises the whole tree, which for a large
-    /// account is hundreds of milliseconds of blocking IO. The callers hold a `std` lock that FUSE
-    /// reads need, so doing it inline stalled every task on the worker; the tree is snapshotted
-    /// here and written on the blocking pool instead.
+    /// account is hundreds of milliseconds of blocking IO, and the copy of the tree it starts from
+    /// duplicates every payload that has not been spilled yet. Both happen on the blocking pool:
+    /// the caller hands over the lock it already holds instead of cloning the tree on the worker,
+    /// which is the cost this function exists to avoid.
     pub async fn persist_account_tree_async(
         &self,
         account_id: &str,
-        tree: &nexia_nextcloud_sdk::VirtualTree,
+        tree: Arc<std::sync::RwLock<nexia_nextcloud_sdk::VirtualTree>>,
     ) -> std::io::Result<()> {
-        let mut owned = tree.clone();
         let account_id = account_id.to_string();
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.persist_account_tree(&account_id, &mut owned))
-            .await
-            .map_err(std::io::Error::other)?
+        tokio::task::spawn_blocking(move || {
+            let mut owned = match tree.read() {
+                Ok(guard) => guard.clone(),
+                Err(poisoned) => poisoned.into_inner().clone(),
+            };
+            this.persist_account_tree(&account_id, &mut owned)
+        })
+        .await
+        .map_err(std::io::Error::other)?
     }
 
     /// Returns the mount cache directory for a specific account.

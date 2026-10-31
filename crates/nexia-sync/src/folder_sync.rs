@@ -1,6 +1,6 @@
 //! Two-way folder synchronization engine coordinating local and remote directory pairings.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use tracing::info;
 
@@ -142,6 +142,13 @@ impl FolderSyncEngine {
 
         let runner = FolderSyncRunner::new(&local_target, &mount.remote_path, &journal_path);
 
+        // The journal is a single document that the cycle loads once and saves whole. A hydration
+        // recording its entry in between would be overwritten by that save — the entry that stops
+        // the file being downloaded again. The SDK cycle offers no hook to merge, so the two
+        // writers are kept apart here; hydrations time out rather than wait for a cycle.
+        let journal_lock = self.coordinator.journal_lock(mount_id);
+        let _journal_guard = journal_lock.lock().await;
+
         self.coordinator.event_bus.emit(DesktopEvent::SyncStarted {
             pairing_id: mount_id.to_string(),
         });
@@ -197,28 +204,24 @@ impl FolderSyncEngine {
         }
 
         // Prefetch thumbnails for candidates if needed
-        if let Ok(entries) =
-            FolderSyncRunner::discover_remote(&dav_client, &user, &mount.remote_path).await
-        {
-            let candidates: Vec<(String, Option<u64>)> = entries
-                .iter()
-                .filter(|e| !e.is_directory && is_thumbnail_candidate(&e.relative_path))
-                .map(|e| {
-                    let path = if mount.remote_path == "/" {
-                        e.relative_path.clone()
-                    } else {
-                        format!(
-                            "{}/{}",
-                            mount.remote_path.trim_end_matches('/'),
-                            e.relative_path.trim_start_matches('/')
-                        )
-                    };
-                    (path, e.file_id)
-                })
-                .collect();
-            if !candidates.is_empty() {
+        // Thumbnails are prefetched from the local target rather than from a second remote crawl:
+        // the cycle above has just made the target mirror the remote directory this mount covers,
+        // so a local directory walk yields the same candidates where `discover_remote` spent a full
+        // PROPFIND of the remote tree. It also runs off the async worker, because a large target
+        // means thousands of `readdir` calls.
+        let target = local_target.clone();
+        let remote_root = mount.remote_path.clone();
+        let walked =
+            tokio::task::spawn_blocking(move || local_thumbnail_candidates(&target, &remote_root))
+                .await;
+        match walked {
+            Ok(candidates) if !candidates.is_empty() => {
                 self.coordinator
                     .batch_prefetch_thumbnails_with_ids(candidates, 256);
+            }
+            Ok(_) => {}
+            Err(err) => {
+                tracing::warn!(mount_id, error = %err, "the thumbnail candidate walk did not run to completion");
             }
         }
 
@@ -265,6 +268,62 @@ impl FolderSyncEngine {
             }
             let _ = self.sync_mount(&mount.id).await;
         }
+    }
+}
+
+/// Collects the thumbnail candidates under a mount's local target.
+///
+/// The remote path of a candidate is the local path plus the mount's remote root, because the
+/// directory the mount covers is mirrored there. The walk is bounded: a mount pointed at a home
+/// directory can hold hundreds of thousands of files, and a preview prefetch is not worth an
+/// unbounded traversal.
+fn local_thumbnail_candidates(
+    local_target: &Path,
+    mount_remote: &str,
+) -> Vec<(String, Option<u64>)> {
+    /// Stop after this many candidates; the prefetch is best effort.
+    const MAX_CANDIDATES: usize = 4096;
+
+    let mut candidates = Vec::new();
+    let mut pending = vec![String::new()];
+    while let Some(relative) = pending.pop() {
+        if candidates.len() >= MAX_CANDIDATES {
+            break;
+        }
+        let directory = if relative.is_empty() {
+            local_target.to_path_buf()
+        } else {
+            local_target.join(&relative)
+        };
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let child = if relative.is_empty() {
+                name.clone()
+            } else {
+                format!("{relative}/{name}")
+            };
+            match entry.file_type() {
+                Ok(file_type) if file_type.is_dir() => pending.push(child),
+                Ok(file_type) if file_type.is_file() && is_thumbnail_candidate(&name) => {
+                    candidates.push((remote_path_of(mount_remote, &child), None));
+                }
+                _ => {}
+            }
+        }
+    }
+    candidates
+}
+
+/// Maps a path relative to a mount onto the remote path the server knows it by.
+fn remote_path_of(mount_remote: &str, relative: &str) -> String {
+    let relative = relative.trim_start_matches('/');
+    if mount_remote == "/" {
+        format!("/{relative}")
+    } else {
+        format!("{}/{}", mount_remote.trim_end_matches('/'), relative)
     }
 }
 
@@ -357,6 +416,36 @@ pub(crate) fn is_thumbnail_candidate(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_candidates_are_walked_and_mapped_onto_the_remote_root() {
+        let root = std::env::temp_dir().join(format!(
+            "nexia-candidates-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let nested = root.join("photos");
+        std::fs::create_dir_all(&nested).expect("create temp tree");
+        std::fs::write(nested.join("image.png"), b"x").expect("write candidate");
+        std::fs::write(nested.join("notes.txt"), b"x").expect("write non-candidate");
+        std::fs::write(root.join("clip.mp4"), b"x").expect("write candidate");
+
+        let mut candidates = local_thumbnail_candidates(&root, "/Media");
+        candidates.sort();
+        let _ = std::fs::remove_dir_all(&root);
+
+        let paths: Vec<String> = candidates.into_iter().map(|(path, _)| path).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "/Media/clip.mp4".to_string(),
+                "/Media/photos/image.png".to_string()
+            ]
+        );
+    }
 
     #[test]
     fn decode_percent_str_decodes_escapes() {

@@ -237,9 +237,16 @@ silent zero. A cycle that returns an error leaves the mount idle again and raise
 of looking like a mount that never finished.
 
 On success it returns `outcome.downloaded + outcome.uploaded`, and after the
-cycle it re-runs `discover_remote` to `batch_prefetch_thumbnails_with_ids` (batch
-256) for every non-directory entry matching `is_thumbnail_candidate` — a suffix
-list covering `jpg/jpeg/png/gif/webp/svg/bmp/tiff/mp4/mkv/webm/mov/avi/pdf`.
+cycle it walks the mount's local target on the blocking pool and hands every file
+matching `is_thumbnail_candidate` to `batch_prefetch_thumbnails_with_ids` (batch
+256) — a suffix list covering
+`jpg/jpeg/png/gif/webp/svg/bmp/tiff/mp4/mkv/webm/mov/avi/pdf`. The walk replaces
+the second full remote PROPFIND crawl this used to cost (`discover_remote`): the
+cycle has just made the target mirror the remote directory, so a local `readdir`
+yields the same candidates. The lookup is bounded at 4096 candidates.
+
+The cycle holds the mount's journal lock for its whole duration, because it loads
+the journal once and saves the whole document it built.
 A cancellation observed after the cycle finishes the mount (`finish_cycle`) and
 returns `outcome.downloaded + outcome.uploaded`, skipping the thumbnail pass.
 It is reached from
