@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 pub(crate) mod account;
+pub(crate) mod cache_usage;
 pub mod coordinator;
 pub mod engine;
 pub mod error;

@@ -719,13 +719,23 @@ impl DesktopSyncCoordinator {
                 continue;
             };
 
-            let password = sso
+            // An unresolvable secret is not an empty password: persisting an empty one would
+            // overwrite the stored credential on the next save, and every request would then fail
+            // authentication with no way back short of re-entering the password.
+            let Some(password) = sso
                 .resolve_credentials(&disc, &keyring)
                 .await
                 .ok()
                 .flatten()
                 .map(|p| p.into_inner())
-                .unwrap_or_default();
+            else {
+                tracing::debug!(
+                    user = %disc.username,
+                    server = %disc.server_url,
+                    "discovered account has no usable credential; skipping it"
+                );
+                continue;
+            };
 
             let secret = SecretString::new(&password);
 

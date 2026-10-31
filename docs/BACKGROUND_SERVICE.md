@@ -264,4 +264,7 @@ No display server is needed for any row above. Logging goes through
 `tracing-subscriber`, filtered by `RUST_LOG` and defaulting to `info`.
 
 If the binary is compiled without the `gtk` feature, even the interactive path
-degrades to `run_headless(controller)` rather than failing.
+degrades to `run_headless(controller)` rather than failing. That runner is a
+daemon too: it mounts what the CLI asked for, then waits for `Ctrl+C` and
+unmounts, so a `--no-default-features` build keeps the watcher and the etag
+poller alive exactly like `--headless`.

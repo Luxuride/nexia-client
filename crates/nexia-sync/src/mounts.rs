@@ -174,39 +174,18 @@ impl DesktopSyncCoordinator {
         // Direct fallback: scan local folder pairing if orchestrator mount not yet loaded
         let mounts = self.sync_mounts().await;
         let found = mounts.into_iter().find(|m| m.id == id.as_str());
-        let (hydrated_count, local_bytes) = if let Some(ref m) = found {
-            let p = PathBuf::from(&m.local_target);
-            if p.exists() {
-                scan_local_dir_usage(&p)
-            } else {
-                (0, 0)
+        let (hydrated_count, local_bytes) = match found {
+            Some(ref m) => {
+                let p = PathBuf::from(&m.local_target);
+                let usage = crate::cache_usage::scan_dir_usage(&p);
+                (usage.files, usage.bytes)
             }
-        } else {
-            (0, 0)
+            None => (0, 0),
         };
 
-        let mut shared_thumbnail_bytes = scan_local_dir_bytes(&self.active_thumbnails_dir().await);
-        let (normal_dir, _) = crate::freedesktop_thumbs::freedesktop_thumbnail_dirs();
-        if let Some(parent) = normal_dir.parent() {
-            for sub in ["normal", "large", "x-large", "xx-large"] {
-                let target = parent.join(sub);
-                if let Ok(entries) = std::fs::read_dir(&target) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if let Ok(mut f) = std::fs::File::open(&path) {
-                            use std::io::Read;
-                            let mut buf = [0u8; 2048];
-                            if let Ok(n) = f.read(&mut buf)
-                                && crate::freedesktop_thumbs::is_app_thumbnail(&buf[..n])
-                                && let Ok(meta) = entry.metadata()
-                            {
-                                shared_thumbnail_bytes += meta.len();
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        let mut shared_thumbnail_bytes =
+            crate::cache_usage::scan_dir_usage(&self.active_thumbnails_dir().await).bytes;
+        shared_thumbnail_bytes += crate::freedesktop_thumbs::app_thumbnail_bytes();
         Ok(MountStorageUsage::new(
             id,
             local_bytes,
@@ -294,16 +273,11 @@ impl DesktopSyncCoordinator {
         if let Some(ref m) = mount_opt {
             let local_p = PathBuf::from(&m.local_target);
             if Self::is_internal_vfs(&m.id) && local_p.exists() {
-                let (_count, bytes) = scan_local_dir_usage(&local_p);
-                total_freed += bytes;
+                total_freed += crate::cache_usage::scan_dir_usage(&local_p).bytes;
                 let _ = tokio::fs::remove_dir_all(&local_p).await;
                 let _ = tokio::fs::create_dir_all(&local_p).await;
             }
         }
-
-        // Also clean virtual sync downloaded size from cache_dir/hydrated
-        let vfs_freed = self.clear_virtual_sync_cache().await.unwrap_or(0);
-        total_freed += vfs_freed;
 
         Ok(total_freed)
     }
@@ -358,49 +332,4 @@ impl DesktopSyncCoordinator {
         }
         false
     }
-}
-
-fn scan_local_dir_usage(root: &std::path::Path) -> (usize, u64) {
-    let mut count = 0;
-    let mut total_bytes = 0;
-    let mut stack = vec![root.to_path_buf()];
-
-    while let Some(dir) = stack.pop() {
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                if let Ok(ft) = entry.file_type() {
-                    if ft.is_dir() {
-                        stack.push(entry.path());
-                    } else if ft.is_file() {
-                        let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                        if len > 0 {
-                            count += 1;
-                        }
-                        total_bytes += len;
-                    }
-                }
-            }
-        }
-    }
-    (count, total_bytes)
-}
-
-fn scan_local_dir_bytes(root: &std::path::Path) -> u64 {
-    let mut total_bytes = 0;
-    let mut stack = vec![root.to_path_buf()];
-
-    while let Some(dir) = stack.pop() {
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                if let Ok(ft) = entry.file_type() {
-                    if ft.is_dir() {
-                        stack.push(entry.path());
-                    } else if ft.is_file() {
-                        total_bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
-                    }
-                }
-            }
-        }
-    }
-    total_bytes
 }

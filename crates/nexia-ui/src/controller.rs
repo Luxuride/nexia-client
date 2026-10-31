@@ -171,7 +171,7 @@ impl DesktopUiController {
         self.coordinator
             .persist_config()
             .await
-            .map_err(|err| UiError::Controller(format!("set account display config: {err}")))?;
+            .map_err(|err| UiError::controller("set account display config", err))?;
         self.coordinator
             .event_bus()
             .emit(nexia_core::events::DesktopEvent::DisplaySettingsChanged);
@@ -190,7 +190,7 @@ impl DesktopUiController {
         self.coordinator
             .persist_config()
             .await
-            .map_err(|err| UiError::Controller(format!("set global display config: {err}")))?;
+            .map_err(|err| UiError::controller("set global display config", err))?;
         self.coordinator
             .event_bus()
             .emit(nexia_core::events::DesktopEvent::DisplaySettingsChanged);
@@ -388,7 +388,7 @@ impl DesktopUiController {
             .coordinator
             .search(trimmed)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))?;
+            .map_err(|err| UiError::controller("search items", err))?;
 
         let display_cfg = self.effective_display_config().await;
         let active_hydrations = self.active_hydrations.read().await;
@@ -484,15 +484,13 @@ impl DesktopUiController {
     pub async fn list_current_items(&self) -> Result<Vec<FileViewItem>, UiError> {
         let path = self.current_path().await;
         let vfs = self.coordinator.active_vfs().await.map_err(|err| {
-            UiError::Controller(format!(
-                "list current items: open virtual filesystem: {err}"
-            ))
+            UiError::controller("list current items: open virtual filesystem", err)
         })?;
         let is_populated = vfs.is_directory_populated(&path).await.unwrap_or(false);
         let mut entries = vfs
             .list_children(&path)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))?;
+            .map_err(|err| UiError::controller("list current items", err))?;
 
         // Only an unpopulated directory is worth a PROPFIND: one the crawl already visited and
         // found empty stays empty, so re-listing it on every refresh is pure latency.
@@ -518,9 +516,9 @@ impl DesktopUiController {
     pub async fn create_folder(&self, folder_name: &str) -> Result<String, UiError> {
         let trimmed = folder_name.trim().trim_matches('/');
         if trimmed.is_empty() {
-            return Err(UiError::Controller(
-                "Folder name cannot be empty".to_string(),
-            ));
+            return Err(UiError::InvalidInput {
+                message: "folder name cannot be empty",
+            });
         }
 
         let cur = self.current_path().await;
@@ -533,7 +531,7 @@ impl DesktopUiController {
         self.coordinator
             .create_directory(&full_path)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))?;
+            .map_err(|err| UiError::controller("create folder", err))?;
 
         Ok(full_path)
     }
@@ -542,7 +540,9 @@ impl DesktopUiController {
     pub async fn create_file(&self, file_name: &str, content: &[u8]) -> Result<String, UiError> {
         let trimmed = file_name.trim();
         if trimmed.is_empty() {
-            return Err(UiError::Controller("File name cannot be empty".to_string()));
+            return Err(UiError::InvalidInput {
+                message: "file name cannot be empty",
+            });
         }
 
         let cur = self.current_path().await;
@@ -555,7 +555,7 @@ impl DesktopUiController {
         self.coordinator
             .create_file(&full_path, content)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("create file", err))
     }
 
     /// Renames a file or folder in the virtual drive.
@@ -563,7 +563,7 @@ impl DesktopUiController {
         self.coordinator
             .rename_resource(remote_path, new_name)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("rename item", err))
     }
 
     /// Moves a file or folder in the virtual drive to a target directory.
@@ -575,7 +575,7 @@ impl DesktopUiController {
         self.coordinator
             .move_resource(source_path, destination_dir)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("move item", err))
     }
 
     /// Deletes a file or folder from the virtual drive (and remote server if connected).
@@ -583,7 +583,7 @@ impl DesktopUiController {
         self.coordinator
             .delete_resource(remote_path)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("delete item", err))
     }
 
     /// Opens a virtual file by hydrating it to local cache.
@@ -599,7 +599,7 @@ impl DesktopUiController {
             .coordinator
             .hydrate_file(remote_path)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()));
+            .map_err(|err| UiError::controller("hydrate file", err));
         self.mark_hydration_finished(&clean).await;
         res
     }
@@ -609,7 +609,7 @@ impl DesktopUiController {
         self.coordinator
             .hydrate_directory(remote_dir)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("hydrate directory", err))
     }
 
     /// Dehydrates a file back to a placeholder, freeing disk space.
@@ -617,7 +617,7 @@ impl DesktopUiController {
         self.coordinator
             .dehydrate_file(remote_path)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("dehydrate file", err))
     }
 
     /// Refreshes the virtual file tree from the remote Nextcloud server.
@@ -627,7 +627,7 @@ impl DesktopUiController {
         self.coordinator
             .refresh_virtual_tree()
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("refresh virtual tree", err))
     }
 
     /// Triggers a synchronization cycle across all configured folder pairings.
@@ -652,7 +652,7 @@ impl DesktopUiController {
         self.coordinator
             .switch_account(account_id)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))?;
+            .map_err(|err| UiError::controller("switch account", err))?;
         self.reload_account_view_state().await;
         Ok(())
     }
@@ -676,7 +676,7 @@ impl DesktopUiController {
         self.coordinator
             .add_account(account)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("add account", err))
     }
 
     /// Signs out and removes a non-system account, optionally cleaning up synchronized files and pairings.
@@ -688,7 +688,7 @@ impl DesktopUiController {
         self.coordinator
             .sign_out_account(account_id, clean_syncs)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("sign out account", err))
     }
 
     /// Starts a browser-based OAuth login flow for the given server URL.
@@ -699,7 +699,7 @@ impl DesktopUiController {
         self.coordinator
             .start_oauth_login(server_url)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("start oauth login", err))
     }
 
     /// Polls a pending OAuth login flow.
@@ -710,7 +710,7 @@ impl DesktopUiController {
         self.coordinator
             .poll_oauth_login(client)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("poll oauth login", err))
     }
 
     /// Creates or retrieves a public share link for a virtual file or directory.
@@ -718,7 +718,7 @@ impl DesktopUiController {
         self.coordinator
             .create_public_share(remote_path)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("create public share", err))
     }
 
     /// Subscribes to application desktop events (tree updates, sync status, transfer progress).
@@ -738,7 +738,7 @@ impl DesktopUiController {
         self.coordinator
             .list_mounts()
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("list mounts", err))
     }
 
     /// Registers a new mount point connecting a remote directory to a local target.
@@ -746,7 +746,7 @@ impl DesktopUiController {
         self.coordinator
             .add_mount(descriptor)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("add mount", err))
     }
 
     /// Removes an existing mount point.
@@ -755,7 +755,7 @@ impl DesktopUiController {
             .remove_mount(id)
             .await
             .map(|_| ())
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("remove mount", err))
     }
 
     /// Updates the synchronization mode for an existing sync mount.
@@ -767,7 +767,7 @@ impl DesktopUiController {
         self.coordinator
             .update_sync_mount_mode(mount_id, new_mode)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("update sync mount mode", err))
     }
 
     /// Queries remote Nextcloud via WebDAV to list child directories beneath `relative_path`.
@@ -778,7 +778,7 @@ impl DesktopUiController {
         self.coordinator
             .list_remote_directory_folders(relative_path)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("list remote directory folders", err))
     }
 
     /// Specifically pauses synchronization for a single mount point.
@@ -786,7 +786,7 @@ impl DesktopUiController {
         self.coordinator
             .pause_mount(id)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("pause mount", err))
     }
 
     /// Triggers an immediate folder synchronization cycle for a specific mount point.
@@ -795,7 +795,7 @@ impl DesktopUiController {
             .sync_mount_folder(mount_id)
             .await
             .map(|_| ())
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("sync mount", err))
     }
 
     /// Triggers an immediate folder synchronization cycle across all active mount points.
@@ -809,7 +809,7 @@ impl DesktopUiController {
         self.coordinator
             .resume_mount(id)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("resume mount", err))
     }
 
     /// Returns `true` if a specific mount point is currently paused.
@@ -817,7 +817,7 @@ impl DesktopUiController {
         self.coordinator
             .is_mount_paused(id)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("is mount paused", err))
     }
 
     /// Globally pauses synchronization across all mounts and background queues.
@@ -825,7 +825,7 @@ impl DesktopUiController {
         self.coordinator
             .pause_all_sync()
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("pause all sync", err))
     }
 
     /// Globally resumes synchronization across all mounts and background queues.
@@ -833,7 +833,7 @@ impl DesktopUiController {
         self.coordinator
             .resume_all_sync()
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("resume all sync", err))
     }
 
     /// Mounts the active Nextcloud account as an OS virtual drive via FUSE.
@@ -844,7 +844,7 @@ impl DesktopUiController {
         self.coordinator
             .mount_fuse_vfs(mountpoint)
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("mount fuse vfs", e))
     }
 
     /// Unmounts the running FUSE virtual filesystem.
@@ -867,7 +867,7 @@ impl DesktopUiController {
         self.coordinator
             .is_sync_paused()
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("is sync paused", err))
     }
 
     /// Resolves the file sync status and FreeDesktop icon name for a relative path in a mount.
@@ -879,7 +879,7 @@ impl DesktopUiController {
         self.coordinator
             .file_status(mount_id, path)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("file status", err))
     }
 
     /// Resolves the synchronization status for an arbitrary local path across all mounts.
@@ -890,7 +890,7 @@ impl DesktopUiController {
         self.coordinator
             .status_for_local_path(local_path)
             .await
-            .map_err(|err| UiError::Controller(err.to_string()))
+            .map_err(|err| UiError::controller("status for local path", err))
     }
 }
 
@@ -951,21 +951,21 @@ impl FileExplorerBackend for DesktopUiController {
         self.coordinator
             .clean_thumbnails()
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("clean thumbnails", e))
     }
 
     async fn clean_everything(&self) -> Result<u64, UiError> {
         self.coordinator
             .clean_everything()
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("clean everything", e))
     }
 
     async fn clean_oversized_thumbnails(&self) -> Result<u64, UiError> {
         self.coordinator
             .clean_oversized_thumbnails()
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("clean oversized thumbnails", e))
     }
 
     async fn max_thumbnail_size(&self) -> u32 {
@@ -976,7 +976,7 @@ impl FileExplorerBackend for DesktopUiController {
         self.coordinator
             .set_max_thumbnail_size(size)
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("set max thumbnail size", e))
     }
 
     async fn virtual_sync_downloaded_size(&self) -> u64 {
@@ -987,7 +987,7 @@ impl FileExplorerBackend for DesktopUiController {
         self.coordinator
             .clear_virtual_sync_cache()
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("clear virtual sync cache", e))
     }
 
     async fn is_autodownload_thumbnails_enabled(&self) -> bool {
@@ -998,7 +998,7 @@ impl FileExplorerBackend for DesktopUiController {
         self.coordinator
             .set_autodownload_thumbnails_enabled(enabled)
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("set autodownload thumbnails enabled", e))
     }
 
     async fn search_items(&self, query: &str) -> Result<Vec<FileViewItem>, UiError> {
@@ -1174,14 +1174,14 @@ impl FileExplorerBackend for DesktopUiController {
         self.coordinator
             .get_public_share(remote_path)
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("get public share", e))
     }
 
     async fn delete_public_share(&self, remote_path: &str) -> Result<bool, UiError> {
         self.coordinator
             .delete_public_share(remote_path)
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("delete public share", e))
     }
 
     async fn store_directory_sort(
@@ -1232,14 +1232,14 @@ impl FileExplorerBackend for DesktopUiController {
         self.coordinator
             .add_sync_mount(remote_path, local_target, &mode, display_name)
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("add sync mount", e))
     }
 
     async fn remove_sync_mount(&self, mount_id: &str) -> Result<(), UiError> {
         self.coordinator
             .remove_sync_mount(mount_id)
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("remove sync mount", e))
     }
 
     async fn remove_sync_mount_with_cleanup(
@@ -1250,7 +1250,7 @@ impl FileExplorerBackend for DesktopUiController {
         self.coordinator
             .remove_sync_mount_with_cleanup(mount_id, clean_local_files)
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("remove sync mount with cleanup", e))
     }
 
     async fn sync_mount(&self, mount_id: &str) -> Result<(), UiError> {
@@ -1269,7 +1269,7 @@ impl FileExplorerBackend for DesktopUiController {
         self.coordinator
             .mount_fuse_vfs(mountpoint)
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("mount fuse vfs", e))
     }
 
     async fn unmount_fuse_vfs(&self) {
@@ -1298,7 +1298,7 @@ impl FileExplorerBackend for DesktopUiController {
         self.coordinator
             .mount_storage_usage(nexia_nextcloud_sdk::MountId::from(mount_id.to_string()))
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("mount storage usage", e))
     }
 
     async fn clear_mount_cache(
@@ -1312,14 +1312,14 @@ impl FileExplorerBackend for DesktopUiController {
                 clear_hydrated,
             )
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("clear mount cache", e))
     }
 
     async fn clear_shared_thumbnails(&self) -> Result<u64, UiError> {
         self.coordinator
             .clear_thumbnail_cache()
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("clear shared thumbnails", e))
     }
 
     async fn mount_progress(
@@ -1329,7 +1329,7 @@ impl FileExplorerBackend for DesktopUiController {
         self.coordinator
             .mount_progress(nexia_nextcloud_sdk::MountId::from(mount_id.to_string()))
             .await
-            .map_err(|e| UiError::Controller(e.to_string()))
+            .map_err(|e| UiError::controller("mount progress", e))
     }
 }
 

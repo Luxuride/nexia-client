@@ -1,5 +1,73 @@
 //! FreeDesktop Thumbnail Managing Standard integration re-exported from `nexia_nextcloud_sdk`.
 
+use std::io::Read;
+use std::path::Path;
+
+/// Number of leading bytes of a PNG that carry the metadata chunks this application reads.
+const THUMBNAIL_HEADER_BYTES: usize = 2048;
+
+/// The size directories the Thumbnail Managing Standard defines.
+pub(crate) const THUMBNAIL_SIZE_DIRS: [&str; 4] = ["normal", "large", "x-large", "xx-large"];
+
+/// Returns whether the thumbnail file at `path` was installed by this application.
+pub(crate) fn is_app_thumbnail_file(path: &Path) -> bool {
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; THUMBNAIL_HEADER_BYTES];
+    match file.read(&mut buf) {
+        Ok(read) => is_app_thumbnail(&buf[..read]),
+        Err(_) => false,
+    }
+}
+
+/// The size directories of the shared system thumbnail cache.
+fn app_thumbnail_dirs() -> Vec<std::path::PathBuf> {
+    let (normal_dir, _) = freedesktop_thumbnail_dirs();
+    match normal_dir.parent() {
+        Some(parent) => THUMBNAIL_SIZE_DIRS
+            .iter()
+            .map(|name| parent.join(name))
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+/// Returns the total size in bytes of the thumbnails this application installed in the shared
+/// system thumbnail cache.
+pub(crate) fn app_thumbnail_bytes() -> u64 {
+    app_thumbnail_dirs()
+        .iter()
+        .filter_map(|dir| std::fs::read_dir(dir).ok())
+        .flat_map(|entries| entries.flatten())
+        .filter(|entry| is_app_thumbnail_file(&entry.path()))
+        .filter_map(|entry| entry.metadata().ok())
+        .map(|meta| meta.len())
+        .sum()
+}
+
+/// Deletes the thumbnails this application installed in the shared system thumbnail cache,
+/// returning the number of bytes freed.
+pub(crate) fn remove_app_thumbnails() -> u64 {
+    let mut freed = 0;
+    for dir in app_thumbnail_dirs() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !is_app_thumbnail_file(&path) {
+                continue;
+            }
+            if let Ok(meta) = entry.metadata() {
+                freed += meta.len();
+            }
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+    freed
+}
+
 /// Returns whether `bytes` look like a thumbnail this application installed.
 ///
 /// System thumbnail caches are shared with every other application, so scoped

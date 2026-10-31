@@ -1,6 +1,6 @@
 //! High-level virtual file mutations and two-way folder synchronization.
 
-use nexia_nextcloud_sdk::{DavPath, DavProperty, Depth, FolderSyncRunner, PropfindBody};
+use nexia_nextcloud_sdk::{DavPath, DavProperty, Depth, FolderSyncRunner, MountId, PropfindBody};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -895,34 +895,44 @@ impl DesktopSyncCoordinator {
     }
 
     /// Returns the size in bytes of downloaded and hydrated virtual sync files.
+    ///
+    /// The payloads live where the SDK spills them, under the per-account `vfs` and `content`
+    /// directories; the tree file itself is metadata and is counted with them.
     pub async fn virtual_sync_downloaded_size(&self) -> u64 {
-        let hydrated_dir = self.cache_dir().join("hydrated");
-        fn dir_size(path: &std::path::Path) -> u64 {
-            let mut total = 0;
-            if let Ok(entries) = std::fs::read_dir(path) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.is_dir() {
-                        total += dir_size(&p);
-                    } else if let Ok(meta) = entry.metadata() {
-                        total += meta.len();
-                    }
-                }
-            }
-            total
-        }
-        dir_size(&hydrated_dir)
+        let Some(account) = self.active_account().await else {
+            return 0;
+        };
+        let account_id = account.id.0.clone();
+        crate::cache_usage::scan_dirs_usage([
+            &self.account_vfs_dir(&account_id),
+            &self.account_content_dir(&account_id),
+        ])
+        .bytes
     }
 
-    /// Clears downloaded virtual files for the virtual sync mount, returning bytes freed.
+    /// Releases the downloaded payloads of the active account's mounts, returning bytes freed.
+    ///
+    /// Every mount is cleared through [`Self::clear_mount_cache`] instead of deleting files here:
+    /// the hydration states live in the SDK's tree and mount handles, so removing payloads behind
+    /// its back would leave nodes claiming local content that no longer exists.
     pub async fn clear_virtual_sync_cache(&self) -> Result<u64, SyncError> {
-        let before_size = self.virtual_sync_downloaded_size().await;
-        let hydrated_dir = self.cache_dir().join("hydrated");
-        if hydrated_dir.exists() {
-            let _ = tokio::fs::remove_dir_all(&hydrated_dir).await;
-            let _ = tokio::fs::create_dir_all(&hydrated_dir).await;
+        let before = self.virtual_sync_downloaded_size().await;
+        let Some(account) = self.active_account().await else {
+            return Ok(0);
+        };
+        let account_id = account.id.0.clone();
+
+        for mount in self
+            .sync_mounts()
+            .await
+            .into_iter()
+            .filter(|mount| mount.account_id == account_id)
+        {
+            self.clear_mount_cache(MountId::from_string(mount.id), true)
+                .await?;
         }
-        Ok(before_size)
+
+        Ok(before)
     }
 
     /// Cleans and deletes cached thumbnails across the app and FreeDesktop system cache, returning bytes freed.
@@ -941,35 +951,12 @@ impl DesktopSyncCoordinator {
             let _ = tokio::fs::create_dir_all(&thumbs_dir).await;
         }
 
-        // Also clean our FreeDesktop thumbnails in ~/.cache/thumbnails/{normal, large, x-large, xx-large} and fail markers
-        let (normal_dir, _) = crate::freedesktop_thumbs::freedesktop_thumbnail_dirs();
-        if let Some(parent) = normal_dir.parent() {
-            for size_dir_name in ["normal", "large", "x-large", "xx-large"] {
-                let target_dir = parent.join(size_dir_name);
-                if let Ok(entries) = std::fs::read_dir(&target_dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if let Ok(mut file) = std::fs::File::open(&path) {
-                            use std::io::Read;
-                            let mut buf = [0u8; 2048];
-                            if let Ok(n) = file.read(&mut buf)
-                                && crate::freedesktop_thumbs::is_app_thumbnail(&buf[..n])
-                            {
-                                if let Ok(meta) = entry.metadata() {
-                                    freed += meta.len();
-                                }
-                                let _ = std::fs::remove_file(&path);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Fail markers are not cleaned here: the SDK writes them without a `Software`
-            // chunk (`install_freedesktop_fail_marker` passes `None`), so this application has
-            // no way to tell its own markers from another thumbnailer's in the shared `fail`
-            // directory, and deleting all of them would break other applications' caching.
-        }
+        // Also clean our FreeDesktop thumbnails in ~/.cache/thumbnails/{normal, large, x-large, xx-large}.
+        // Fail markers are not cleaned here: the SDK writes them without a `Software` chunk
+        // (`install_freedesktop_fail_marker` passes `None`), so this application has no way to tell
+        // its own markers from another thumbnailer's in the shared `fail` directory, and deleting
+        // all of them would break other applications' caching.
+        freed += crate::freedesktop_thumbs::remove_app_thumbnails();
 
         Ok(freed)
     }
