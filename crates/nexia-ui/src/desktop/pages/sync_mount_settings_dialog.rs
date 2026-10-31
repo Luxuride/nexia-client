@@ -9,6 +9,8 @@ use libadwaita::prelude::*;
 use nexia_nextcloud_sdk::{StoredSyncMount, format_bytes};
 
 use crate::widget::FileExplorerBackend;
+use nexia_sync::MountMode;
+use nexia_sync::StoredMountMode;
 
 /// Modal subwindow presenting per-mount settings, disk consumption, and safe cleanup actions with confirmation.
 pub struct SyncMountSettingsDialog;
@@ -126,7 +128,7 @@ impl SyncMountSettingsDialog {
 
         // On-demand mounts only hold what was opened, which is not the same as a mirrored copy, so
         // the wording follows "not a mirror" instead of a specific mode name.
-        let is_on_demand = mount.mode != "BidirectionalSync";
+        let is_on_demand = mount.mount_mode() != MountMode::BidirectionalSync;
 
         let local_usage_row = adw::ActionRow::builder()
             .title(if is_on_demand {

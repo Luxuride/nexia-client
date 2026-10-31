@@ -11,6 +11,7 @@ use nexia_nextcloud_sdk::{
 
 use crate::coordinator::DesktopSyncCoordinator;
 use crate::error::SyncError;
+use crate::mount_mode::StoredMountMode;
 
 impl DesktopSyncCoordinator {
     /// Builds an isolated SDK [`Client`] instance with dedicated per-account encrypted databases.
@@ -356,7 +357,7 @@ impl DesktopSyncCoordinator {
         // FUSE on-demand mount now. Internal application mounts keep their own mode because they
         // back the local content cache rather than a folder the user chose.
         for mount in mounts.iter_mut() {
-            if mount.mode == "VirtualVfs" && !Self::is_internal_vfs(&mount.id) {
+            if mount.mount_mode() == MountMode::VirtualVfs && !Self::is_internal_vfs(&mount.id) {
                 mount.mode = "Fuse".to_string();
             }
         }

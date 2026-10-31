@@ -14,6 +14,8 @@ use tracing::{debug, error, info, warn};
 use crate::coordinator::DesktopSyncCoordinator;
 use crate::error::SyncError;
 use crate::file_ops::make_dav_path;
+use crate::mount_mode::StoredMountMode;
+use nexia_nextcloud_sdk::MountMode;
 
 /// On-demand file hydrator pulling payloads from the server over WebDAV for FUSE reads.
 pub struct DesktopHydrator {
@@ -346,7 +348,7 @@ impl DesktopSyncCoordinator {
             Self::stop_fuse_session(session, &id).await;
         }
         for m in self.sync_mounts().await {
-            if m.mode == "Fuse" {
+            if m.mount_mode() == MountMode::Fuse {
                 let _ = std::process::Command::new("fusermount3")
                     .args(["-u", "-z", &m.local_target])
                     .status();

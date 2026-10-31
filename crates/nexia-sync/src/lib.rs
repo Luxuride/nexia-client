@@ -14,6 +14,7 @@ pub(crate) mod file_ops;
 pub mod folder_sync;
 pub mod freedesktop_thumbs;
 pub mod fuse_mount;
+pub mod mount_mode;
 pub(crate) mod mounts;
 pub mod watcher;
 
@@ -23,6 +24,7 @@ pub use file_ops::PreviewInstallSummary;
 pub use file_ops::make_dav_path;
 pub use folder_sync::FolderSyncEngine;
 pub use fuse_mount::DesktopHydrator;
+pub use mount_mode::StoredMountMode;
 pub use watcher::FileSystemWatcher;
 
 /// Program name written to the FreeDesktop PNG `Software` chunk of every

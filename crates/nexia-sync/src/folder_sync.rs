@@ -7,7 +7,9 @@ use tracing::info;
 use crate::coordinator::DesktopSyncCoordinator;
 use crate::error::SyncError;
 pub use crate::freedesktop_thumbs::path_to_file_uri;
+use crate::mount_mode::StoredMountMode;
 use nexia_core::events::DesktopEvent;
+use nexia_nextcloud_sdk::MountMode;
 use nexia_nextcloud_sdk::{
     AuthProvider, DavClient, DiscoveredRemoteFile, FolderSyncOutcome, FolderSyncRunner, MountId,
     MountProgressSnapshot, MountStatus, Transport,
@@ -103,7 +105,7 @@ impl FolderSyncEngine {
 
         let mounts = self.coordinator.sync_mounts().await;
         let mount = match mounts.into_iter().find(|m| m.id == mount_id) {
-            Some(m) if m.enabled && m.mode != "Fuse" => m,
+            Some(m) if m.enabled && m.mount_mode() != MountMode::Fuse => m,
             _ => return Ok(0),
         };
 
@@ -136,7 +138,7 @@ impl FolderSyncEngine {
         let journal_path = self
             .coordinator
             .mount_journal_path(&mount.account_id, mount_id);
-        let is_vfs = mount.mode == "VirtualVfs";
+        let is_vfs = mount.mount_mode() == MountMode::VirtualVfs;
 
         let runner = FolderSyncRunner::new(&local_target, &mount.remote_path, &journal_path);
 
@@ -246,7 +248,10 @@ impl FolderSyncEngine {
         let _priority = self.coordinator.priority_permit();
         let mounts = self.coordinator.sync_mounts().await;
         for mount in mounts {
-            if mount.id.starts_with("app-") || !mount.enabled || mount.mode == "Fuse" {
+            if mount.id.starts_with("app-")
+                || !mount.enabled
+                || mount.mount_mode() == MountMode::Fuse
+            {
                 continue;
             }
             let m_id = MountId::from(mount.id.clone());

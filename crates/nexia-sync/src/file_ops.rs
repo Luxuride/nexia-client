@@ -8,7 +8,9 @@ use tokio::time::Instant;
 
 use crate::coordinator::{DesktopSyncCoordinator, ThumbnailQueueSnapshot};
 use crate::error::SyncError;
+use crate::mount_mode::StoredMountMode;
 use nexia_core::events::DesktopEvent;
+use nexia_nextcloud_sdk::MountMode;
 
 /// How long a directory listing must be quiet before its thumbnail pass starts.
 ///
@@ -631,7 +633,10 @@ impl DesktopSyncCoordinator {
         // mount is skipped: its files are served by the driver, and writing through the mountpoint
         // here would re-enter the driver from outside it.
         for mount in self.sync_mounts().await {
-            if Self::is_internal_vfs(&mount.id) || !mount.enabled || mount.mode == "Fuse" {
+            if Self::is_internal_vfs(&mount.id)
+                || !mount.enabled
+                || mount.mount_mode() == MountMode::Fuse
+            {
                 continue;
             }
             let Some(rel_path) = mount_relative_path(clean_sub, &mount.remote_path) else {

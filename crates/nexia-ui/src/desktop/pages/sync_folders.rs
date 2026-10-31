@@ -11,6 +11,8 @@ use libadwaita::prelude::*;
 use crate::desktop::pages::add_sync_dialog::AddSyncFolderDialog;
 use crate::desktop::pages::sync_mount_settings_dialog::SyncMountSettingsDialog;
 use crate::widget::{FileExplorerBackend, ViewComponent};
+use nexia_sync::MountMode;
+use nexia_sync::StoredMountMode;
 
 type RefreshCallback = Rc<dyn Fn()>;
 type RefreshHolder = Rc<RefCell<Option<RefreshCallback>>>;
@@ -174,7 +176,7 @@ impl SyncFoldersPage {
                 }
 
                 for mount in mounts {
-                    let is_on_demand = mount.mode != "BidirectionalSync";
+                    let is_on_demand = mount.mount_mode() != MountMode::BidirectionalSync;
                     let is_app_vfs = mount.id.starts_with("app-") || mount.id == "app-default-vfs";
 
                     let title_text = mount.display_name.clone().unwrap_or_else(|| {

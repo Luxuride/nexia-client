@@ -86,6 +86,7 @@ installation, FUSE descriptor wiring).
 | `file_ops.rs` | The one place remote mutations happen (each propagated to the caller before the local tree is touched; `move_resource` re-reads the two affected directories because the facade has no subtree move): `refresh_virtual_tree`, `refresh_path`, `hydrate_file`, `hydrate_local_file`, `hydrate_directory`, `dehydrate_file`, `create_directory`, `create_file`, `rename_resource`, `move_resource`, `delete_resource`, public-link sharing, thumbnail fetch/prefetch, cache maintenance, search. |
 | `folder_sync.rs` | `FolderSyncEngine` — two-way cycles for local↔remote pairs, delegating discovery to `FolderSyncRunner` and reconciliation to the SDK. |
 | `mounts.rs` | Thin wrappers that forward to `MountsHandle` (add/remove/list/pause/resume/sync/status). |
+| `mount_mode.rs` | `StoredMountMode::mount_mode()`, the one place the mode string on an SDK mount record is read, mapped onto the SDK's `MountMode`. An unrecognised value reads as `VirtualVfs`, which never overwrites the files in a mount's target directory. |
 | `watcher.rs` | `FileSystemWatcher` wrapping the SDK watcher; routes local changes to sync and 0-byte reads to hydration. |
 | `fuse_mount.rs` | `DesktopHydrator` implementing `AsyncHydrator` over `VfsHandle`, so FUSE reads pull bytes on demand. |
 | `freedesktop_thumbs.rs` | Re-exports the SDK's FreeDesktop thumbnail helpers, and owns the app-specific `is_app_thumbnail` predicate used for scoped accounting/cleanup of the shared system thumbnail cache. |

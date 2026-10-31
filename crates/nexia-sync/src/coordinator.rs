@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::error::SyncError;
+use crate::mount_mode::StoredMountMode;
 use nexia_core::account::{Account, AccountCredentials, ServerConfig};
 use nexia_core::config::AppConfig;
 use nexia_core::events::{DesktopEvent, EventBus};
@@ -776,7 +777,7 @@ impl DesktopSyncCoordinator {
             if Self::is_internal_vfs(&mount.id) || !mount.enabled {
                 continue;
             }
-            if mount.mode == "Fuse" {
+            if mount.mount_mode() == MountMode::Fuse {
                 let local_path = PathBuf::from(&mount.local_target);
                 let _ = self
                     .mount_fuse_folder(&mount.id, &mount.remote_path, &local_path)
