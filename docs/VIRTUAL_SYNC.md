@@ -152,6 +152,11 @@ lock so two concurrent hydrations cannot drop each other's entry. A journal that
 cannot be loaded or saved is logged and the hydration still succeeds — the file
 is on disk either way.
 
+A freedesktop preview is installed for every visible location of the file — the FUSE mountpoint,
+the account content directory (where a restored node's payload actually lives) and each sync
+folder that contains it — with the resizing done on the blocking pool, so a folder's worth of
+previews does not stall the worker that requested them.
+
 `hydrate_directory(remote_dir)` is a breadth-first sweep over the VFS tree: it
 pops each directory, pushes child directories and hydrates each child file that
 the tree reports as a placeholder — an already hydrated file is skipped instead

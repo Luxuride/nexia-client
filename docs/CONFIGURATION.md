@@ -159,9 +159,11 @@ Which account the UI opens on. When `None`, the first configured account wins.
 `SyncFolderConfig::new(account_id, local_path, remote_path, mode)` generates the
 `id` and defaults `enabled` to `true`.
 
-> **Caveat — this is not the live mount registry.** `AppConfig.sync_folders` is
-> read only by `sync_all_pairs()` (which no caller invokes today) and is
-> populated only by tests. The mounts the application actually runs are
+> **Caveat — this is not the live mount registry.** Nothing reads
+> `AppConfig.sync_folders` at runtime: it is populated only by tests, and the
+> `sync_all_pairs()` sweep that used to walk it was removed because no caller
+> invoked it and it discarded the reconciliation result. The mounts the
+> application actually runs are
 > `StoredSyncMount` records: same fields (plus `display_name`, and modes spelled
 > `"VirtualVfs"` / `"BidirectionalSync"` / `"Fuse"` as `String`s), stored through
 > `Client::store_sync_mount` / `list_sync_mounts` in the SDK's encrypted config
@@ -253,7 +255,7 @@ is guaranteed to produce:
 | `show_mime_type` | `true` | MIME type |
 | `show_size_breakdown` | `true` | Direct vs total breakdown |
 | `show_disk_usage` | `true` | Local size vs remote size |
-| `max_thumbnail_size` | `256` | Thumbnail cap in pixels, read from the active account's preferences with `global.default_display` as the fallback |
+| `max_thumbnail_size` | `256` | Thumbnail cap in pixels, read from the active account's preferences with `global.default_display` as the fallback; requested sizes are snapped onto the 64/128/256/512/1024 squares Nextcloud generates, then capped by this value |
 | `autodownload_thumbnails` | `true` | Fetch thumbnails while browsing |
 
 ---
@@ -266,7 +268,7 @@ Not everything is `AppConfig`. Knowing the split saves a lot of confusion:
 | --- | --- |
 | Accounts, active account | `AppConfig` (database + JSON) |
 | Sync mounts (the live ones) | SDK `ConfigStore` via `Client::store_sync_mount` — per-account `config.db` |
-| `AppConfig.sync_folders` | Written by tests and read by the unused `sync_all_pairs()` only |
+| `AppConfig.sync_folders` | Written by tests only; the application reads `StoredSyncMount` instead |
 | Display preferences, view mode, zoom | `AccountPreferences` / `GlobalPreferences` |
 | Encrypted per-account SDK state (auth, cache, config DBs) | SDK `StoragePaths` under `accounts/<account_id>/` |
 | Sync journals | `accounts/<account_id>/mounts/<mount_id>/journal.json` |

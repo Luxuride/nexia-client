@@ -475,6 +475,25 @@ impl DesktopSyncCoordinator {
         std::fs::rename(&temp_file, vfs_dir.join("tree.json"))
     }
 
+    /// Persists a virtual tree without running the write on the async worker.
+    ///
+    /// `persist_account_tree` spills payloads and serialises the whole tree, which for a large
+    /// account is hundreds of milliseconds of blocking IO. The callers hold a `std` lock that FUSE
+    /// reads need, so doing it inline stalled every task on the worker; the tree is snapshotted
+    /// here and written on the blocking pool instead.
+    pub async fn persist_account_tree_async(
+        &self,
+        account_id: &str,
+        tree: &nexia_nextcloud_sdk::VirtualTree,
+    ) -> std::io::Result<()> {
+        let mut owned = tree.clone();
+        let account_id = account_id.to_string();
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.persist_account_tree(&account_id, &mut owned))
+            .await
+            .map_err(std::io::Error::other)?
+    }
+
     /// Returns the mount cache directory for a specific account.
     pub fn account_mounts_dir(&self, account_id: &str) -> PathBuf {
         self.account_dir(account_id).join("mounts")

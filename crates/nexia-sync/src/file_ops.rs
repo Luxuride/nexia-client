@@ -1,6 +1,6 @@
 //! High-level virtual file mutations and two-way folder synchronization.
 
-use nexia_nextcloud_sdk::{DavPath, DavProperty, Depth, FolderSyncRunner, MountId, PropfindBody};
+use nexia_nextcloud_sdk::{DavPath, DavProperty, Depth, MountId, PropfindBody};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -8,7 +8,6 @@ use tokio::time::Instant;
 
 use crate::coordinator::{DesktopSyncCoordinator, ThumbnailQueueSnapshot};
 use crate::error::SyncError;
-use nexia_core::config::SyncMode;
 use nexia_core::events::DesktopEvent;
 
 /// How long a directory listing must be quiet before its thumbnail pass starts.
@@ -143,6 +142,23 @@ pub struct PreviewInstallSummary {
 /// A plain prefix test would let a mount rooted at `/photos` claim `/photos2/x`, writing a file
 /// that belongs to a sibling folder into the wrong local tree. The result is empty for the mount
 /// root itself and `None` when the path is outside the mount.
+impl DesktopSyncCoordinator {
+    /// Snaps a requested thumbnail size onto the squares Nextcloud actually generates.
+    ///
+    /// Requesting an arbitrary size stored a thumbnail that no later request for the same square
+    /// could reuse, and asked the server to generate a preview it does not cache.
+    fn standard_thumbnail_size(size: u32, max_size: u32) -> u32 {
+        let standard = match size {
+            s if s <= 64 => 64,
+            s if s <= 128 => 128,
+            s if s <= 256 => 256,
+            s if s <= 512 => 512,
+            _ => 1024,
+        };
+        standard.min(max_size).max(64)
+    }
+}
+
 fn mount_relative_path(remote_path: &str, mount_remote: &str) -> Option<String> {
     let mount_remote = mount_remote.trim_matches('/');
     let remote_path = remote_path.trim_matches('/');
@@ -376,10 +392,14 @@ impl DesktopSyncCoordinator {
         if let Some(acc) = self.active_account().await {
             // Persist the live tree, not the snapshot: the mount may have hydrated files while the
             // refresh was running, and those payloads must be spilled into the account cache.
-            if let Some(ref ft_lock) = *self.fuse_tree.read().await
-                && let Ok(mut guard) = ft_lock.write()
-            {
-                let _ = self.persist_account_tree(&acc.id.0, &mut guard);
+            // The guard is dropped before the await: a `std` read guard is not `Send`, so holding
+            // it across the persist made the surrounding future unspawnable.
+            let fuse_tree = self.fuse_tree.read().await.clone();
+            let live = fuse_tree
+                .as_ref()
+                .and_then(|ft_lock| ft_lock.read().map(|guard| guard.clone()).ok());
+            if let Some(live) = live {
+                let _ = self.persist_account_tree_async(&acc.id.0, &live).await;
                 return;
             }
             let _ = self.persist_account_tree(&acc.id.0, &mut snapshot);
@@ -1239,25 +1259,6 @@ impl DesktopSyncCoordinator {
     }
 
     /// Runs synchronization on all enabled two-way sync folder pairs via SDK `FolderSyncRunner`.
-    pub async fn sync_all_pairs(&self) -> Result<(), SyncError> {
-        let (pairs, cache_dir) = {
-            let conf = self.config.read().await;
-            (conf.sync_folders.clone(), conf.resolved_cache_dir())
-        };
-
-        for pair in pairs {
-            if !pair.enabled || pair.mode != SyncMode::FullTwoWaySync {
-                continue;
-            }
-
-            let journal_path = cache_dir.join(format!("journal_{}.json", pair.id));
-            let runner = FolderSyncRunner::new(&pair.local_path, &pair.remote_path, journal_path);
-            let _ = runner.run_local_reconciliation();
-        }
-
-        Ok(())
-    }
-
     /// Recursively searches the virtual tree and server unified search for matching files/directories.
     pub async fn search(
         &self,
@@ -1576,8 +1577,10 @@ impl DesktopSyncCoordinator {
         }
 
         let fuse_mp = self.fuse_mountpoint().await;
-        let account_vfs_dir = match self.active_account().await {
-            Some(account) => Some(self.account_vfs_dir(&account.id.0)),
+        // A node that was restored from disk has its payload in the account content directory, not
+        // under `vfs/`: guessing the latter made every restored node look like a missing target.
+        let content_dir = match self.active_account().await {
+            Some(account) => Some(self.account_content_dir(&account.id.0)),
             None => None,
         };
         let folder_mounts: Vec<(String, PathBuf)> = self
@@ -1597,70 +1600,22 @@ impl DesktopSyncCoordinator {
             })
             .collect();
 
-        let now_sec = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-
-        for (remote_path, png_bytes) in items {
-            let clean_path = remote_path.trim_matches('/');
-            let mut targets: Vec<PathBuf> = Vec::new();
-            if let Some(ref fuse_mp) = fuse_mp {
-                targets.push(fuse_mp.join(clean_path));
+        // Decoding and resizing images is synchronous work: running it here would stall every
+        // other task on this worker for the length of a folder's worth of previews.
+        let owned_items = items.to_vec();
+        summary = match tokio::task::spawn_blocking(move || {
+            install_previews(&fuse_mp, &content_dir, &folder_mounts, &owned_items)
+        })
+        .await
+        {
+            Ok(summary) => summary,
+            Err(err) => {
+                tracing::warn!(error = %err, "the preview install task did not run to completion");
+                PreviewInstallSummary::default()
             }
-            if let Some(ref dir) = account_vfs_dir {
-                targets.push(dir.join(clean_path));
-            }
-            for (mount_remote, mount_local) in &folder_mounts {
-                if let Some(rel) = mount_relative_path(clean_path, mount_remote) {
-                    targets.push(mount_local.join(rel.trim_start_matches('/')));
-                }
-            }
-
-            // Decoded lazily: reinstalling thumbnails that are already current is the common case
-            // for a folder that has been opened before, and decoding every source image to throw
-            // the result away is what made reopening such a folder expensive.
-            let mut png: Option<Vec<u8>> = None;
-            let mut touched = false;
-            let mut examined = 0usize;
-            for target in targets {
-                if !target.exists() {
-                    continue;
-                }
-                examined += 1;
-                if crate::freedesktop_thumbs::freedesktop_thumbnail_is_current(&target) {
-                    continue;
-                }
-                let png = png
-                    .get_or_insert_with(|| crate::freedesktop_thumbs::ensure_png_bytes(png_bytes));
-                // The standard keys a thumbnail on the file's own modification time, so the value
-                // that makes it valid is the one on disk rather than the remote date.
-                let target_mtime = target
-                    .metadata()
-                    .and_then(|m| m.modified())
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs())
-                    .unwrap_or(now_sec);
-                crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
-                    &target,
-                    png,
-                    target_mtime,
-                    crate::THUMBNAIL_SOFTWARE,
-                );
-                touched = true;
-            }
-
-            if touched {
-                summary.installed += 1;
-            } else if examined > 0 {
-                summary.skipped += 1;
-            }
-        }
-
+        };
         summary
     }
-
     /// Fetches or retrieves a cached thumbnail for `remote_path`.
     pub async fn fetch_thumbnail(
         &self,
@@ -1678,15 +1633,7 @@ impl DesktopSyncCoordinator {
         size: u32,
     ) -> Result<Option<PathBuf>, SyncError> {
         let max_size = self.max_thumbnail_size().await;
-        // Snap to standard Nextcloud thumbnail square sizes: 64, 128, 256, 512, 1024
-        let standard_size = match size {
-            s if s <= 64 => 64,
-            s if s <= 128 => 128,
-            s if s <= 256 => 256,
-            s if s <= 512 => 512,
-            _ => 1024,
-        };
-        let effective_size = standard_size.min(max_size).max(64);
+        let effective_size = Self::standard_thumbnail_size(size, max_size);
 
         let thumbs_dir = self.active_thumbnails_dir().await;
         let _ = tokio::fs::create_dir_all(&thumbs_dir).await;
@@ -1888,9 +1835,9 @@ impl DesktopSyncCoordinator {
     /// Installs already-cached thumbnails for `items` in one pass, then fetches the missing ones.
     async fn run_thumbnail_pass(&self, items: Vec<(String, Option<u64>)>, size: u32) {
         let max_size = self.max_thumbnail_size().await;
-        // The maximum comes from a persisted setting, so it may sit below the 64px floor that
-        // `clamp` requires; taking the floor as the lower bound of the range keeps this total.
-        let effective_size = size.clamp(64, max_size.max(64));
+        // Snapped, not clamped: a pass at an off-square size stored a thumbnail that the next
+        // request for the same square could not reuse.
+        let effective_size = Self::standard_thumbnail_size(size, max_size);
 
         let mut missing_items: Vec<(String, Option<u64>)> = Vec::new();
         let mut cached_installs: Vec<(String, Vec<u8>)> = Vec::new();
@@ -2030,6 +1977,81 @@ impl DesktopSyncCoordinator {
             }
         }
     }
+}
+
+/// Installs one freedesktop preview per file for every visible location of that file.
+///
+/// Runs on the blocking pool: decoding a cached preview and resizing it are synchronous, and a
+/// folder's worth of them would otherwise stall the async worker that called the batch.
+fn install_previews(
+    fuse_mp: &Option<PathBuf>,
+    content_dir: &Option<PathBuf>,
+    folder_mounts: &[(String, PathBuf)],
+    items: &[(String, Vec<u8>)],
+) -> PreviewInstallSummary {
+    let mut summary = PreviewInstallSummary::default();
+    let now_sec = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    for (remote_path, png_bytes) in items {
+        let clean_path = remote_path.trim_matches('/');
+        let mut targets: Vec<PathBuf> = Vec::new();
+        if let Some(fuse_mp) = fuse_mp {
+            targets.push(fuse_mp.join(clean_path));
+        }
+        if let Some(dir) = content_dir {
+            targets.push(dir.join(clean_path));
+        }
+        for (mount_remote, mount_local) in folder_mounts {
+            if let Some(rel) = mount_relative_path(clean_path, mount_remote) {
+                targets.push(mount_local.join(rel.trim_start_matches('/')));
+            }
+        }
+
+        // Decoded lazily: reinstalling thumbnails that are already current is the common case for a
+        // folder that has been opened before, and decoding every source image to throw the result
+        // away is what made reopening such a folder expensive.
+        let mut png: Option<Vec<u8>> = None;
+        let mut touched = false;
+        let mut examined = 0usize;
+        for target in targets {
+            if !target.exists() {
+                continue;
+            }
+            examined += 1;
+            if crate::freedesktop_thumbs::freedesktop_thumbnail_is_current(&target) {
+                continue;
+            }
+            let png =
+                png.get_or_insert_with(|| crate::freedesktop_thumbs::ensure_png_bytes(png_bytes));
+            // The standard keys a thumbnail on the file's own modification time, so the value that
+            // makes it valid is the one on disk rather than the remote date.
+            let target_mtime = target
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(now_sec);
+            crate::freedesktop_thumbs::install_freedesktop_thumbnail_with_mtime(
+                &target,
+                png,
+                target_mtime,
+                crate::THUMBNAIL_SOFTWARE,
+            );
+            touched = true;
+        }
+
+        if touched {
+            summary.installed += 1;
+        } else if examined > 0 {
+            summary.skipped += 1;
+        }
+    }
+
+    summary
 }
 
 /// Outcome a thumbnail request reports when its registration is released.
