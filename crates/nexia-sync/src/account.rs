@@ -6,7 +6,7 @@ use nexia_core::account::{Account, AccountId, ServerConfig};
 use nexia_core::events::DesktopEvent;
 use nexia_nextcloud_sdk::{
     BasicAuth, CachedTheme, Client, MountDescriptor, MountId, MountMode, SecretString, ServerUrl,
-    StoragePaths, StoreKey, StoredSyncMount, ThemeInfo,
+    StoragePaths, StoredSyncMount, ThemeInfo,
 };
 
 use crate::coordinator::DesktopSyncCoordinator;
@@ -25,21 +25,10 @@ impl DesktopSyncCoordinator {
         let paths = StoragePaths::in_directory(&account_dir);
         let _ = paths.ensure_directories();
 
-        // Deterministic StoreKey derived from account_id and secret
-        let mut key_bytes = [0u8; 32];
-        let seed = format!("{account_id}:{}", secret.expose());
-        for (i, b) in seed.as_bytes().iter().cycle().take(32).enumerate() {
-            key_bytes[i] = b ^ (i as u8).wrapping_mul(31);
-        }
-        // The SDK expects full-entropy key material here (it goes straight into the database's
-        // `PRAGMA key`), so the derivation is a known weakness rather than a substitute for a
-        // KDF; it is documented in docs/ARCHITECTURE.md. What matters here is that a length
-        // violation is reported instead of falling back to a random key, which would silently
-        // make the existing account database undecryptable.
-        let store_key = StoreKey::from_bytes(key_bytes).map_err(|source| SyncError::StoreKey {
-            account: account_id.to_string(),
-            source,
-        })?;
+        // The key is stored per account rather than derived from the password; `account_db_key`
+        // also adopts the key an older build derived, so an existing database stays readable.
+        let store_key =
+            crate::account_key::account_db_key(&account_dir, account_id, secret.expose()).await?;
 
         let client = Client::builder()
             .server_url(server_url)

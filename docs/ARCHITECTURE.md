@@ -311,17 +311,23 @@ subdivided so switching accounts never mixes caches.
 
 ### Per-account database keys
 
-Each account's SDK databases are opened with a `StoreKey` derived in
-`DesktopSyncCoordinator::build_account_client` by folding
-`"{account_id}:{app password}"` into 32 bytes with a fixed XOR pattern. This is
-a derivation, **not** a key-derivation function: it has none of the memory
-hardness or salting that would make the key expensive to brute-force, and it
-inherits the entropy of the app password rather than guaranteeing full 32-byte
-entropy. It is accepted because the key never leaves the process, the ciphertext
-is a local SQLite database, and the alternative — a per-account key in the
-keychain — needs a migration for existing account directories. Changing the
-derivation would make every existing account database undecryptable, so any
-future change must ship with a migration path.
+Each account's SDK databases are opened with a `StoreKey` that is **stored**, not
+derived: `account_key::account_db_key` reads it from the platform keychain
+(application `eu.luxuride.nexia`, account `account-key-<account id>`) and falls
+back to `.store_key` inside the account's cache directory (mode `0600`, created
+exclusively). A new account gets `StoreKey::generate()` — full-entropy material,
+unique per account, independent of the password.
+
+An account whose databases already exist but has no stored key was opened by a
+build that folded `"{account_id}:{app password}"` into 32 bytes with a fixed XOR
+pattern. Those are adopted: the legacy fold is computed once, and it is then
+stored like any other key. Minting a fresh key instead would leave an existing
+`auth.db`/`cache.db`/`config.db` undecryptable, and there is no way to re-encrypt
+them without the old key.
+
+The legacy fold survives only in `account_key::legacy_derived_key`, called solely
+for that adoption. It is not a key-derivation function — no salt, no stretching,
+and its entropy is the password's — which is why no new account uses it.
 
 ### Migration from the pre-rename layout
 
