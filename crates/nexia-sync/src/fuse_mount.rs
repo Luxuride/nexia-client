@@ -6,8 +6,10 @@ use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 
 use nexia_core::events::DesktopEvent;
-use nexia_nextcloud_sdk::{AsyncHydrator, FuseDriver, VfsError, VirtualTree, mount_virtual_fs};
-use tracing::{debug, error, info};
+use nexia_nextcloud_sdk::{
+    AsyncHydrator, BackgroundSession, FuseDriver, VfsError, VirtualTree, mount_virtual_fs,
+};
+use tracing::{debug, error, info, warn};
 
 use crate::coordinator::DesktopSyncCoordinator;
 use crate::error::SyncError;
@@ -289,12 +291,28 @@ impl DesktopSyncCoordinator {
         }
     }
 
+    /// Stops a FUSE session: unmounts the kernel side and joins the background thread.
+    ///
+    /// `BackgroundSession` has no `Drop` implementation that joins, so dropping it only detaches
+    /// the `fuser-bg` thread: the filesystem stays mounted and the driver, its inode table and the
+    /// open mountpoint leak for the rest of the process. The join blocks, so it runs on the
+    /// blocking pool instead of stalling the runtime.
+    async fn stop_fuse_session(session: BackgroundSession, mount_id: &str) {
+        match tokio::task::spawn_blocking(move || session.umount_and_join()).await {
+            Ok(Ok(())) => debug!(mount_id, "FUSE session unmounted and joined"),
+            Ok(Err(err)) => {
+                warn!(mount_id, error = %err, "FUSE session did not shut down cleanly")
+            }
+            Err(err) => warn!(mount_id, error = %err, "FUSE session join task failed"),
+        }
+    }
+
     /// Unmounts the running FUSE virtual filesystem for `mount_id` if active.
     pub async fn unmount_fuse_folder(&self, mount_id: &str) {
-        let mut sessions = self.fuse_sessions.lock().await;
-        if let Some(session) = sessions.remove(mount_id) {
+        let session = self.fuse_sessions.lock().await.remove(mount_id);
+        if let Some(session) = session {
             debug!(mount_id, "Unmounting FUSE virtual folder session");
-            drop(session);
+            Self::stop_fuse_session(session, mount_id).await;
         }
         for m in self.sync_mounts().await {
             if m.id == mount_id {
@@ -321,10 +339,11 @@ impl DesktopSyncCoordinator {
 
     /// Unmounts all active FUSE virtual filesystem sessions.
     pub async fn unmount_all_fuse(&self) {
-        let mut sessions = self.fuse_sessions.lock().await;
-        for (id, session) in sessions.drain() {
+        let sessions: Vec<(String, BackgroundSession)> =
+            self.fuse_sessions.lock().await.drain().collect();
+        for (id, session) in sessions {
             debug!(mount_id = %id, "Unmounting FUSE session");
-            drop(session);
+            Self::stop_fuse_session(session, &id).await;
         }
         for m in self.sync_mounts().await {
             if m.mode == "Fuse" {

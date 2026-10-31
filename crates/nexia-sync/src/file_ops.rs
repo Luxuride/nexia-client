@@ -1295,11 +1295,11 @@ impl DesktopSyncCoordinator {
                 .populate_from_resources(&dav_prefix, summaries.clone())
                 .await;
 
-            if let Some(ref ft_lock) = *self.fuse_tree.read().await
-                && let Ok(mut guard) = ft_lock.write()
-            {
-                *guard = tree.clone();
-            }
+            // Merge into the live tree instead of assigning the on-disk copy: a running FUSE mount
+            // keeps its hydration state in that tree, and replacing it wholesale turns the files it
+            // just downloaded back into placeholders. This also persists the merged tree.
+            self.sync_fuse_tree_from_snapshot(Some(tree), &summaries, &dav_prefix)
+                .await;
 
             self.event_bus
                 .emit(DesktopEvent::VfsTreeUpdated { node_count: count });
